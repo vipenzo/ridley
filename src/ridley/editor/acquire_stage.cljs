@@ -461,11 +461,120 @@
 
 (declare plane-mode? plane-click! plane-key! toggle-plane-mode! toggle-source-marks!
          edge-click! edge-key! toggle-edge-mode! edge-hud-content edge-status
-         paint-declare! world-solver-pose stage-intrinsics say!)
+         paint-declare! world-solver-pose stage-intrinsics say! brush-px)
 
 (defn- editable? [^js el]
   (boolean (and el (or (#{"INPUT" "TEXTAREA"} (.-tagName el))
                        (.-isContentEditable el)))))
+
+;; ---- live ink: what the hand is painting, WHILE it paints ----
+;;
+;; Until now the stroke appeared only once the pointer came up, and Vincenzo
+;; asked for the missing half (2026-08-07): «servirebbe un minimo di feedback
+;; anche durante il drag … aiuterebbe a capire che si sta facendo qualcosa e a
+;; vedere che tipo di tratto si sta producendo: se vogliamo andare dritti è
+;; molto più facile farlo se vediamo da dove siamo passati».
+;;
+;; Drawn in SCREEN space, on a canvas of its own over the viewport, for two
+;; reasons: the stroke IS screen space (it is painted on the photograph, and the
+;; nib's size is in screen pixels, so the band can be drawn at exactly the width
+;; it will have), and because repainting the 3D layer per pointermove would
+;; rebuild every frustum, mark and label at 30 Hz for a decoration. When the
+;; pointer comes up the ink is thrown away and the measured band takes over.
+
+(def ^:private ink-id "eaq-ink")
+
+(defn- ink-ctx
+  "The 2D context of the ink canvas, created on demand and sized to the window
+   in DEVICE pixels (with the transform set so drawing stays in CSS pixels —
+   clientX/clientY, which is what the trail already stores)."
+  []
+  (let [^js c (or (.getElementById js/document ink-id)
+                  (let [^js c (.createElement js/document "canvas")]
+                    (set! (.-id c) ink-id)
+                    (.appendChild (.-body js/document) c)
+                    c))
+        dpr (or (.-devicePixelRatio js/window) 1)
+        w (.-innerWidth js/window)
+        h (.-innerHeight js/window)]
+    (when (or (not= (.-width c) (js/Math.round (* w dpr)))
+              (not= (.-height c) (js/Math.round (* h dpr))))
+      (set! (.-width c) (js/Math.round (* w dpr)))
+      (set! (.-height c) (js/Math.round (* h dpr))))
+    (let [^js ctx (.getContext c "2d")]
+      (.setTransform ctx dpr 0 0 dpr 0 0)
+      (.clearRect ctx 0 0 w h)
+      ctx)))
+
+(defn- clear-ink! []
+  (when-let [^js c (.getElementById js/document ink-id)] (.remove c)))
+
+(defn- chord-deviation-px
+  "How far the hand strayed from the straight line between the first station and
+   the last — the number that says whether this stroke is going straight."
+  [screen]
+  (let [[ax ay] (first screen)
+        [bx by] (peek screen)
+        dx (- bx ax) dy (- by ay)
+        len (js/Math.hypot dx dy)]
+    (if (< len 1e-6)
+      0.0
+      (reduce max 0.0 (map (fn [[x y]]
+                             (js/Math.abs (/ (- (* dx (- y ay)) (* dy (- x ax))) len)))
+                           screen)))))
+
+(defn- draw-ink!
+  "Repaint the live stroke: the band at the nib's true width, the straight CHORD
+   from where the stroke began to where the hand is now, and the path itself on
+   top — green while it is still straight.
+
+   The chord is the whole point: going straight is easy against a reference and
+   guesswork without one."
+  [trail]
+  (when (>= (count trail) 2)
+    (let [screen (mapv :screen trail)
+          ^js ctx (ink-ctx)
+          [ax ay] (first screen)
+          [bx by] (peek screen)
+          dev (chord-deviation-px screen)
+          path! (fn [] (.beginPath ctx)
+                  (.moveTo ctx (first (first screen)) (second (first screen)))
+                  (doseq [[x y] (rest screen)] (.lineTo ctx x y))
+                  (.stroke ctx))]
+      (set! (.-lineCap ctx) "round")
+      (set! (.-lineJoin ctx) "round")
+      ;; the band, at the width the nib really has (brush-px is its radius)
+      (set! (.-lineWidth ctx) (* 2 (brush-px)))
+      (set! (.-strokeStyle ctx) "rgba(136,153,255,0.30)")
+      (path!)
+      ;; the straight line from start to here — UNDER the path, because on a
+      ;; straight stroke the two coincide and the one you want to see is the one
+      ;; your hand is making
+      (.setLineDash ctx #js [5 5])
+      (set! (.-lineWidth ctx) 1)
+      (set! (.-strokeStyle ctx) "rgba(255,255,255,0.55)")
+      (.beginPath ctx)
+      (.moveTo ctx ax ay)
+      (.lineTo ctx bx by)
+      (.stroke ctx)
+      (.setLineDash ctx #js [])
+      ;; the path itself, so the hand sees where it has been — GREEN while it is
+      ;; still straight, which is the state Vincenzo is trying to hold
+      (set! (.-lineWidth ctx) 1.5)
+      (set! (.-strokeStyle ctx) (if (<= dev 2.0) "rgba(120,230,140,0.95)" "rgba(200,215,255,0.95)"))
+      (path!)
+      ;; and the number, at the hand: how long, and how far off straight. It
+      ;; describes the STROKE, not the bordo that will come out of it — the kind
+      ;; is decided by the image, and saying otherwise here would be a promise
+      ;; this layer cannot keep.
+      (set! (.-font ctx) "11px 'SF Mono', Monaco, Menlo, monospace")
+      (set! (.-fillStyle ctx) "rgba(0,0,0,0.65)")
+      (let [txt (str (js/Math.round (js/Math.hypot (- bx ax) (- by ay))) " px · "
+                     (if (<= dev 2.0) "dritto" (str "curvo ±" (js/Math.round dev))))
+            tw (.-width (.measureText ctx txt))]
+        (.fillRect ctx (+ bx 12) (- by 22) (+ tw 8) 16)
+        (set! (.-fillStyle ctx) (if (<= dev 2.0) "#8ee69a" "#e8e8e8"))
+        (.fillText ctx txt (+ bx 16) (- by 10))))))
 
 (defn- on-pointerdown [^js e]
   (when (zero? (.-button e))
@@ -482,6 +591,7 @@
           ;; collecting the trail now: whether it was a click or a stroke is only
           ;; known when the pointer comes up.
           (when (edge-mode?)
+            (clear-ink!)
             (swap! stage (fn [st] (-> st
                                       (assoc :paint {:idx (:current-idx @stage) :trail []})
                                       (update :edge dissoc :outcome)))))))))
@@ -489,7 +599,10 @@
 (defn- on-paint-move
   "While the left button is down in edge mode, every few pixels of travel become
    a station of the painted band. Sampled by DISTANCE rather than by event, so a
-   slow hand and a fast one paint the same stroke."
+   slow hand and a fast one paint the same stroke.
+
+   The ink is repainted at the same rhythm — every 4 px of travel, not every
+   event — which is both smooth to the eye and cheap."
   [^js e]
   (when-let [{:keys [trail]} (:paint @stage)]
     (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
@@ -499,7 +612,8 @@
                                     (- (second px) (second last-px)))
                      4.0))
           (swap! stage update-in [:paint :trail] conj
-                 {:px px :screen [(.-clientX e) (.-clientY e)]}))))))
+                 {:px px :screen [(.-clientX e) (.-clientY e)]})
+          (draw-ink! (get-in @stage [:paint :trail])))))))
 
 (defn- on-pointerup [^js e]
   (when (zero? (.-button e))
@@ -509,6 +623,9 @@
                         (>= (js/Math.hypot (- (.-clientX e) x) (- (.-clientY e) y))
                             click-slop-px))]
       (swap! stage dissoc :press :paint)
+      ;; the ink was the stroke being made; from here on the BAND is the stroke
+      ;; that was made, and two of them on screen would be one too many
+      (clear-ink!)
       ;; a DRAG in edge mode is the marker, not a miss-click
       (when (and dragged? gesture? (edge-mode?) (>= (count (:trail paint)) 2))
         (let [i (:idx paint)]
@@ -2420,25 +2537,25 @@
       (cond
         (not (:plausible? f))
         (deny! "NON MISURATO" (str "i punti recuperati cadono lontano dall'oggetto: le due foto "
-                   "non stanno guardando lo stesso bordo curvo"))
+                                   "non stanno guardando lo stesso bordo curvo"))
 
         (< (count (:points f)) pcurve/min-shared-points)
         (deny! "NON MISURATO" (str "le due foto condividono solo " (count (:points f))
-                   " punti di questa curva (ne servono almeno "
-                   pcurve/min-shared-points "): hanno seguito tratti quasi "
-                   "disgiunti. Col pennarello dipingi sulla seconda foto LO STESSO "
-                   "pezzo di bordo che hai dipinto sulla prima — non serve tutto, "
-                   "serve in comune."))
+                                   " punti di questa curva (ne servono almeno "
+                                   pcurve/min-shared-points "): hanno seguito tratti quasi "
+                                   "disgiunti. Col pennarello dipingi sulla seconda foto LO STESSO "
+                                   "pezzo di bordo che hai dipinto sulla prima — non serve tutto, "
+                                   "serve in comune."))
 
         (< (:agreement f) pcurve/min-agreement)
         (deny! "NON MISURATO" (str "solo il " (src/fmt-number (* 100 (:agreement f)))
-                   "% degli accoppiamenti fra le due foto rispetta l'ORDINE in cui "
-                   "i due bordi sono stati percorsi (ne serve il "
-                   (src/fmt-number (* 100 pcurve/min-agreement)) "%). Percorrere la "
-                   "stessa curva da due parti da' accoppiamenti ordinati; incroci "
-                   "casuali no. Quasi sempre vuol dire che le due foto hanno seguito "
-                   "TRATTI DIVERSI dello stesso bordo: rifai quella che non si "
-                   "sovrappone, partendo da dove passa l'altra."))
+                                   "% degli accoppiamenti fra le due foto rispetta l'ORDINE in cui "
+                                   "i due bordi sono stati percorsi (ne serve il "
+                                   (src/fmt-number (* 100 pcurve/min-agreement)) "%). Percorrere la "
+                                   "stessa curva da due parti da' accoppiamenti ordinati; incroci "
+                                   "casuali no. Quasi sempre vuol dire che le due foto hanno seguito "
+                                   "TRATTI DIVERSI dello stesso bordo: rifai quella che non si "
+                                   "sovrappone, partendo da dove passa l'altra."))
 
         :else
         (do (say! (str "curva misurata: le due foto condividono " (count (:points f))
@@ -2455,20 +2572,20 @@
 
       (not (:plausible? f))
       (deny! "NON MISURATO" (str "lo spigolo cade lontano dall'oggetto: i tratti disegnati non sono "
-                 "lo stesso spigolo fisico, oppure le due foto sono troppo simili"))
+                                 "lo stesso spigolo fisico, oppure le due foto sono troppo simili"))
 
       (< (:angle-deg f) pedge/min-plane-angle-deg)
       (deny! "NON MISURATO" (str "le foto girano solo " (src/fmt-number (:angle-deg f))
-                 "° INTORNO allo spigolo: troppo poco perche' la sua posizione sia "
-                 "determinata. Serve una foto che lo guardi da un altro lato — "
-                 "spostarsi lungo lo spigolo non serve a niente, e nemmeno mettersi "
-                 "esattamente di fronte alla foto di prima (mezzo giro riporta allo "
-                 "stesso piano)."))
+                                 "° INTORNO allo spigolo: troppo poco perche' la sua posizione sia "
+                                 "determinata. Serve una foto che lo guardi da un altro lato — "
+                                 "spostarsi lungo lo spigolo non serve a niente, e nemmeno mettersi "
+                                 "esattamente di fronte alla foto di prima (mezzo giro riporta allo "
+                                 "stesso piano)."))
 
       (> (:rms-px f) max-write-rms-px)
       (deny! "NON MISURATO" (str "riproiezione " (src/fmt-number (:rms-px f))
-                 " px: questo spigolo NON spiega le foto da cui e' nato — su "
-                 "qualcuna e' stato seguito un bordo diverso."))
+                                 " px: questo spigolo NON spiega le foto da cui e' nato — su "
+                                 "qualcuna e' stato seguito un bordo diverso."))
 
       :else
       (do (say! (str "spigolo su " (count (:photos f)) " foto · lunghezza "
@@ -3351,6 +3468,7 @@
 
 (defn- stop-edge! []
   (swap! stage dissoc :edge)
+  (clear-ink!)
   (viewport/clear-labels!)
   (say! "modo spigolo chiuso")
   (redraw-overlay!))
@@ -3507,6 +3625,7 @@
     (teardown-listeners!)
     (teardown-toolbar!)
     (swap! stage dissoc :plane :edge)
+    (clear-ink!)
     (viewport/clear-labels!)
     (refresh-hud!)
     (viewport/unregister-frame-callback! :acquire-stage)

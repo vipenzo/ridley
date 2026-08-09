@@ -102,6 +102,45 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## L'INCHIOSTRO VIVO (2026-08-09)
+
+«Servirebbe un minimo di feedback anche durante il drag con cui si ricalca un
+tratto: aiuterebbe a capire che si sta facendo qualcosa e a vedere che tipo di
+tratto si sta producendo. Se vogliamo andare dritti è molto più facile farlo se
+vediamo da dove siamo passati.»
+
+Mancava metà del gesto: la pennellata compariva solo quando il dito si alzava.
+Ora, mentre dipingi, si vedono tre cose — e la terza è quella che ha chiesto:
+
+- la **banda** alla larghezza vera del pennarello (`brush-px` è il RAGGIO in
+  pixel schermo, quindi la banda si disegna spessa `2·brush-px`: quello che vedi
+  è la zona che verrà davvero cercata);
+- il **percorso** fatto finora, VERDE finché resta dritto (scostamento ≤ 2 px);
+- la **corda** tratteggiata dal punto di partenza alla mano: il riferimento
+  contro cui andare dritti è facile, e senza è a occhio.
+
+Più un numero alla mano: `210 px · dritto` oppure `210 px · curvo ±14`. Descrive
+LA PENNELLATA, non il bordo che ne uscirà — il tipo lo decide l'immagine, e
+prometterlo qui sarebbe una promessa che questo strato non può mantenere.
+
+Sta su un canvas 2D suo (`#eaq-ink`, `position:fixed`, z-index 40, sotto il
+pannello a 120), in SPAZIO SCHERMO, per due motivi: la pennellata È spazio
+schermo (si dipinge sulla foto, e la punta è in pixel schermo), e ridisegnare il
+layer 3D a ogni pointermove ricostruirebbe frustum, mark ed etichette a 30 Hz
+per una decorazione. Si ridisegna al ritmo con cui il tratto campiona (ogni 4 px
+di percorso, non a ogni evento) e si butta via al pointerup: da lì in poi la
+banda misurata è la pennellata, e due sullo schermo sarebbero una di troppo.
+
+Ordine di disegno, imparato provando: la corda va SOTTO il percorso. Disegnata
+sopra, su un tratto dritto le due coincidono e la corda copriva proprio la
+linea verde — cioè la spia spariva nell'unico caso in cui serve.
+
+Verificato dal vivo leggendo i pixel del canvas: sul tratto dritto 351 campioni
+verdi e nessuno pallido; su quello incurvato l'apice è pallido e sulla riga
+della corda non c'è verde; a 30 px dal tratto (fuori da una punta da 14) il
+canvas è trasparente, cioè la banda ha davvero la larghezza della punta; e
+`clear-ink!` toglie il canvas dal documento.
+
 ## «PREMO p E NON SUCCEDE NIENTE» (2026-08-07)
 
 Non era rotto: stava rifiutando, e lo diceva in console. Il gesto rispondeva
