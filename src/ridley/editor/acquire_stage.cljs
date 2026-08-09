@@ -225,6 +225,45 @@
 (defn- object-radius []
   (* 0.5 (m/magnitude (:dims @stage))))
 
+;; ---- what a mark asks to be shown as ----
+;;
+;; «Dovremmo poter pilotare come si vedono mark e edges nel viewport: oggi ci
+;; sono troppi puntini e lineette e fa confusione» (Vincenzo, 2026-08-09). The
+;; control belongs where the thing itself is written — in the source, on the
+;; mark — and not in a panel of checkboxes: it is the same move that put the
+;; bench in the source, and it survives closing the gesture, gets diffed, and
+;; can be set on one mark without touching the others.
+;;
+;;   :show   false      niente
+;;           true/-     il segno: disco+origine per un piano, il segmento per
+;;                      uno spigolo (il default)
+;;           :prove     anche i punti da cui è stato ricavato
+;;   :label  false      nessuna scritta
+;;           "testo"    quella scritta
+;;           true/-     il suo nome (il default)
+;;
+;; The default DROPPED the fitted points on purpose: three or more dots per
+;; plane were the bulk of what made the viewport unreadable, and they are
+;; evidence — worth asking for, not worth carrying always.
+
+(defn- shown?
+  "Does this mark/edge want to be drawn at all?"
+  [m]
+  (not (false? (:show m))))
+
+(defn- evidence-shown?
+  "…and does it want the points it was fitted through, too?"
+  [m]
+  (= :prove (:show m)))
+
+(defn- label-of
+  "The text this mark/edge wants written next to it in the world, or nil for
+   none. A hidden mark never gets a label: a name floating over nothing is worse
+   than no name."
+  [nm m]
+  (when (and (shown? m) (not (false? (:label m))))
+    (if (string? (:label m)) (:label m) (name nm))))
+
 (defn- source-mark-items
   "Disc + origin + fitted points for every mark of the evaluated acquire."
   []
@@ -232,7 +271,8 @@
     (into []
           (mapcat
            (fn [[_ mark]]
-             (when (and (map? mark) (:position mark) (:heading mark) (:up mark))
+             (when (and (map? mark) (shown? mark)
+                        (:position mark) (:heading mark) (:up mark))
                (let [pts (mapv vec (:from mark))
                      r (if (>= (count pts) 2)
                          (max 6.0 (* 1.15 (reduce max (map #(m/magnitude (m/v- % (:position mark)))
@@ -246,7 +286,7 @@
                           {:type :dots
                            :data [{:pos (:position mark) :radius 1.2
                                    :color source-mark-color :opacity 0.95}]}]
-                   (seq pts)
+                   (and (seq pts) (evidence-shown? mark))
                    (conj {:type :dots
                           :data (mapv (fn [p] {:pos p :radius 0.8
                                                :color source-mark-color :opacity 0.6})
@@ -276,13 +316,24 @@
     (into []
           (keep (fn [[_ e]]
                   (cond
-                    (and (map? e) (:a e) (:b e))
+                    (not (and (map? e) (shown? e))) nil
+
+                    (and (:a e) (:b e))
                     {:type :lines
                      :data [{:from (vec (:a e)) :to (vec (:b e))
                              :color source-edge-color}]}
+
+                    ;; a measured CURVE is only asked for with :show :prove — its
+                    ;; points are evidence for a plane, and a curve is forty of
+                    ;; them, which is exactly the clutter this key exists to stop
+                    (and (evidence-shown? e) (seq (:points e)))
+                    {:type :dots
+                     :data (mapv (fn [p] {:pos (vec p) :radius 0.5
+                                          :color source-edge-color :opacity 0.8})
+                                 (pcurve/subsample (mapv vec (:points e)) 24))}
                     ;; a measured CIRCLE draws as its own ring, rebuilt from the
                     ;; three numbers the source holds — centre, axis, radius
-                    (and (map? e) (:radius e) (:position e) (:heading e))
+                    (and (:radius e) (:position e) (:heading e))
                     {:type :lines
                      :data (ring-segments (pcircle/ring-mesh {:center (vec (:position e))
                                                               :normal (vec (:heading e))
@@ -2221,7 +2272,7 @@
   []
   (into []
         (map-indexed (fn [i [nm e]]
-                       (assoc e :id nm :label (str (inc i))
+                       (assoc e :id nm :num (str (inc i))
                               :kind (if (:points e) :curva :retta)
                               :name (name nm))))
         (sort-by key (:source-edges @stage))))
@@ -2508,18 +2559,19 @@
   (when (and (edge-mode?) (labels-on?))
     (-> []
         (into (keep (fn [feat]
-                      (when-let [p (feature-anchor feat)]
-                        {:text (str (:label feat)
-                                    "")
-                         :position p
-                         :color (if (contains? (selected-ids) (:id feat))
-                                  bench-selected-color
-                                  bench-color)}))
+                      (when (and (shown? feat) (not (false? (:label feat))))
+                        (when-let [p (feature-anchor feat)]
+                          {:text (:num feat)
+                           :position p
+                           :color (if (contains? (selected-ids) (:id feat))
+                                    bench-selected-color
+                                    bench-color)})))
                     (bench)))
         (into (keep (fn [[nm mark]]
                       (when (and (map? mark) (:position mark))
-                        {:text (name nm) :position (vec (:position mark))
-                         :color fresh-plane-color}))
+                        (when-let [txt (label-of nm mark)]
+                          {:text txt :position (vec (:position mark))
+                           :color fresh-plane-color})))
                     (:source-marks @stage))))))
 
 ;; ---- the gesture ----
@@ -3392,13 +3444,14 @@
           (.appendChild shots
                         (el "div" "eaq-hud-shot"
                             :children [(el "span" nil
-                                           :text (str (:label feat) ". "
+                                           :text (str (:num feat) ". "
                                                       (if (= :curva (:kind feat)) "curva" "retta")
                                                       (when (:length-mm feat)
                                                         (str " " (src/fmt-number (:length-mm feat)) "mm"))))
                                        (el "span" (when (sel (:id feat)) "eaq-hud-good")
-                                           :text (if (sel (:id feat)) "scelto"
-                                                     (str ":" (:name feat))))])))
+                                           :text (cond (sel (:id feat)) "scelto"
+                                                       (not (shown? feat)) (str ":" (:name feat) " (nascosto)")
+                                                       :else (str ":" (:name feat))))])))
         (.appendChild box shots)
         (add! "eaq-hud-hint"
               "Il numero di ogni bordo è scritto anche NELLA FOTO, accanto al bordo stesso."))
@@ -3411,11 +3464,18 @@
     (when-let [ps (seq (:source-marks @stage))]
       (add! nil (str "Piani nel sorgente (" (count ps) "):"))
       (let [rows (el "div" "eaq-hud-shots")]
-        (doseq [[nm _] (sort-by key ps)]
+        (doseq [[nm mk] (sort-by key ps)]
           (.appendChild rows
                         (el "div" "eaq-hud-shot"
                             :children [(el "span" nil :text (str ":" (name nm)))
-                                       (el "span" "eaq-hud-hint" :text "cancellabile nel testo")])))
+                                       ;; a mark hidden with :show false is still
+                                       ;; there, and the one place that must say so
+                                       ;; is the list — otherwise hiding one reads
+                                       ;; exactly like losing one
+                                       (el "span" "eaq-hud-hint"
+                                           :text (if (shown? mk)
+                                                   "cancellabile nel testo"
+                                                   "nascosto (:show false)"))])))
         (.appendChild box rows)))
     (.appendChild frag box)
     (let [row (el "div" "eaq-hud-actions")]

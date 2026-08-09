@@ -4022,7 +4022,12 @@
 
    A bare `{…}` literal remains valid wherever a mark is accepted — marks
    emitted before this form exists keep working, they simply do not announce
-   what they are."
+   what they are.
+
+   Display keys, honoured by the stage and carried through untouched (Vincenzo,
+   2026-08-09: «troppi puntini e lineette»): `:show` — `false` hides it,
+   `:prove` also draws the points it came from, absent means the plain sign —
+   and `:label` — `false` for no name, a string for a different one."
   [m]
   (when (map? m)
     (let [missing (remove #(contains? m %) [:position :heading :up])
@@ -4128,7 +4133,12 @@
    check — the expected keys, and that :length still matches the ends — and
    REPORTS what looks wrong without touching the data. An edge whose length has
    been hand-edited is still the user's edge; correcting it quietly would hide
-   the fact that the two no longer describe the same segment."
+   the fact that the two no longer describe the same segment.
+
+   Display keys, honoured by the stage and carried through untouched (Vincenzo,
+   2026-08-09: «troppi puntini e lineette»): `:show` — `false` hides it,
+   `:prove` also draws the points it came from, absent means the plain sign —
+   and `:label` — `false` for no name, a string for a different one."
   [e]
   (when (map? e)
     (let [missing (remove #(contains? e %) [:position :heading :a :b])]
@@ -4157,7 +4167,12 @@
    that is the number one came for.
 
    Gentle, not silent, like its siblings: it checks the keys and that the radius
-   is a positive number, and reports without touching the data."
+   is a positive number, and reports without touching the data.
+
+   Display keys, honoured by the stage and carried through untouched (Vincenzo,
+   2026-08-09: «troppi puntini e lineette»): `:show` — `false` hides it,
+   `:prove` also draws the points it came from, absent means the plain sign —
+   and `:label` — `false` for no name, a string for a different one."
   [c]
   (when (map? c)
     (let [missing (remove #(contains? c %) [:position :heading :radius])]
@@ -4189,7 +4204,11 @@
    at all; one that lives in a gesture's state needs a UI for each of those, and
    is lost the moment the gesture closes.
 
-   Gentle, not silent, like the rest of the family."
+   Gentle, not silent, like the rest of the family.
+
+   Its points are drawn only when it asks for them with `:show :prove` — forty
+   dots per curve is exactly the clutter that key exists to stop. `:show false`
+   hides it entirely, `:label false`/`\"testo\"` its name."
   [m]
   (when (map? m)
     (let [pts (:points m)]

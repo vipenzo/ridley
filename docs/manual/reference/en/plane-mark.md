@@ -41,11 +41,32 @@ otherwise renders.
 A bare `{…}` literal remains valid wherever a mark is accepted, so marks emitted
 before this form keep working — they simply do not announce what they are.
 
+## What it draws, and how to quieten it
+
+On the acquisition stage every mark draws itself over the photo: a translucent
+disc, its origin, and — when asked — the points it was fitted through. On an
+object with a dozen marks that is a lot of ink, so each mark carries its own
+display keys. They live on the mark because that is where the mark lives: they
+survive closing the gesture, they can be set on one mark without touching the
+others, and they are text, so they diff and undo like everything else.
+
+```clojure
+:marks {:coperchio (plane-mark {… :show false})           ; draw nothing
+        :fianco    (plane-mark {… :label false})          ; no name next to it
+        :base      (plane-mark {… :label "appoggio"})     ; that name instead
+        :zona      (plane-mark {… :show :prove})}         ; also its fitted points
+```
+
+`:show :prove` is opt-in on purpose: the fitted points are evidence, worth
+asking for and not worth carrying always.
+
 ## Parameters
 
 - `pose-map` — `{:position … :heading … :up …}`, optionally with
   `:from [[x y z] …]`, the triangulated points the plane was fitted through
-  (see `edit-plane-mark`).
+  (see `edit-plane-mark`), and the display keys `:show` (`true` by default,
+  `false` to hide it, `:prove` to add its fitted points) and `:label` (`true`
+  by default, `false` to hide the name, or a string to replace it).
 
 ## Examples
 

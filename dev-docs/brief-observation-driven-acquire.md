@@ -180,3 +180,79 @@ serve un dettaglio asimmetrico), non come sequenza di gesti — concordato con
 Code. Se la visione v2 procede, la procedura da documentare cambia di nuovo:
 non investire nella riscrittura fine della sezione registrazione finché il
 punto 1 della scala non è a regime.
+
+## Svolta: il gesto si guida dal CODICE (Vincenzo, 2026-08-09)
+
+Dopo sei giri d'uso vero del gradino 3, il verdetto sull'interfaccia:
+
+> «Trovo che il resto, a questo punto, sia piuttosto complesso e confuso.
+> Proporrei di togliere stati alla UI e usare di più il codice. Potremmo
+> togliere del tutto il banco: lo mettiamo direttamente nel codice, di fatto
+> c'è già. Se una nuova linea la facessimo partire, anziché cliccando su
+> "Spigolo", scrivendo nel codice `(edit-edge-mark)` o `(edit-curve-mark)`? A
+> quel punto parte la registrazione del drag. Una volta conclusa viene generata
+> la edge-mark o la curve-mark e l'utente può creare un nuovo piano scrivendo
+> `(plane-from-edges :spigolo-1 :spigolo-2 :curva-1)`.»
+
+Concordato. Il guadagno più profondo non è togliere bottoni: **il piano smette
+di essere una copia e diventa una formula**. Oggi `plane-mark` conserva i numeri
+calcolati una volta e le prove in `:from`; con `(plane-from-edges …)` il piano si
+ricalcola a ogni Run dalle prove nominate — correggi uno spigolo e il piano lo
+segue, ne cancelli uno e il piano cambia, e il caso «piano vecchio, prove nuove»
+smette di esistere. È il principio che ha già pagato col banco nel sorgente,
+portato fino in fondo. Muore con esso tutta la UI di selezione: i nomi NEL
+CODICE sono la selezione, e sono durevoli, ripetibili e diffabili.
+
+Decisioni prese insieme:
+
+- il nome è **`plane-from-edges`**, non `plane-from-curves`: quest'ultimo esiste
+  già dentro il codice e prende curve grezze, non nomi — due significati per un
+  nome si pagano dopo;
+- **riaprire uno spigolo rimisura da zero**. Le osservazioni sono righe di pixel
+  per foto, e il sorgente deliberatamente non sa niente di foto e pixel; portarle
+  nel sorgente sarebbe una decisione diversa, e per ora non si prende;
+- **la visibilità si pilota dal mark** (sotto).
+
+Due vincoli tecnici da non scoprire a metà strada:
+
+1. `(plane-from-edges :a :b)` scritto dentro la mappa dell'acquire viene valutato
+   PRIMA che l'acquire esista, quindi non può risolvere i nomi da sé. Va
+   restituita una **specifica differita** che `acquire` risolve dopo aver
+   costruito i suoi `:edges` — lo stesso trucco che `edit-plane-mark` usa già.
+2. `(edit-edge-mark)` **non deve essere una sessione del modal-evaluator**: il
+   palcoscenico disattiva i propri click quando un modale è aperto
+   (`(not (modal/active?))`), quindi si spegnerebbe da solo. Va armato come
+   `edit-plane-mark`, che è gestito dal palco.
+
+Costo accettato: ogni bordo nuovo costa un giro dall'editor. È il ritmo di
+`edit-path`; non va compensato con un "riarma da solo", che sarebbe lo stato in
+memoria che rientra dalla finestra.
+
+Fette concordate: **1)** `(edit-edge-mark)`/`(edit-curve-mark)` come innesco +
+conferma che scrive il letterale al posto della forma; **2)** `plane-from-edges`
+come specifica differita, coi rifiuti che diventano errori di valutazione con i
+loro numeri; **3)** demolizione (banco, selezione, tasti numerici, bottone
+Spigolo, etichette col nome invece del numero).
+
+### Chiavi di visibilità (fatte, 2026-08-09)
+
+> «Dovremmo anche poter pilotare come si vedono mark e edges nel viewport: oggi
+> ci sono troppi puntini e lineette e fa confusione.»
+
+Il controllo sta sul mark, non in un pannello di caselle: sopravvive alla
+chiusura del gesto, si mette su uno senza toccare gli altri, ed è testo.
+
+    :show   false     niente
+            true/-    il segno (disco+origine per un piano, il segmento per uno
+                      spigolo) — il default
+            :prove    anche i punti da cui è stato ricavato
+    :label  false     nessuna scritta
+            "testo"   quella scritta
+            true/-    il suo nome — il default
+
+Il default NON disegna più i punti delle prove: tre o più pallini per piano
+erano il grosso di ciò che rendeva illeggibile il viewport, e sono evidenza —
+da chiedere, non da portarsi sempre dietro. Un mark nascosto non prende
+etichetta (un nome che galleggia sul nulla è peggio di nessun nome), e l'elenco
+nel pannello dice «nascosto», perché nascondere una cosa non deve somigliare a
+perderla.
