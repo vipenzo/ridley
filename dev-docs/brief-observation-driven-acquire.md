@@ -321,3 +321,38 @@ Verificato dal vivo valutando sorgenti veri: due bordi incrociati a z=10 → pia
 a z=10 con normale +Z; gli stessi a z=25 → piano a z=25; due paralleli a 2 mm →
 rifiuto coi numeri e nessun mark; un nome che non esiste → rifiuto che lo
 nomina.
+
+### Fetta 3 — la demolizione (fatta, 2026-08-10)
+
+Via il banco e tutto ciò che serviva a tenerlo: la lista nel pannello, la
+selezione, i tasti numerici, `p`, `n`, il bottone **Spigolo** e il suo
+toggle, i colori del banco, il nome generato `:spigolo-N` e il ramo di
+`commit-edge!` che appendeva in fondo al blocco. Circa 200 righe in meno.
+
+Cosa prende il loro posto, e perché è meno e non solo diverso:
+
+- **il gesto si arma scrivendo la sua forma**, quindi non c'è più un modo da
+  accendere e spegnere;
+- **un solo tasto scrive**: Invio, per tutti e due i tipi. Quale sia lo decide
+  l'IMMAGINE — si può scrivere `(edit-edge-mark)` e trovarsi con una curva, e
+  riscrivere la forma giusta è compito del programma. `'c'` resta perché è una
+  DICHIARAZIONE in più («questa curva è un cerchio»), non una misura diversa;
+- **le etichette portano il NOME**, non il numero. Il numero esisteva per essere
+  digitato a un banco che non c'è più; quello che lega la foto al codice adesso
+  è il nome, perché è ciò che si scrive in `(plane-from-edges :bordo-alto …)`;
+- **l'elenco nel pannello resta, ma è un promemoria**, non una cosa da cui
+  scegliere: dice quali nomi ci sono, di che specie sono e quali sono nascosti;
+- **Chiudi passa da `stop-edge!`**: con una forma armata, rinunciare deve
+  rimettere il sorgente com'era, e un bottone che si limitava a scordare lo
+  stato lasciava `(edit-edge-mark)` orfana nel testo.
+
+Il palcoscenico non disegna più né i bordi né i piani per conto suo: li disegna
+`source-edge-items` / `source-mark-items` LEGGENDO IL SORGENTE. Una seconda
+copia dentro il gesto sarebbe una copia che una riga cancellata non raggiunge —
+ed è la ragione per cui il banco è finito nel sorgente in primo luogo.
+
+Verificato dal vivo sullo stato vero del palco: etichette `bordo-alto`,
+`profilo`, `coperchio` (e niente per quello con `:show false`); i passi del
+pannello sono «Dipingi :bordo-alto su 2 foto → Invio lo scrive → il piano si
+scrive (plane-from-edges …)»; i bottoni rimasti sono Scrivi, Nomi, punta,
+Ricomincia, Annulla tratto, Chiudi.
