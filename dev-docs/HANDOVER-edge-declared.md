@@ -102,6 +102,35 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## ESC DOVEVA ESSERE PREMUTO DUE O TRE VOLTE (2026-08-10)
+
+«Ho fatto le prove che dici: di Esc bisogna darne due o 3 prima che esca
+davvero.»
+
+Il gesto si arma da una RIVALUTAZIONE del sorgente, e l'annullamento del gesto
+FA una rivalutazione — per rimettere a posto il testo. Chiudere poteva quindi
+riaprire: la richiesta che quella rivalutazione porta con sé è l'eco di ciò che
+si è appena chiuso, e veniva consumata come se fosse nuova.
+
+Rimedio, lo stesso che ogni altro editor della famiglia usa per il proprio
+re-eval (`modal/arm-skip!`), qui in versione di palco:
+
+- `stop-edge!` spegne prima lo STATO e poi tocca il testo — l'ordine opposto
+  lasciava una finestra in cui la riapertura vinceva sulla chiusura;
+- arma `:skip-edge-arm?`, che `open-pending-edit!` consuma UNA volta: la prima
+  richiesta che arriva dopo una chiusura viene riconosciuta come eco e lasciata
+  cadere, quelle successive aprono normalmente.
+
+Verificato dal vivo, quattro casi: una richiesta genuina apre col bersaglio
+giusto; la stessa richiesta marcata come eco non apre; il flag si consuma una
+volta sola; e subito dopo l'eco una richiesta vera torna ad aprire.
+
+Resta, ed è VOLUTO, che Esc sia a strati: il primo chiude la misura, il secondo
+esce dalla foto (il commento in `on-keydown` lo dice da prima di questo lavoro —
+premerlo una volta deve chiudere il gesto, non buttarti fuori dalla foto su cui
+stavi misurando). Ora la frase di chiusura lo dice ad alta voce: «misura chiusa
+— il sorgente è com'era. Un altro Esc esce dalla foto.»
+
 ## L'INCHIOSTRO VIVO (2026-08-09)
 
 «Servirebbe un minimo di feedback anche durante il drag con cui si ricalca un

@@ -2178,15 +2178,26 @@
         edges (seq (:pending-edge-edits @stage))
         n (+ (count marks) (count edges))]
     (when (pos? n)
-      (swap! stage dissoc :pending-edits :pending-edge-edits :edit-after-load?)
-      (when (> n 1)
-        (say! (str "ci sono " n " forme edit-…: apro la prima, le altre restano "
-                   "in attesa")))
-      (if-not (seq (:camera-poses @stage))
-        (say! "nessuna camera registrata: non c'è niente con cui misurare")
-        (if marks
-          (open-mark-edit! (first marks))
-          (open-edge-edit! (first edges)))))))
+      ;; Se questa rivalutazione è quella lanciata dalla chiusura appena
+      ;; avvenuta, la richiesta che porta con sé è l'ECO di ciò che si è appena
+      ;; chiuso: consumarla riaprirebbe il gesto sotto le mani dell'utente, e
+      ;; l'Esc sembrerebbe non funzionare.
+      (let [echo? (boolean (:skip-edge-arm? @stage))]
+        (swap! stage dissoc :pending-edits :pending-edge-edits :edit-after-load?
+               :skip-edge-arm?)
+        (cond
+          echo? nil
+
+          (not (seq (:camera-poses @stage)))
+          (say! "nessuna camera registrata: non c'è niente con cui misurare")
+
+          :else
+          (do (when (> n 1)
+                (say! (str "ci sono " n " forme edit-…: apro la prima, le altre "
+                           "restano in attesa")))
+              (if marks
+                (open-mark-edit! (first marks))
+                (open-edge-edit! (first edges)))))))))
 
 (defn- toggle-source-marks! []
   (swap! stage update :show-source-marks? #(not (if (nil? %) true %)))
@@ -3422,13 +3433,29 @@
             (say! "misura annullata: il bordo è rimasto com'era")))
       (modal/run-definitions!))))
 
-(defn- stop-edge! []
-  (when-let [t (get-in @stage [:edge :target])] (cancel-edge-edit! t))
-  (swap! stage dissoc :edge)
-  (clear-ink!)
-  (viewport/clear-labels!)
-  (say! "modo spigolo chiuso")
-  (redraw-overlay!))
+(defn- stop-edge!
+  "Esc / Chiudi. Chiude il gesto e, se era armato da una forma, rimette il
+   sorgente com'era.
+
+   L'ordine e la guardia non sono decorazione (Vincenzo, 2026-08-10: «di Esc
+   bisogna darne due o tre prima che esca davvero»). L'annullamento RIVALUTA il
+   sorgente, e una rivalutazione è esattamente ciò che arma questo gesto: senza
+   guardia, la chiusura può riaprirlo da sola e il tasto sembra non funzionare.
+   Quindi: prima si spegne lo stato, poi si tocca il testo, e il prossimo
+   `(edit-edge-mark …)` incontrato in QUELLA rivalutazione passa senza aprire
+   niente — è la stessa skip flag che ogni altro editor della famiglia arma
+   prima del proprio re-eval."
+  []
+  (let [t (get-in @stage [:edge :target])]
+    (swap! stage dissoc :edge)
+    (clear-ink!)
+    (viewport/clear-labels!)
+    (when t
+      (swap! stage assoc :skip-edge-arm? true)
+      (cancel-edge-edit! t))
+    (say! (str "misura chiusa" (when t " — il sorgente è com'era")
+               ". Un altro Esc esce dalla foto."))
+    (redraw-overlay!)))
 
 (defn- edge-key! [k]
   (cond
