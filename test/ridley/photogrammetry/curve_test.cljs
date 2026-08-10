@@ -279,3 +279,27 @@
               {:up-hints [[0.0 1.0 0.0]]})]
       (is (< (:width-mm pl) pcurve/min-width-mm)
           "2 mm di larghezza stanno sotto la soglia che rifiuta una FILA"))))
+
+(deftest a-third-edge-counts-whole-or-not-at-all
+  ;; «Se a plane-from-edges passo più di due segmenti, del terzo prende solo il
+  ;; centro?» (Vincenzo, 2026-08-10). No: il fit è robusto, non parziale. Un
+  ;; terzo bordo complanare conta tutto; uno che sta oltre la soglia dal piano su
+  ;; cui gli altri sono d'accordo viene scartato TUTTO, e il piano non si
+  ;; inclina. Non esiste un "ne prende un pezzo" — se non fosse così, un bordo di
+  ;; un'altra faccia potrebbe piegare il piano un po', che è il modo peggiore di
+  ;; sbagliare.
+  (println "\n=== Un terzo bordo: o conta tutto, o non conta ===")
+  (let [due [{:a [-15 -10 10] :b [15 -10 10]} {:a [-15 10 10] :b [15 12 10]}]
+        fit (fn [es] (pcurve/plane-from-points
+                      (vec (mapcat pcurve/edge-points es))
+                      {:up-hints [[0.0 1.0 0.0]]}))
+        complanare (fit (conj (vec due) {:a [-10 0 10] :b [10 5 10]}))
+        fuori (fit (conj (vec due) {:a [-10 0 13] :b [10 5 13]}))]
+    (println (str "  complanare: " (:n complanare) " punti tenuti, "
+                  (:dropped complanare) " scartati · fuori di 3 mm: "
+                  (:n fuori) " tenuti, " (:dropped fuori) " scartati"))
+    (is (= 60 (:n complanare)) "tutti e tre i bordi contano")
+    (is (= 0 (:dropped complanare)))
+    (is (= 20 (:dropped fuori)) "il terzo fuori piano viene scartato INTERO")
+    (is (< (Math/abs (- 10.0 (nth (:position fuori) 2))) 1e-6)
+        "e il piano resta dov'era, senza farsi inclinare un po'")))

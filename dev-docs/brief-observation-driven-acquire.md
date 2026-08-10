@@ -356,3 +356,32 @@ Verificato dal vivo sullo stato vero del palco: etichette `bordo-alto`,
 pannello sono «Dipingi :bordo-alto su 2 foto → Invio lo scrive → il piano si
 scrive (plane-from-edges …)»; i bottoni rimasti sono Scrivi, Nomi, punta,
 Ricomincia, Annulla tratto, Chiudi.
+
+### Quanto conta il terzo bordo (2026-08-10)
+
+> «Se a plane-from-edges passo più di due segmenti, del terzo prende solo il
+> centro, è giusto?»
+
+Misurato, non ricordato. Non prende «solo il centro»: il fit è ROBUSTO, non
+parziale. Un terzo bordo complanare conta per intero (60 punti su 60, zero
+scartati); uno che sta oltre `plane-outlier-mm` (1.5 mm) dal piano su cui gli
+altri sono d'accordo viene scartato INTERO (20 su 20) e il piano non si sposta
+di un micron. In mezzo — un bordo obliquo che attraversa il piano — ne contano i
+punti che ci stanno dentro (17 su 20 nella prova) e il piano si inclina un po'.
+
+Ed è giusto così: se un bordo di un'altra faccia potesse piegare il piano *un
+po'*, sarebbe il modo peggiore di sbagliare — un errore piccolo, plausibile e
+invisibile. La soglia è la stessa che regge tutto il canale.
+
+Quello che NON andava è che lo scarto era muto: si nomina un terzo bordo
+credendo di rinforzare il piano, e invece non conta niente senza che nulla lo
+dica. Ora ogni bordo nominato rende conto di sé:
+
+    ;; plane-from-edges · … · :coperchio: :tre NON è servito a questo piano:
+    ;; sta fino a 3 mm fuori dal piano su cui gli altri sono d'accordo (la
+    ;; soglia è 1.5 mm). Un bordo di un'altra faccia non deve poter inclinare
+    ;; questo piano, quindi il fit lo lascia fuori.
+
+o, quando ne serve solo una parte, «di :tre sono serviti 17 punti su 20».
+Silenzio = tutti i bordi nominati sono serviti per intero. La politica è fissata
+da un test (`a-third-edge-counts-whole-or-not-at-all`).

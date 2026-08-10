@@ -4134,6 +4134,28 @@
                 flip? (neg? (m/dot (:heading pl) outward))
                 mk (cond-> (select-keys pl [:position :heading :up])
                      flip? (update :heading #(m/v* % -1.0)))]
+            ;; QUANTO DI OGNI BORDO È SERVITO. Il fit è robusto: un bordo che sta
+            ;; oltre `plane-outlier-mm` dal piano su cui gli altri sono d'accordo
+            ;; viene scartato — ed è giusto, perché un bordo di un'ALTRA faccia
+            ;; non deve poter inclinare questo piano. Ma scartarlo in silenzio no:
+            ;; si nomina un terzo bordo credendo di rinforzare il piano, e invece
+            ;; non conta niente, senza che nulla lo dica (Vincenzo, 2026-08-10:
+            ;; «del terzo prende solo il centro, è giusto?»).
+            (doseq [en plane-from]
+              (let [ps (pcurve/edge-points (get edges en))
+                    d (fn [q] (Math/abs (m/dot (m/v- q (:position pl)) (:heading pl))))
+                    ds (map d ps)
+                    out (count (filter #(> % pcurve/plane-outlier-mm) ds))]
+                (when (pos? out)
+                  (say (str (if (= out (count ps))
+                              (str en " NON è servito a questo piano")
+                              (str "di " en " sono serviti " (- (count ps) out)
+                                   " punti su " (count ps)))
+                            ": sta fino a " (modal/fmt-number (reduce max ds))
+                            " mm fuori dal piano su cui gli altri sono d'accordo "
+                            "(la soglia è " pcurve/plane-outlier-mm " mm). "
+                            "Un bordo di un'altra faccia non deve poter inclinare "
+                            "questo piano, quindi il fit lo lascia fuori.")))))
             (when (> (:flatness-mm pl) 1.0)
               (say (str "attenzione: i bordi nominati non sono così complanari "
                         "(planarità " (modal/fmt-number (:flatness-mm pl)) " mm)")))

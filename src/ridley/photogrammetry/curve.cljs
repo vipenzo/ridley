@@ -142,7 +142,7 @@
    better plane than one curve of thirty that only saw one side of the face."
   3)
 
-(def ^:private plane-outlier-mm
+(def plane-outlier-mm
   "A recovered point further than this from the plane most of them agree on did
    not come from the curve — it is a ray pairing that happened to pass close."
   1.5)
