@@ -60,10 +60,10 @@ keep straight against.
 
 ## Notes
 
-- **What comes out is decided by the image, not by the form.** Paint a curved
-  edge under `(edit-edge-mark)` and you get `(curve-mark …)`; press `c` on a
-  curve that really is circular and you get `(circle-mark …)`. Rewriting the
-  right form is the program's job.
+- **A curved border is refused, out loud.** Curves are no longer measured (see
+  `curve-mark` for why), so painting an arc gets you a message saying the border
+  is curved and asking for a straight stretch instead — not a silent bad
+  measurement.
 - The two photographs must look at the edge from **different sides**. Moving
   along the edge does not help, and neither does standing exactly opposite: half
   a turn is as blind as none.
@@ -76,7 +76,6 @@ keep straight against.
 
 ## See also
 
-- `edit-curve-mark` — the same gesture for a curved edge
 - `edge-mark` — the resting form this pairs with
 - `plane-from-edges` — what measured edges are for
 - `acquire` — the form whose `:edges` this lives in

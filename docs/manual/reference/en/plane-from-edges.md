@@ -75,7 +75,7 @@ between photographs, so it carries none of a curve's ghost trouble.
 
 ## See also
 
-- `edit-edge-mark` · `edit-curve-mark` — measure the edges first
+- `edit-edge-mark` — measure the edges first
 - `plane-mark` — a plane written as a fixed literal instead
 - `acquire` — the form whose `:marks` this lives in
 - `turtle` — how a plane poses the turtle

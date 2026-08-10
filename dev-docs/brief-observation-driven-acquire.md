@@ -412,3 +412,43 @@ ruoterebbe il piano se lo togliessi, riportato quando il massimo supera 2°. È 
 stessa arma che il canale usa già per gli spigoli, e sostituisce una soglia
 assoluta che non poteva funzionare — un millimetro vuol dire cose diverse su una
 nuvola larga 8 mm e su una larga 80.
+
+### Le curve escono di scena (2026-08-10)
+
+> «Ho paura che i bordi curvi siano troppo difficili da prendere, mi sa che è
+> meglio eliminarli: è già complicato con quelli dritti.»
+
+D'accordo, e la ragione è più forte di "sono difficili". Misurare una curva
+chiede di APPAIARE punti fra due foto — questo punto qui è quel punto là — ed è
+esattamente ciò che questo canale è nato per non fare: è da lì che venivano i
+fantasmi, è per questo che serviva il test dell'ordine, ed è la ragione per cui
+alla mano si chiedeva di ridipingere lo STESSO tratto dello stesso bordo da due
+lati. Uno spigolo dritto non chiede niente di tutto ciò: si ricava
+intersecando i piani che le sue righe-immagine spannano, senza appaiare un solo
+punto.
+
+E soprattutto non servivano più: il valore di una curva era il PIANO su cui
+giace, e due spigoli dritti non paralleli quel piano lo fissano esattamente. La
+strada difficile portava dove la facile arrivava già.
+
+Tolti: `edit-curve-mark`, `circle-mark`, il tasto `c`, il ramo curva del
+solutore e del pannello, `photogrammetry/circle.cljs` intero, e da `curve.cljs`
+la metà che misurava (incontri di raggi, appaiamenti, `longest-monotone`,
+`plane-from-curves`) coi suoi test. Restano il fit del piano e i suoi numeri,
+che sono ciò su cui `plane-from-edges` poggia.
+
+Tenuto apposta: la forma di riposo `curve-mark`. I punti di una curva presa
+prima sono prove valide, e un sorgente che ne contiene una deve continuare a
+girare — verificato: `(plane-from-edges :vecchia :dritto)` funziona ancora.
+
+Una conseguenza da dire ad alta voce: **una faccia delimitata solo da bordi
+curvi non ha più una strada facile**. Ce n'è ancora una: il gesto "Piano" a tre
+punti, che è quello faticoso da cui tutto questo lavoro è nato. Non è diventato
+impossibile, è tornato costoso.
+
+E il rifiuto dell'arco ha dovuto cambiare consiglio: prima diceva «dammi DUE
+click», che ora sarebbe dannoso — due click su un arco danno una retta che
+sembra buona e non è quel bordo. Adesso dice di prendere un tratto dritto.
+
+886 test / 3502 asserzioni (erano 901/3561): −15 test, tutti di ciò che non
+esiste più.

@@ -68,5 +68,5 @@ Display keys, honoured by the stage:
 
 - `edit-edge-mark` — measure one
 - `plane-from-edges` — the plane through the edges you name
-- `curve-mark` · `circle-mark` — the curved siblings
+- `curve-mark` — curves measured before the gesture was removed
 - `acquire` — the form whose `:edges` this lives in

@@ -681,18 +681,13 @@
    ;; plane-mark. Its pose runs ALONG the edge, so `(turtle (:spigolo-1 (:edges A))
    ;; (extrude (circle 2) (f len)))` needs no new DSL to lay a fillet down it.
    'edge-mark           edit-acquire/edge-mark
-   ;; circle-mark: the curved sibling. Same block (:edges), same contract — a
-   ;; pose plus what makes it that feature: the turtle stands at the CENTRE with
-   ;; its nose along the axis, so `(turtle (:cerchio-1 (:edges A)) (extrude
-   ;; (circle r) (f d)))` bores or raises exactly where the photos found a circle.
-   'circle-mark         edit-acquire/circle-mark
-   ;; curve-mark: a measured CURVED edge, stored as its 3D points. No pose — a
-   ;; curve has none — because what it is for is being EVIDENCE for a plane,
-   ;; pooled with other curves and with straight edges. It lives in the source so
-   ;; it can be deleted, renamed and kept as text, which is the whole reason the
-   ;; gesture's bench was moved there.
+   ;; curve-mark: un bordo CURVO già misurato, come nuvola di punti. NON si
+   ;; misura più (2026-08-10: misurare una curva chiede di APPAIARE punti fra le
+   ;; foto, ed è proprio ciò che questo canale è nato per non fare) — la forma
+   ;; resta perché i punti di una curva presa prima sono prove valide per un
+   ;; piano, e un sorgente che la contiene deve continuare a girare.
    'curve-mark          edit-acquire/curve-mark
-   ;; edit-edge-mark / edit-curve-mark: the same edit-* grammar as edit-plane-mark,
+   ;; edit-edge-mark: the same edit-* grammar as edit-plane-mark,
    ;; applied to the bordi gesture — and the reason it exists is that the gesture
    ;; had grown a UI of its own (Vincenzo, 2026-08-09: «proporrei di togliere
    ;; stati alla UI e usare di più il codice»). Writing
@@ -712,7 +707,6 @@
    ;; tempi di edit-plane-mark.
    'plane-from-edges    edit-acquire/plane-from-edges
    'edit-edge-mark      (fn [& [e]] (acquire-stage/request-edge-edit! :retta e))
-   'edit-curve-mark     (fn [& [e]] (acquire-stage/request-edge-edit! :curva e))
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to

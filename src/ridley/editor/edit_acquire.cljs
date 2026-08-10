@@ -4317,37 +4317,6 @@
                   " — uno dei due è stato modificato a mano")))))))
   e)
 
-(defn ^:export circle-mark
-  "A MEASURED CIRCLE of an acquisition: `{:position <centre> :heading <axis> :up …
-   :radius r}` — the curved sibling of `edge-mark`, written by the stage's
-   Spigolo gesture when the bordo it walked turns out to bend.
-
-   A pose first, like every mark, and the pose is the useful part: the turtle
-   stands at the CENTRE with its nose along the axis, so `(turtle (:cerchio-1
-   (:edges A)) (extrude (circle 12.4) (f 20)))` raises or bores a cylinder
-   exactly where the photographs found one. The radius travels with it because
-   that is the number one came for.
-
-   Gentle, not silent, like its siblings: it checks the keys and that the radius
-   is a positive number, and reports without touching the data.
-
-   Display keys, honoured by the stage and carried through untouched (Vincenzo,
-   2026-08-09: «troppi puntini e lineette»): `:show` — `false` hides it,
-   `:prove` also draws the points it came from, absent means the plain sign —
-   and `:label` — `false` for no name, a string for a different one."
-  [c]
-  (when (map? c)
-    (let [missing (remove #(contains? c %) [:position :heading :radius])]
-      (when (seq missing)
-        (state/capture-println
-         (str ";; circle-mark: mancano " (str/join ", " missing)
-              " — un cerchio ha bisogno di centro, asse e raggio")))
-      (when (and (:radius c) (not (and (number? (:radius c)) (pos? (:radius c)))))
-        (state/capture-println
-         (str ";; circle-mark: :radius " (pr-str (:radius c))
-              " non e' un raggio")))))
-  c)
-
 (defn ^:export curve-mark
   "A measured CURVED edge of an acquisition: `{:points [[x y z] …]}`, the 3D
    points recovered from the photographs.
@@ -4370,7 +4339,14 @@
 
    Its points are drawn only when it asks for them with `:show :prove` — forty
    dots per curve is exactly the clutter that key exists to stop. `:show false`
-   hides it entirely, `:label false`/`\"testo\"` its name."
+   hides it entirely, `:label false`/`\"testo\"` its name.
+
+   NON si misura più (2026-08-10). Misurare una curva chiede di APPAIARE punti
+   fra due foto, che è precisamente ciò che questo canale è nato per non fare, e
+   il piano — l'unica cosa per cui serviva — lo danno meglio due spigoli dritti
+   non paralleli, che si misurano senza appaiare niente. La forma resta perché i
+   punti di una curva presa prima sono prove valide, e un sorgente che la
+   contiene deve continuare a girare."
   [m]
   (when (map? m)
     (let [pts (:points m)]

@@ -31,7 +31,6 @@
             [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.triangulate :as tri]
             [ridley.photogrammetry.edge :as pedge]
-            [ridley.photogrammetry.circle :as pcircle]
             [ridley.photogrammetry.curve :as pcurve]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.fuse :as fuse]
@@ -296,15 +295,6 @@
 
 (def ^:private source-edge-color 0xff8811)   ; arancio scuro: gli spigoli nel sorgente
 
-(defn- ring-segments
-  "A closed 3D polyline as :lines data — how a measured circle gets drawn with
-   the same primitive a measured edge uses."
-  [pts color]
-  (mapv (fn [i] {:from (nth pts i)
-                 :to (nth pts (mod (inc i) (count pts)))
-                 :color color})
-        (range (count pts))))
-
 (defn- source-edge-items
   "Every measured edge of the evaluated acquire, drawn AS IT IS WRITTEN — from
    its own :a to its own :b, not from the gesture's state. Same principle as
@@ -332,14 +322,6 @@
                      :data (mapv (fn [p] {:pos (vec p) :radius 0.5
                                           :color source-edge-color :opacity 0.8})
                                  (pcurve/subsample (mapv vec (:points e)) 24))}
-                    ;; a measured CIRCLE draws as its own ring, rebuilt from the
-                    ;; three numbers the source holds — centre, axis, radius
-                    (and (:radius e) (:position e) (:heading e))
-                    {:type :lines
-                     :data (ring-segments (pcircle/ring-mesh {:center (vec (:position e))
-                                                              :normal (vec (:heading e))
-                                                              :radius (:radius e)})
-                                          source-edge-color)}
                     :else nil)))
           (:source-edges @stage))))
 
@@ -2274,8 +2256,6 @@
   []
   (get-in @stage [:edge :kind] :retta))
 
-(defn- curve-mode? [] (= :curva (edge-kind)))
-
 (def ^:private max-write-rms-px
   "Reprojection above which a measured feature must NOT be written, whatever else
    about it looks fine.
@@ -2303,11 +2283,8 @@
   []
   (let [f (edge-fit)]
     (boolean (and f (:plausible? f)
-                  (if (= :curva (:kind f))
-                    (and (>= (:agreement f) pcurve/min-agreement)
-                         (>= (count (:points f)) pcurve/min-shared-points))
-                    (and (<= (:rms-px f) max-write-rms-px)
-                         (>= (:angle-deg f) pedge/min-plane-angle-deg)))))))
+                  (<= (:rms-px f) max-write-rms-px)
+                  (>= (:angle-deg f) pedge/min-plane-angle-deg)))))
 
 (defn- up-hints
   "Which direction of the OBJECT should read as `up` on a written mark. Same
@@ -2347,27 +2324,9 @@
   []
   (let [entries (sort-by key (edge-obs))
         idxs (mapv key entries)
-        curve? (curve-mode?)
         toward (toward-cameras idxs)
-        views (mapv (fn [[_ o]] (select-keys o [:pose :points :intrinsics])) entries)
         segs (mapv (fn [[_ o]] (select-keys o [:pose :seg :intrinsics])) entries)
-        fit (cond
-              (< (count entries) 2) nil
-
-              curve?
-              (let [{:keys [points monotone]} (pcurve/curve-points views)]
-                (when (>= (count points) 3)
-                  (let [circ (pcircle/fit-circle views)]
-                    {:kind :curva
-                     :points points
-                     :agreement monotone
-                     :circle (when (and circ (>= (:span-deg circ) pcircle/min-arc-deg)
-                                        (<= (:rms-px circ) max-write-rms-px)
-                                        (plausible-point? (:center circ)))
-                               circ)
-                     :plausible? (every? plausible-point? points)})))
-
-              :else
+        fit (when (>= (count entries) 2)
               (when-let [e (pedge/triangulate-edge (stage-intrinsics) segs)]
                 (assoc e
                        :kind :retta
@@ -2469,22 +2428,15 @@
             (let [[a b] (keep #(ray-point-near-object k pose %) (:seg o))]
               (when (and a b)
                 (add! {:type :lines :data [{:from a :to b :color edge-drawn-color}]}))))))
-      (doseq [{:keys [a b ring]} (get-in @stage [:edge :committed] [])]
-        (if ring
-          (add! {:type :lines :data (ring-segments ring edge-committed-color)})
-          (add! {:type :lines :data [{:from a :to b :color edge-committed-color}]})))
+      (doseq [{:keys [a b]} (get-in @stage [:edge :committed] [])]
+        (add! {:type :lines :data [{:from a :to b :color edge-committed-color}]}))
       ;; Neither the measured edges nor the planes are redrawn here: they live in
       ;; the source, and source-edge-items / source-mark-items draw them FROM
       ;; THERE. A second copy in the gesture is a copy a deleted line cannot
       ;; reach — which is the whole reason the bench went into the source.
       ;; and the bordo in hand, once it is measured
       (when (and fit (:plausible? fit))
-        (if (= :curva (:kind fit))
-          (add! {:type :dots
-                 :data (mapv (fn [p] {:pos p :radius 0.8
-                                      :color edge-measured-color :opacity 0.95})
-                             (:points fit))})
-          (do (add! {:type :lines :data [{:from (:a fit) :to (:b fit)
+        (do (do (add! {:type :lines :data [{:from (:a fit) :to (:b fit)
                                           :color edge-measured-color}]})
               (add! {:type :dots :data [{:pos (:a fit) :radius 0.9
                                          :color edge-measured-color :opacity 0.95}
@@ -2553,35 +2505,6 @@
   (let [f (edge-fit)]
     (cond
       (nil? f) nil
-
-      (= :curva (:kind f))
-      (cond
-        (not (:plausible? f))
-        (deny! "NON MISURATO" (str "i punti cadono lontano dall'oggetto · le due foto non "
-                                   "seguono lo stesso bordo · ? edit-curve-mark"))
-
-        (< (count (:points f)) pcurve/min-shared-points)
-        (deny! "NON MISURATO" (str "punti in comune " (count (:points f)) " (min "
-                                   pcurve/min-shared-points ") · dipingi lo STESSO pezzo "
-                                   "sulle due foto · ? edit-curve-mark"))
-
-        (< (:agreement f) pcurve/min-agreement)
-        (deny! "NON MISURATO" (str "ordine " (src/fmt-number (* 100 (:agreement f))) "% (min "
-                                   (src/fmt-number (* 100 pcurve/min-agreement))
-                                   "%) · le due foto seguono tratti diversi · ? edit-curve-mark"))
-
-        :else
-        (do (say! (str "curva misurata: le due foto condividono " (count (:points f))
-                       " punti (ordine rispettato al "
-                       (src/fmt-number (* 100 (:agreement f))) "%). "
-                       (if (< (count (:points f)) 8)
-                         (str "Sono POCHI, ma bastano come pezzo: scrivila con Invio e "
-                              "aggiungi un altro bordo sulla stessa faccia — il piano "
-                              "si fa con tutto insieme, nominandoli.")
-                         "Scrivila con Invio, poi prendi un altro bordo sulla stessa faccia: il piano si fa con (plane-from-edges …).")))
-            (when-let [ci (:circle f)]
-              (say! (str "per inciso, questa curva E' un cerchio di ⌀"
-                         (src/fmt-number (* 2 (:radius ci))) " mm: 'c' scrive quello.")))))
 
       (not (:plausible? f))
       (deny! "NON MISURATO" (str "lo spigolo cade lontano dall'oggetto · tratti diversi, o foto "
@@ -2668,10 +2591,12 @@
     :short (str "il bordo qui dura solo " (src/fmt-number length-px)
                 " pixel: troppo poco perché la sua direzione valga più della tua "
                 "mano. Cliccane uno più lungo, o usa DUE click.")
-    :curved (str "questo bordo è curvo, ma le altre foto lo dichiarano dritto: "
-                 "o non è lo stesso bordo, o questa foto lo guarda di taglio. "
-                 "(Uno spigolo dritto e un cerchio sono misure diverse: per "
-                 "misurare il cerchio, chiudi e ricomincia cliccando prima qui.)")
+    ;; un arco non si misura più (2026-08-10) — e il consiglio di prima («dammi
+    ;; DUE click») qui sarebbe dannoso: due click su un arco producono una retta
+    ;; che sembra buona e non è il bordo
+    :curved (str "questo bordo è CURVO · le curve non si misurano · prendi un "
+                 "tratto DRITTO di questa faccia, oppure usa il gesto Piano "
+                 "· ? curve-mark")
     "non riesco a leggere il bordo da qui: dammi DUE click."))
 
 (def ^:private brush-sizes
@@ -2784,53 +2709,22 @@
                  (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px)
                                           {:in-zone? (:pred zone) :zoned? true}))
              (edge-snap/edge-at-point backdrop/luminance-at (first px) (second px)))
-         curved? (= :curved (:reason r))
-         kind (if curved? :curva :retta)
-         cur-kind (get-in @stage [:edge :kind])
          others (dissoc (edge-obs) idx)
-         ;; A declaration of the OTHER kind is not a mistake to refuse — it is
-         ;; almost always a new bordo. Refusing it was the bug that made the
-         ;; gesture die after its first success (Vincenzo, 2026-08-07: «non sono
-         ;; riuscito a trovare nessun bordo, tranne la prima volta»): the kind
-         ;; stayed latched from the first stroke, so every stroke of the other
-         ;; kind came back with a message about 'the other photos' that meant
-         ;; nothing here.
-         ;;
-         ;; The kind belongs to a FEATURE, and a feature is what the bench holds.
-         ;; So: a clash only exists when this feature already has views on OTHER
-         ;; photos — that is the case where the user is genuinely adding a second
-         ;; view of one thing. Otherwise the declaration simply starts a fresh
-         ;; one, and says so.
-         clash? (and cur-kind (not= cur-kind kind) (seq others))
          outcome! (fn [ok? txt]
                     (swap! stage assoc-in [:edge :outcome] {:ok? ok? :text txt})
                     ok?)
          take! (fn [entry msg]
                  (swap! stage update :edge
-                        (fn [e] (-> (if clash? (assoc e :obs {}) e)
-                                    (assoc :kind kind)
+                        (fn [e] (-> e
                                     (assoc-in [:obs idx] entry)
                                     (dissoc :pending))))
                  (solve-edge!)
-                 (say! (if clash?
-                         (str msg " — le foto di prima lo vedevano "
-                              (if (= :curva cur-kind) "CURVO" "DRITTO")
-                              ", quindi questo comincia un bordo NUOVO. Se volevi "
-                              "aggiungere una vista a quello di prima, Backspace "
-                              "torna indietro.")
-                         msg))
+                 (say! msg)
                  (outcome! true msg)
                  (report-edge!)
                  (redraw-overlay!)
                  true)]
      (cond
-       curved?
-       (take! {:points (:points r) :raw [px px] :pose pose :intrinsics k
-               :zone (:stroke zone)
-               :snap {:n (count (:points r))} :auto? true :curved? true}
-              (str "bordo CURVO sulla foto " (nav-rank idx) ": "
-                   (count (:points r)) " punti su " (Math/round (:walked-px r)) " px"))
-
        (:ok? r)
        (take! {:seg [(:p1 r) (:p2 r)] :raw [px px] :pose pose :intrinsics k
                :zone (:stroke zone)
@@ -3051,107 +2945,8 @@
        " :length " (src/fmt-number (m/magnitude (m/v- b a)))
        "}"))
 
-(defn- circle-literal
-  "The `(circle-mark {…})` source of a measured circle. A POSE first, like every
-   other mark — origin at the centre, heading along the axis — with the radius
-   attached, which is the number the user came for."
-  [{:keys [position heading up radius]}]
-  (str "{:position " (src/fmt-vec3 position)
-       " :heading " (src/fmt-vec3 heading)
-       " :up " (src/fmt-vec3 up)
-       " :radius " (src/fmt-number radius)
-       "}"))
-
-(defn- commit-edge!
-  "Write the measured edge into the source and re-run the definitions.
-   `value-fn` renders the resting form — `(edge-mark {…})` and friends. Returns
-   the name written, or nil.
-
-   Two ways in, and the FIRST is the one the channel is moving to (Vincenzo,
-   2026-08-09: «se una nuova linea la facessimo partire, anziché cliccando su
-   Spigolo, scrivendo nel codice (edit-edge-mark)?»):
-
-   - ARMED FROM THE SOURCE: an `(edit-edge-mark …)` form is open, and the
-     measurement REPLACES it in place. The name is the key the user typed in
-     front of it, so it is his — `:bordo-alto` rather than `:spigolo-7` — which
-     is what makes `(plane-from-edges :bordo-alto :bordo-basso)` readable;
-   - free-hand: no form, so the entry is appended to the `:edges` block with a
-     generated name. Still there for as long as the Spigolo button is.
-
-   Either way the edit is BOUNDED: everything outside the range written survives
-   byte-identical."
-  [stem value-fn]
-  (let [text (cm/get-value)
-        {:keys [head name]} (get-in @stage [:edge :target])]
-    (if-let [[from to] (and head (modal/find-form-bounds text head))]
-      (do (modal/replace-source! from to (value-fn (or name stem)))
-          (swap! stage update :edge dissoc :target)
-          (modal/run-definitions!)
-          (or name stem))
-      (if-let [[from to] (acquire-form-bounds text)]
-        (let [text (if (src/map-value-bounds text from to ":edges")
-                     text
-                     (ensure-slot! text from to ":edges" ":marks"))
-              [from to] (when text (acquire-form-bounds text))]
-          (if-let [[o e i] (and text (src/map-value-bounds text from to ":edges"))]
-            (let [nm (next-edge-name (.substring text from to) stem)
-                  updated (src/append-map-entry
-                           (.substring text o e)
-                           (str ":" nm " " (value-fn nm))
-                           ":edges" (src/column-of text i))]
-              (modal/replace-source! o e updated)
-              (modal/run-definitions!)
-              nm)
-            (do (deny! (str "non riesco ad aggiungere uno slot :edges alla forma "
-                            "(acquire …) — aggiungi :edges {} dentro la mappa e riprova"))
-                nil)))
-        (do (deny! "non trovo la forma (acquire …) nel sorgente")
-            nil)))))
-
-(def ^:private evidence-points
-  "How many of the recovered 3D points to write into the mark's `:from`. They are
-   the mark's evidence — what makes it re-editable — but a walked curve arrives
-   forty-odd points long and a literal that size buries the form it lives in.
-   A dozen, evenly spaced, still describes the zone."
-  12)
-
-(defn- curve-literal
-  "The `(curve-mark {…})` source of a measured curved edge: its 3D points, thinned
-   to what still describes the curve. Evidence, in the source, where it can be
-   deleted as text."
-  [pts]
-  (str "{:points [" (str/join " " (map src/fmt-vec3 (pcurve/subsample pts evidence-points)))
-       "]}"))
-
-(defn- accept-circle!
-  "'c' — write the bordo in hand as a CIRCLE, when the curve really is one."
-  []
-  (let [f (edge-fit)
-        ci (:circle f)]
-    (if-not ci
-      (deny! (str "questa curva non e' un cerchio abbastanza definito (o se ne vede "
-                  "troppo poco): scrivila con Invio e usala per un piano."))
-      (if-let [mark (pcircle/circle-mark ci {:toward (:toward f) :up-hints (up-hints)})]
-        (if-let [nm (commit-edge! "cerchio"
-                                  (fn [_] (str "(circle-mark " (circle-literal mark) ")")))]
-          (do (swap! stage update :edge
-                     #(-> % (update :committed conj {:ring (pcircle/ring-mesh ci)})
-                          (assoc :obs {}) (dissoc :fit :pending :kind)))
-              (say! (str ":" nm " scritto · cerchio ⌀"
-                         (src/fmt-number (* 2 (:radius ci)))
-                         " mm · turtle al centro, naso sull'asse · ? circle-mark"))
-              (redraw-overlay!))
-          (redraw-overlay!))
-        (deny! "il cerchio misurato non ha una normale utilizzabile")))))
-
 (defn- accept-edge!
-  "Invio — scrivi il bordo misurato AL POSTO della forma che ha armato il gesto.
-
-   Uno solo per tutti e due i tipi, perché quale sia lo decide l'IMMAGINE: si
-   può scrivere `(edit-edge-mark)` e trovarsi con una curva, e riscrivere la
-   forma giusta è compito del programma, non dell'utente. Un cerchio vero resta
-   sotto 'c', che è una dichiarazione in più — «questa curva è un cerchio» — non
-   una misura diversa."
+  "Invio — scrivi lo spigolo misurato AL POSTO della forma che ha armato il gesto."
   []
   (let [f (edge-fit)
         done! (fn [nm txt]
@@ -3167,12 +2962,6 @@
 
       (not (edge-usable?))
       (report-edge!)
-
-      (= :curva (:kind f))
-      (if-let [nm (commit-edge! "curva"
-                                (fn [_] (str "(curve-mark " (curve-literal (:points f)) ")")))]
-        (done! nm (str "curva · " (count (:points f)) " punti"))
-        (redraw-overlay!))
 
       :else
       (if-let [mark (pedge/edge-mark (:a f) (:b f) (up-hints))]
@@ -3231,22 +3020,13 @@
               (:flipped :loose) "eaq-hud-bad" :grazing "eaq-hud-warn" nil)))
     (row! "tratti" (str n "/2" (when (contains? (edge-obs) here) " · questa presa")) nil)
     (when f
-      (if (= :curva (:kind f))
-        (row! "misura" (str "curva · " (count (:points f)) " punti in comune · ordine "
-                            (src/fmt-number (* 100 (:agreement f))) "%")
-              (cond (not (:plausible? f)) "eaq-hud-bad"
-                    (< (count (:points f)) pcurve/min-shared-points) "eaq-hud-bad"
-                    (< (:agreement f) pcurve/min-agreement) "eaq-hud-bad"
-                    :else "eaq-hud-good"))
-        (row! "misura" (str "retta · " (src/fmt-number (:length-mm f)) " mm · scarto "
-                            (src/fmt-number (:rms-px f)) " px · giro "
-                            (src/fmt-number (:angle-deg f)) "°")
-              (cond (not (:plausible? f)) "eaq-hud-bad"
-                    (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"
-                    (> (:rms-px f) max-write-rms-px) "eaq-hud-warn"
-                    :else "eaq-hud-good")))
-      (when-let [ci (:circle f)]
-        (row! "cerchio" (str "⌀" (src/fmt-number (* 2 (:radius ci))) " mm · 'c' lo scrive") nil)))
+      (row! "misura" (str "retta · " (src/fmt-number (:length-mm f)) " mm · scarto "
+                          (src/fmt-number (:rms-px f)) " px · giro "
+                          (src/fmt-number (:angle-deg f)) "°")
+            (cond (not (:plausible? f)) "eaq-hud-bad"
+                  (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"
+                  (> (:rms-px f) max-write-rms-px) "eaq-hud-warn"
+                  :else "eaq-hud-good")))
     (row! "ora" (cond
                   (not (:in-pose? @stage)) "torna in una foto (bottone Foto)"
                   (get-in @stage [:edge :pending]) "clicca il secondo capo"
@@ -3307,7 +3087,7 @@
 ;; by the stage, from a note left during the eval.
 
 (def ^:private edit-edge-heads
-  {:retta "(edit-edge-mark" :curva "(edit-curve-mark"})
+  {:retta "(edit-edge-mark"})
 
 (defn ^:export request-edge-edit!
   "SCI entry point for `(edit-edge-mark …)` / `(edit-curve-mark …)`. Notes the
@@ -3362,7 +3142,7 @@
    goes; a wrapped literal gets its head renamed back, body byte-identical."
   [{:keys [head kind]}]
   (let [text (cm/get-value)
-        resting (str "(" (clojure.core/name (get {:retta :edge-mark :curva :curve-mark} kind :edge-mark)))]
+        resting "(edge-mark"]
     (when-let [[from to] (modal/find-form-bounds text head)]
       (if (str/blank? (src/form-inner text from to head))
         (let [[k-from _] (src/entry-bounds-before text from)]
@@ -3398,7 +3178,6 @@
 (defn- edge-key! [k]
   (cond
     (= k "Enter") (do (accept-edge!) true)
-    (= k "c") (do (accept-circle!) true)
     (= k "r") (do (reset-current!) true)
     (= k "l") (do (toggle-labels!) true)
     (or (= k "+") (= k "=")) (do (cycle-brush! 1) true)

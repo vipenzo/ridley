@@ -309,15 +309,6 @@
     :description "Construct a circular 2D shape centered at the origin. The shape is centered (`:centered? true`) so the centroid coincides with the turtle when projected. Does not modify turtle state."
     :path "docs/manual/reference/en/circle.md"}
 
-   "circle-mark"
-   {:name "circle-mark"
-    :category "acquisition"
-    :status "stable"
-    :since ""
-    :signature "(circle-mark circle-map)"
-    :description "A **measured circle** of an acquisition — the curved sibling of `edge-mark`, written when a curve you measured turns out to bend as a circle. It **returns the map unchanged**."
-    :path "docs/manual/reference/en/circle-mark.md"}
-
    "clear-highlights"
    {:name "clear-highlights"
     :category "faces"
@@ -402,10 +393,10 @@
    "curve-mark"
    {:name "curve-mark"
     :category "acquisition"
-    :status "stable"
+    :status "deprecated"
     :since ""
     :signature "(curve-mark points-map)"
-    :description "A **measured curved edge** of an acquisition: the 3D points recovered from the photographs. It **returns the map unchanged**, like the rest of the family."
+    :description "A **curved edge measured before 2026-08-10**, kept as its 3D points. It still counts as evidence for a plane, and it still draws — but **curves can no longer be measured**, and there is no gesture that writes one."
     :path "docs/manual/reference/en/curve-mark.md"}
 
    "cut-candidates"
@@ -515,15 +506,6 @@
     :signature "(edit-bezier)\n(edit-bezier :shape)\n(edit-bezier :wireframe)\n(edit-bezier end ctrl-1 ctrl-2)\n(edit-bezier path :at :mark)\n(edit-bezier path :at :mark :symmetric)"
     :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
     :path "docs/manual/reference/en/edit-bezier.md"}
-
-   "edit-curve-mark"
-   {:name "edit-curve-mark"
-    :category "acquisition"
-    :status "stable"
-    :since ""
-    :signature "(edit-curve-mark)\n(edit-curve-mark curve-map)"
-    :description "**Measure a curved edge** — the same gesture as `edit-edge-mark`, said for a curve. Written as a value inside an evaluated `(acquire …)`'s `:edges`, it arms the measurement:"
-    :path "docs/manual/reference/en/edit-curve-mark.md"}
 
    "edit-edge-mark"
    {:name "edit-edge-mark"

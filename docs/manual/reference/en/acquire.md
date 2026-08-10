@@ -64,8 +64,7 @@ And the names are anchors, so the turtle can stand on any of them:
   - `:shapes` — outlines traced on the photographs, as named `(poly …)`;
   - `:marks` — working planes, as named `(plane-mark …)` or
     `(plane-from-edges …)`;
-  - `:edges` — measured edges, as named `(edge-mark …)`, `(curve-mark …)` or
-    `(circle-mark …)`.
+  - `:edges` — measured edges, as named `(edge-mark …)`.
 
 ## Notes
 
@@ -87,6 +86,6 @@ And the names are anchors, so the turtle can stand on any of them:
 
 - `edit-edge-mark` — measure an edge into `:edges`
 - `plane-from-edges` — a plane from the edges you have measured
-- `plane-mark` · `edge-mark` · `curve-mark` · `circle-mark` — the resting forms
+- `plane-mark` · `edge-mark` — the resting forms
 - `acquire-union` — fuse two shooting sessions of the same object
 - `turtle` — how an acquisition's names pose the turtle
