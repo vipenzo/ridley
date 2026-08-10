@@ -4089,6 +4089,13 @@
   {:plane-from (vec (remove map? args))
    :opts (first (filter map? args))})
 
+(def ^:private loo-swing-deg
+  "Di quanto può ruotare il piano togliendo uno dei bordi che lo definiscono,
+   prima che valga la pena dirlo. Due gradi: sotto, è il rumore di misure che
+   descrivono la stessa faccia; sopra, i bordi stanno descrivendo superfici
+   diverse e il piano è una media fra loro."
+  2.0)
+
 (defn- plane-spec? [v]
   (and (map? v) (contains? v :plane-from)))
 
@@ -4156,6 +4163,33 @@
                             "(la soglia è " pcurve/plane-outlier-mm " mm). "
                             "Un bordo di un'altra faccia non deve poter inclinare "
                             "questo piano, quindi il fit lo lascia fuori.")))))
+            ;; LEAVE-ONE-OUT: di quanto ruoterebbe il piano togliendo ciascun
+            ;; bordo. È la domanda che la planarità in millimetri non risponde —
+            ;; sui dati veri di Vincenzo 0.69 mm di scarto su una nuvola larga
+            ;; 8 mm valgono NOVE GRADI, e una soglia assoluta in mm lasciava
+            ;; passare tutto in silenzio. Con due bordi non ha senso (togliendone
+            ;; uno resta una retta, che sta su infiniti piani); da tre in su è la
+            ;; misura di quanto le prove sono d'accordo fra loro.
+            (when (> (count plane-from) 2)
+              (let [hints (if plate? [(:heading pose) (:up pose)] [(:up pose) (:heading pose)])
+                    swing (fn [en]
+                            (let [ps (vec (mapcat #(pcurve/edge-points (get edges %))
+                                                  (remove #(= % en) plane-from)))]
+                              (when-let [o (and (>= (count ps) 3)
+                                                (pcurve/plane-from-points ps {:up-hints hints}))]
+                                [en (* (/ 180.0 Math/PI)
+                                       (Math/acos (min 1.0 (Math/abs (m/dot (:heading pl)
+                                                                            (:heading o))))))])))
+                    swings (sort-by (comp - second) (keep swing plane-from))]
+                (when (> (or (second (first swings)) 0.0) loo-swing-deg)
+                  (say (str "le prove non sono del tutto d'accordo: "
+                            (str/join ", " (map (fn [[en d]]
+                                                  (str "senza " en " ruoterebbe di "
+                                                       (modal/fmt-number d) "°"))
+                                                swings))
+                            ". Su una faccia vera questi numeri sono piccoli; se uno "
+                            "è grande, quel bordo sta su un'ALTRA superficie (un "
+                            "raccordo, uno smusso) oppure è misurato male.")))))
             (when (> (:flatness-mm pl) 1.0)
               (say (str "attenzione: i bordi nominati non sono così complanari "
                         "(planarità " (modal/fmt-number (:flatness-mm pl)) " mm)")))

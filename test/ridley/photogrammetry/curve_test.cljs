@@ -303,3 +303,33 @@
     (is (= 20 (:dropped fuori)) "il terzo fuori piano viene scartato INTERO")
     (is (< (Math/abs (- 10.0 (nth (:position fuori) 2))) 1e-6)
         "e il piano resta dov'era, senza farsi inclinare un po'")))
+
+(deftest three-edges-can-disagree-and-the-angle-says-so
+  ;; I bordi veri di Vincenzo (2026-08-10, :tip-plane): tre spigoli della stessa
+  ;; punta. Il fit li usa TUTTI — nessuno viene scartato, il peggiore sta a 0.7 mm
+  ;; dal piano — eppure togliendone uno il piano ruota di nove gradi.
+  ;;
+  ;; È il motivo per cui la planarità in MILLIMETRI non basta come allarme: 0.7 mm
+  ;; su una nuvola larga 8 mm sono 9°, e la soglia assoluta (1 mm) taceva. Il
+  ;; numero che conta è di quanto ruota il piano se togli una prova.
+  (println "\n=== Tre bordi possono non essere d'accordo ===")
+  (let [E {:tip-alto {:a [-18.4881 6.5654 17.2531] :b [-15.6568 -9.2204 17.8076]}
+           :tip-sx   {:a [-17.279 -10.8086 10.0274] :b [-17.2255 -10.7144 14.9319]}
+           :tip-dx   {:a [-18.9323 8.0703 10.2653] :b [-18.8867 8.0049 15.6393]}}
+        fit (fn [ks] (pcurve/plane-from-points
+                      (vec (mapcat #(pcurve/edge-points (E %)) ks))
+                      {:up-hints [[0.0 0.0 1.0]]}))
+        deg (fn [u v] (* (/ 180.0 Math/PI)
+                         (Math/acos (min 1.0 (Math/abs (la/v-dot u v))))))
+        all (fit [:tip-sx :tip-dx :tip-alto])
+        swing (fn [k] (deg (:heading all) (:heading (fit (remove #{k} [:tip-sx :tip-dx :tip-alto])))))]
+    (println (str "  tenuti " (:n all) "/" (+ (:n all) (:dropped all))
+                  " punti · planarità " (fmt (:flatness-mm all) 3)
+                  " mm · larghezza " (fmt (:width-mm all) 2) " mm"))
+    (println (str "  senza :tip-sx " (fmt (swing :tip-sx) 2)
+                  "° · senza :tip-alto " (fmt (swing :tip-alto) 2)
+                  "° · senza :tip-dx " (fmt (swing :tip-dx) 2) "°"))
+    (is (zero? (:dropped all)) "nessun bordo viene scartato: contano tutti e tre")
+    (is (< (:flatness-mm all) 1.0) "e la planarità in mm sta sotto la soglia d'allarme")
+    (is (> (swing :tip-alto) 5.0)
+        "eppure togliere il terzo bordo ruota il piano di parecchi gradi")))

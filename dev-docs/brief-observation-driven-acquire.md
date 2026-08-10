@@ -385,3 +385,30 @@ dica. Ora ogni bordo nominato rende conto di sé:
 o, quando ne serve solo una parte, «di :tre sono serviti 17 punti su 20».
 Silenzio = tutti i bordi nominati sono serviti per intero. La politica è fissata
 da un test (`a-third-edge-counts-whole-or-not-at-all`).
+
+### I dati veri di :tip-plane, e perché "sembra prendere solo il centro" (2026-08-10)
+
+Vincenzo, su tre spigoli veri della stessa punta: «di :tip-alto sembra usare solo
+il centro (se lo tolgo il piano si sposta, quindi lo prende in considerazione)».
+
+Misurato sui suoi numeri: **tutti e 60 i punti sono usati, zero scartati**, e il
+bordo più lontano sta a 0.69 mm dal piano. Quello che si vede ha una causa
+diversa e più semplice: il fit ai minimi quadrati fa passare il piano IN MEZZO
+alle prove, quindi **ogni bordo lo attraversa** — `:tip-alto` va da −0.42 mm a
++0.69 mm passando per lo zero verso il centro, e lo stesso fanno gli altri due.
+Un segmento a cavallo del piano tocca il disco solo dove lo incrocia e se ne
+stacca ai capi; su un bordo lungo 16 mm si nota, sui due verticali da 5 mm no.
+Non è "ne usa un pezzo": è il piano che ci passa in mezzo, come deve.
+
+Ma i numeri hanno detto anche altro, ed è la cosa che valeva la pena costruire:
+**togliendo un bordo il piano ruota di 9°** (senza `:tip-sx` 9.32°, senza
+`:tip-alto` 8.91°, senza `:tip-dx` 4.52°). Tre prove che si contraddicono di
+nove gradi non descrivono la stessa faccia — e la planarità in MILLIMETRI non lo
+diceva: 0.69 mm stava tranquillamente sotto la soglia d'allarme di 1 mm, perché
+0.69 mm su una nuvola larga 8 mm *sono* 9°.
+
+Da qui il **leave-one-out**, da tre bordi in su: per ciascuno, di quanto
+ruoterebbe il piano se lo togliessi, riportato quando il massimo supera 2°. È la
+stessa arma che il canale usa già per gli spigoli, e sostituisce una soglia
+assoluta che non poteva funzionare — un millimetro vuol dire cose diverse su una
+nuvola larga 8 mm e su una larga 80.
