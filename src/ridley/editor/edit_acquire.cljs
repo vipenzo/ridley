@@ -4110,32 +4110,35 @@
    camere si spostano. Punta VIA DAL CENTRO dell'oggetto, che è la regola fisica
    della normale uscente di una faccia."
   [dir nm {:keys [plane-from opts]} edges pose plate? centre]
-  (let [say (fn [msg] (state/capture-println
-                       (str ";; plane-from-edges · " dir " · :" (name nm) ": " msg)))
+  (let [;; prefisso corto: la CARTELLA della sessione, non tutto il percorso, e il
+        ;; nome del mark. Basta a distinguere due acquire e sta su una riga.
+        folder (last (remove empty? (str/split (str dir) #"/")))
+        say (fn [msg] (state/capture-println
+                       (str ";; plane-from-edges · " folder " · :" (name nm) " · " msg)))
+        ;; due decimali: in una riga sintetica 26.5651° è rumore, 26.57° è la misura
+        n2 (fn [x] (modal/fmt-number (/ (js/Math.round (* 100.0 x)) 100.0)))
         missing (remove #(contains? edges %) plane-from)
         pts (vec (mapcat #(pcurve/edge-points (get edges %)) plane-from))]
     (cond
       (empty? plane-from)
-      (do (say "nessun bordo nominato — serve almeno uno spigolo o una curva") nil)
+      (do (say "nessun bordo nominato · ? plane-from-edges") nil)
 
       (seq missing)
-      (do (say (str (str/join ", " missing) " non "
-                    (if (next missing) "sono" "è") " fra gli :edges di questo acquire"))
-          nil)
+      (do (say (str "non trovo " (str/join ", " missing) " fra gli :edges")) nil)
 
       (< (count pts) 3)
-      (do (say "i bordi nominati non hanno abbastanza punti per un piano") nil)
+      (do (say "punti insufficienti per un piano") nil)
 
       :else
       (if-let [pl (pcurve/plane-from-points
                    pts {:up-hints (if plate? [(:heading pose) (:up pose)]
                                       [(:up pose) (:heading pose)])})]
         (if (< (:width-mm pl) pcurve/min-width-mm)
-          (do (say (str "i bordi nominati stanno quasi in FILA (larghi "
-                        (modal/fmt-number (:width-mm pl)) " mm), e una fila sta su "
-                        "INFINITI piani: 1 mm d'errore inclinerebbe la normale di "
-                        (modal/fmt-number (:tilt-per-mm-deg pl)) "°. Nominane uno "
-                        "trasversale, non parallelo a questi. Il mark NON è stato creato."))
+          (do (say (str "NON creato · bordi in fila (larghi "
+                        (n2 (:width-mm pl)) " mm, min "
+                        (n2 pcurve/min-width-mm) ") · 1 mm d'errore = "
+                        (n2 (:tilt-per-mm-deg pl)) "° · serve un bordo "
+                        "trasversale · ? plane-from-edges"))
               nil)
           (let [outward (m/v- (:position pl) centre)
                 flip? (neg? (m/dot (:heading pl) outward))
@@ -4154,15 +4157,11 @@
                     ds (map d ps)
                     out (count (filter #(> % pcurve/plane-outlier-mm) ds))]
                 (when (pos? out)
-                  (say (str (if (= out (count ps))
-                              (str en " NON è servito a questo piano")
-                              (str "di " en " sono serviti " (- (count ps) out)
-                                   " punti su " (count ps)))
-                            ": sta fino a " (modal/fmt-number (reduce max ds))
-                            " mm fuori dal piano su cui gli altri sono d'accordo "
-                            "(la soglia è " pcurve/plane-outlier-mm " mm). "
-                            "Un bordo di un'altra faccia non deve poter inclinare "
-                            "questo piano, quindi il fit lo lascia fuori.")))))
+                  (say (str en (if (= out (count ps))
+                                 " SCARTATO"
+                                 (str " · usati " (- (count ps) out) "/" (count ps) " punti"))
+                            " · fino a " (n2 (reduce max ds)) " mm fuori (max "
+                            pcurve/plane-outlier-mm ") · ? plane-from-edges")))))
             ;; LEAVE-ONE-OUT: di quanto ruoterebbe il piano togliendo ciascun
             ;; bordo. È la domanda che la planarità in millimetri non risponde —
             ;; sui dati veri di Vincenzo 0.69 mm di scarto su una nuvola larga
@@ -4182,19 +4181,15 @@
                                                                             (:heading o))))))])))
                     swings (sort-by (comp - second) (keep swing plane-from))]
                 (when (> (or (second (first swings)) 0.0) loo-swing-deg)
-                  (say (str "le prove non sono del tutto d'accordo: "
-                            (str/join ", " (map (fn [[en d]]
-                                                  (str "senza " en " ruoterebbe di "
-                                                       (modal/fmt-number d) "°"))
-                                                swings))
-                            ". Su una faccia vera questi numeri sono piccoli; se uno "
-                            "è grande, quel bordo sta su un'ALTRA superficie (un "
-                            "raccordo, uno smusso) oppure è misurato male.")))))
+                  (say (str "prove in disaccordo · "
+                            (str/join " · " (map (fn [[en d]]
+                                                   (str "senza " en " " (n2 d) "°"))
+                                                 swings))
+                            " · ? plane-from-edges")))))
             (when (> (:flatness-mm pl) 1.0)
-              (say (str "attenzione: i bordi nominati non sono così complanari "
-                        "(planarità " (modal/fmt-number (:flatness-mm pl)) " mm)")))
+              (say (str "planarità " (n2 (:flatness-mm pl)) " mm")))
             (merge mk {:from (mapv vec (pcurve/subsample (:points pl) 12))} opts)))
-        (do (say "i bordi nominati non definiscono un piano") nil)))))
+        (do (say "i bordi nominati non definiscono un piano · ? plane-from-edges") nil)))))
 
 (defn- resolve-plane-specs
   "Sostituisce ogni `(plane-from-edges …)` di `:marks` col piano che nomina. Le

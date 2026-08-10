@@ -102,6 +102,44 @@ La sagitta lo dice dall'altro lato — un cerchio resta dentro 1.2 px per
 continua a essere rifiutato come arco (verificato: il test del disco tiene 58 px
 e viene respinto).
 
+## MENO DISCORSIVO, PIÙ TABELLARE (2026-08-10)
+
+«Credo sarebbe meglio dare queste informazioni — sia nel REPL sia nel pannellino
+— in modo meno discorsivo e più sintetico/tabellare. Se mai mettiamo un "?" che
+punti a una pagina del manuale per spiegazioni più lunghe.»
+
+Il pannello era fatto di paragrafi che insegnavano; ma una spiegazione si legge
+una volta, mentre i numeri si guardano a ogni pennellata. Ora il pannello è a
+RIGHE — etichetta a sinistra, valore a destra — e tiene solo ciò che cambia
+mentre lavori:
+
+    BORDI                                     [?]
+    ✓ SCRITTO · retta · 16.05 mm
+    scrive     :bordo-alto
+    foto       2/10 · reg 4.19 px
+    tratti     1/2 · questa presa
+    misura     retta · 16.05 mm · scarto 0.42 px · giro 34.1°
+    ora        Invio scrive
+    bordi (3)
+      :bordo-alto      30 mm
+      :profilo         curva
+      :nascosto        nascosto
+    piani (1)
+      :coperchio
+
+Le frasi in console seguono la stessa regola, campi separati da `·`, e quando
+c'è altro da capire rimandano alla scheda invece di spiegarla lì:
+
+    ;; plane-from-edges · param-plate-paper · :fianco · NON creato · bordi in
+    ;; fila (larghi 2 mm, min 4) · 1 mm d'errore = 26.57° · serve un bordo
+    ;; trasversale · ? plane-from-edges
+
+Dettagli che valeva la pena non sbagliare: due decimali e non quattro (in una
+riga sintetica `26.5651°` è rumore, `26.57°` è la misura); il prefisso porta la
+CARTELLA della sessione, non tutto il percorso, così due acquire restano
+distinguibili senza occupare la riga; e il `?` non stampa un nome, APRE il
+manuale sulla scheda (`refbrowser/open-card!`), verificato dal vivo cliccandolo.
+
 ## ESC DOVEVA ESSERE PREMUTO DUE O TRE VOLTE (2026-08-10)
 
 «Ho fatto le prove che dici: di Esc bisogna darne due o 3 prima che esca
