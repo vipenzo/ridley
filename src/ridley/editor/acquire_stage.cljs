@@ -2507,23 +2507,23 @@
       (nil? f) nil
 
       (not (:plausible? f))
-      (deny! "NON MISURATO" (str "lo spigolo cade lontano dall'oggetto · tratti diversi, o foto "
+      (deny! "NOT MEASURED" (str "lo spigolo cade lontano dall'oggetto · tratti diversi, o foto "
                                  "troppo simili · ? edit-edge-mark"))
 
       (< (:angle-deg f) pedge/min-plane-angle-deg)
-      (deny! "NON MISURATO" (str "giro " (src/fmt-number (:angle-deg f)) "° (min "
+      (deny! "NOT MEASURED" (str "giro " (src/fmt-number (:angle-deg f)) "° (min "
                                  pedge/min-plane-angle-deg "°) · serve una foto da un ALTRO "
                                  "lato · ? edit-edge-mark"))
 
       (> (:rms-px f) max-write-rms-px)
-      (deny! "NON MISURATO" (str "scarto " (src/fmt-number (:rms-px f)) " px (max "
+      (deny! "NOT MEASURED" (str "scarto " (src/fmt-number (:rms-px f)) " px (max "
                                  (src/fmt-number max-write-rms-px) ") · su una foto è stato "
                                  "seguito un bordo diverso · ? edit-edge-mark"))
 
       :else
       (do (say! (str "spigolo su " (count (:photos f)) " foto · lunghezza "
                      (src/fmt-number (:length-mm f)) " mm · riproiezione "
-                     (src/fmt-number (:rms-px f)) " px · giro "
+                     (src/fmt-number (:rms-px f)) " px · turn "
                      (src/fmt-number (:angle-deg f)) "°"
                      (when (:exact? f)
                        (str " — con DUE foto la retta ci passa esatta: quello 0 px "
@@ -2546,9 +2546,8 @@
   [idx p1 p2 pose k]
   (if (< (pedge/segment-length-px [p1 p2]) pedge/min-segment-px)
     (do (swap! stage update :edge dissoc :pending)
-        (say! (str "i due click sono quasi sovrapposti (meno di "
-                   pedge/min-segment-px " px): un tratto così corto non dice in che "
-                   "direzione va lo spigolo. Ridisegnalo più lungo."))
+        (deny! "TOO SHORT" (str "i due click distano meno di " pedge/min-segment-px
+                                   " px · un tratto così non dice la direzione"))
         (redraw-overlay!))
     (let [snap (edge-snap/snap-segment backdrop/luminance-at p1 p2)
           seg (if snap [(:p1 snap) (:p2 snap)] [p1 p2])]
@@ -2558,13 +2557,20 @@
                                         :intrinsics k :snap snap})
                   (dissoc :pending)))
       (solve-edge!)
-      (if snap
-        (say! (str "tratto preso sulla foto " (nav-rank idx) " · agganciato al "
-                   "contrasto su " (:n snap) " punti (scarto "
-                   (src/fmt-number (:rms snap)) " px)"))
-        (say! (str "tratto preso sulla foto " (nav-rank idx)
-                   " · NON agganciato al contrasto (l'edge è sfumato o coperto qui): "
-                   "valgono i tuoi due click, quindi conta la precisione della mano")))
+      (let [msg (if snap
+                  (str "tratto preso sulla foto " (nav-rank idx) " · agganciato al "
+                       "contrasto su " (:n snap) " punti (scarto "
+                       (src/fmt-number (:rms snap)) " px)")
+                  (str "tratto preso sulla foto " (nav-rank idx)
+                       " · NON agganciato al contrasto · valgono i tuoi due click"))]
+        (say! msg)
+        ;; anche questo va detto DOVE STA LA MANO: il tratto si disegna, ma se
+        ;; serve una seconda foto la riga del pannello è ciò che lo dice
+        (swap! stage assoc-in [:edge :outcome]
+               {:ok? true :about :stroke :head "STROKE TAKEN"
+                :text (if (>= (count (edge-obs)) 2)
+                        "measured · Enter writes it"
+                        "same edge needed on another photo: ] and draw it again")}))
       (case (registration-trouble idx)
         :grazing (say! (str "nota: la foto " (nav-rank idx) " è radente, quindi meno "
                             "precisa — il tratto è preso lo stesso"))
@@ -2830,8 +2836,18 @@
         (if-let [k (stage-intrinsics)]
           (let [{ppx :px pidx :idx} (get-in @stage [:edge :pending])
                 open! (fn [msg]
-                        (swap! stage assoc-in [:edge :pending]
-                               {:px px :idx idx :intrinsics k})
+                        (swap! stage (fn [st]
+                                       (-> st
+                                           (assoc-in [:edge :pending]
+                                                     {:px px :idx idx :intrinsics k})
+                                           ;; il pallino giallo può cadere fuori
+                                           ;; dall'oggetto e non disegnarsi: la riga
+                                           ;; del pannello è l'unica prova che il
+                                           ;; click è stato sentito
+                                           (assoc-in [:edge :outcome]
+                                                     {:ok? true :about :stroke
+                                                      :head "FIRST END"
+                                                      :text "click the other end"}))))
                         (say! msg)
                         (redraw-overlay!))]
             (cond
@@ -2968,7 +2984,7 @@
         (if-let [nm (commit-edge! "spigolo"
                                   (fn [_] (str "(edge-mark "
                                                (edge-literal mark (:a f) (:b f)) ")")))]
-          (done! nm (str "retta · " (src/fmt-number (:length-mm f)) " mm"))
+          (done! nm (str "straight · " (src/fmt-number (:length-mm f)) " mm"))
           (redraw-overlay!))
         (deny! "i due capi coincidono: non c'e' una direzione da scrivere")))))
 
@@ -2994,8 +3010,8 @@
                                      :children [(el "span" "eaq-hud-hint" :text k)
                                                 (el "span" cls :text v)])))]
     (let [head (el "div" "eaq-hud-shot"
-                   :children [(el "div" "eaq-hud-title" :text "BORDI")
-                              (hud-button "?" "Apre il manuale su edit-edge-mark"
+                   :children [(el "div" "eaq-hud-title" :text "EDGES")
+                              (hud-button "?" "Open the manual on edit-edge-mark"
                                           true false
                                           #(refbrowser/open-card! "edit-edge-mark"))])]
       (.appendChild frag head))
@@ -3005,70 +3021,70 @@
                              :text (str (if (:ok? oc) "✓ " "✗ ")
                                         (or (:head oc)
                                             (case [(boolean (:ok? oc)) (:about oc :stroke)]
-                                              [true :write] "SCRITTO"
-                                              [false :write] "NON SCRITTO"
-                                              [true :stroke] "TROVATO"
-                                              "NIENTE QUI"))
+                                              [true :write] "WRITTEN"
+                                              [false :write] "NOT WRITTEN"
+                                              [true :stroke] "FOUND"
+                                              "NOTHING HERE"))
                                         " · " (:text oc)))))
-    (row! "scrive" (if (:name target) (str ":" (:name target)) "—") nil)
-    (row! "foto" (if-not (:in-pose? @stage)
-                   "vista libera"
+    (row! "writes" (if (:name target) (str ":" (:name target)) "—") nil)
+    (row! "photo" (if-not (:in-pose? @stage)
+                   "free view"
                    (str (nav-rank here) "/" (count (nav-order))
                         (when-let [r (registration-label here)] (str " · " r))))
           (when (:in-pose? @stage)
             (case (registration-trouble here)
               (:flipped :loose) "eaq-hud-bad" :grazing "eaq-hud-warn" nil)))
-    (row! "tratti" (str n "/2" (when (contains? (edge-obs) here) " · questa presa")) nil)
+    (row! "strokes" (str n "/2" (when (contains? (edge-obs) here) " · this one taken")) nil)
     (when f
-      (row! "misura" (str "retta · " (src/fmt-number (:length-mm f)) " mm · scarto "
-                          (src/fmt-number (:rms-px f)) " px · giro "
+      (row! "measure" (str "straight · " (src/fmt-number (:length-mm f)) " mm · residual "
+                          (src/fmt-number (:rms-px f)) " px · turn "
                           (src/fmt-number (:angle-deg f)) "°")
             (cond (not (:plausible? f)) "eaq-hud-bad"
                   (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"
                   (> (:rms-px f) max-write-rms-px) "eaq-hud-warn"
                   :else "eaq-hud-good")))
-    (row! "ora" (cond
-                  (not (:in-pose? @stage)) "torna in una foto (bottone Foto)"
-                  (get-in @stage [:edge :pending]) "clicca il secondo capo"
-                  (edge-usable?) "Invio scrive"
-                  (contains? (edge-obs) here) "] cambia foto, stesso bordo"
-                  :else "dipingi il bordo")
+    (row! "next" (cond
+                  (not (:in-pose? @stage)) "go back into a photo (Photo button)"
+                  (get-in @stage [:edge :pending]) "click the other end"
+                  (edge-usable?) "Enter writes it"
+                  (contains? (edge-obs) here) "] next photo, same edge"
+                  :else "paint the edge")
           "eaq-hud-hint")
     (when-let [es (seq (:source-edges @stage))]
-      (add! nil (str "bordi (" (count es) ")"))
+      (add! nil (str "edges (" (count es) ")"))
       (doseq [[nm e] (sort-by key es)]
         (row! (str ":" (name nm))
-              (cond (not (shown? e)) "nascosto"
-                    (:points e) "curva"
+              (cond (not (shown? e)) "hidden"
+                    (:points e) "curve"
                     (:radius e) (str "⌀" (src/fmt-number (* 2 (:radius e))))
                     (:length e) (str (src/fmt-number (:length e)) " mm")
                     :else "")
               nil)))
     (when-let [ps (seq (:source-marks @stage))]
-      (add! nil (str "piani (" (count ps) ")"))
+      (add! nil (str "planes (" (count ps) ")"))
       (doseq [[nm mk] (sort-by key ps)]
-        (row! (str ":" (name nm)) (if (shown? mk) "" "nascosto") nil)))
+        (row! (str ":" (name nm)) (if (shown? mk) "" "hidden") nil)))
     (.appendChild frag box)
     (let [row (el "div" "eaq-hud-actions")]
-      (.appendChild row (hud-button "Scrivi" "Scrive il bordo misurato al posto della forma (Invio)"
+      (.appendChild row (hud-button "Write" "Writes the measured edge in place of the form (Enter)"
                                     (edge-usable?) (edge-usable?) accept-edge!))
-      (.appendChild row (hud-button (if (labels-on?) "Nomi: sì" "Nomi: no")
-                                    "Nomi dei bordi sulla foto (l)"
+      (.appendChild row (hud-button (if (labels-on?) "Names: on" "Names: off")
+                                    "Edge names over the photo (l)"
                                     true false toggle-labels!))
-      (.appendChild row (hud-button (str "punta " (src/fmt-number (brush-px)) "px")
-                                    "Spessore del pennarello, in pixel schermo (+ e -)"
+      (.appendChild row (hud-button (str "nib " (src/fmt-number (brush-px)) "px")
+                                    "Marker width, in screen pixels (+ and -)"
                                     true false #(cycle-brush! 1)))
-      (.appendChild row (hud-button "Ricomincia" "Butta via pennellata e bordo in mano (r)"
+      (.appendChild row (hud-button "Reset" "Throws away the stroke and the edge in hand (r)"
                                     (boolean (or (seq (edge-obs))
                                                  (get-in @stage [:edge :brush])))
                                     false reset-current!))
-      (.appendChild row (hud-button "Annulla tratto" "Toglie il tratto di questa foto (Backspace)"
+      (.appendChild row (hud-button "Undo stroke" "Removes this photo's stroke (Backspace)"
                                     (boolean (or (seq (edge-obs))
                                                  (get-in @stage [:edge :pending])))
                                     false undo-edge-click!))
       ;; through stop-edge!, not by dropping :edge: with a form armed, giving up
       ;; has to put the source back the way it was
-      (.appendChild row (hud-button "Chiudi" "Esce e lascia il sorgente com'era (Esc)"
+      (.appendChild row (hud-button "Close" "Leaves, and puts the source back as it was (Esc)"
                                     true false stop-edge!))
       (.appendChild frag row))
     frag))
