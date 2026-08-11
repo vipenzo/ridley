@@ -282,20 +282,35 @@
   12.0)
 
 (def ^:private outlier-factor 3.0)
-(def ^:private outlier-floor-px 30.0)
+
+(def outlier-floor-frac
+  "The absolute half of the gross-outlier test, as a fraction of the image WIDTH.
+   It used to be a flat 30px, which is 0.75% of a 4032px phone photo — right for
+   the regime it was chosen in, and far too permissive on a 1920px live frame,
+   where the same physical error images at half the pixels. A misidentified mark
+   26px off a 1920px frame is exactly as gross as one 55px off a 4032px photo, and
+   the test now says so. At 4032px this reproduces the old 30px almost exactly, so
+   the photo path is unchanged."
+  0.0075)
+
+(defn- outlier-floor-px
+  "The gross-outlier floor in px for this image, read off the intrinsics — the
+   principal point is the image centre, so the width is 2·cx."
+  [{:keys [cx]}]
+  (* outlier-floor-frac 2.0 (or cx 2016.0)))
 
 (defn- gross-outlier?
   "Is the worst per-point residual a GROSS outlier — far above the rest — rather
    than ambient hand-click noise? Only then is dropping it justified; dropping to
    chase noise would wrongly flag innocent corners. True when the worst residual
-   clears an absolute floor AND is several times the median of the others."
-  [per-point]
+   clears the image-relative floor AND is several times the median of the others."
+  [per-point intrinsics]
   (when (> (count per-point) 1)
     (let [sorted (vec (sort > (map :residual-px per-point)))
           worst (first sorted)
           others (rest sorted)
           med (nth (vec (sort others)) (quot (count others) 2))]
-      (and (> worst outlier-floor-px)
+      (and (> worst (outlier-floor-px intrinsics))
            (> worst (* outlier-factor (max 1e-6 med)))))))
 
 (defn- coplanar?
@@ -352,13 +367,22 @@
              :method (cond dlt :dlt planar :planar :else :seed)))))
 
 (defn solve-pnp
-  "Robust PnP: seedless DLT (≥6 correspondences) + LM refine, then GREEDY
-   outlier rejection — while the fit is dirtier than accept-rms-px and there are
-   points to spare (never below min-correspondences), drop the highest-residual
-   correspondence and refit. Recovers a clean pose from the good corners even
-   when one or two were mislabeled, and reports which were dropped so the caller
-   can flag them for re-clicking. Falls back to a caller-supplied coarse `:seed`
-   (e.g. the gizmo pose) when there are too few points for DLT.
+  "Robust PnP: seedless DLT (≥6 correspondences) + LM refine, then GREEDY outlier
+   rejection — while a GROSS outlier survives and there are points to spare (never
+   below min-correspondences, never more than :max-outliers), drop the
+   highest-residual correspondence and refit. Recovers a clean pose from the good
+   points even when one or two were mislabeled, and reports which were dropped so
+   the caller can flag them for re-clicking. Falls back to a caller-supplied coarse
+   `:seed` (e.g. the gizmo pose) when there are too few points for DLT.
+
+   The cleaning used to STOP as soon as the rms fell under `accept-rms-px`, which
+   quietly conflated two different questions: 'is this registration usable?' and
+   'is one of these points mislabeled?'. On live webcam frames the fits sit at
+   5-12px, so the loop exited immediately and every frame kept its worst point —
+   measured 2026-08-11: residuals of 1-5px on ten marks with ONE at 26-34px, which
+   alone made three quarters of the reported error and dragged the pose with it.
+   A gross outlier is a wrong point whether or not the total happens to be under
+   the bar, so only `gross-outlier?` (and the counts) may stop the loop now.
 
    `:method` selects the seedless estimator — :auto (default) DLT-then-planar,
    :dlt (box corners), :planar (a flat registration plate) — see solve-once.
@@ -374,12 +398,19 @@
     (loop [corr indexed
            outliers []]
       (when-let [r (solve-once corr intrinsics sigma-px seed method)]
-        (if (or (<= (:rms-px r) accept-rms-px)
-                (<= (count corr) min-correspondences)
+        (if (or (<= (count corr) min-correspondences)
                 (>= (count outliers) max-outliers)
-                ;; only reject a GROSS outlier — never drop good corners to
-                ;; chase ambient click noise
-                (not (gross-outlier? (:per-point r))))
+                ;; Stop only when the fit is BOTH acceptable AND free of a gross
+                ;; outlier. There are two different diseases and each has its own
+                ;; tell: a mislabeled point on a symmetric target spreads its damage
+                ;; over every residual (caught by the rms), while a mis-snapped one
+                ;; stands alone above the rest (caught by gross-outlier?). Requiring
+                ;; both tells to fire — which is what stopping on either check did —
+                ;; let a live frame at 11.6px keep a 30px point, three quarters of
+                ;; its whole error, because the total happened to sit under the bar.
+                (and (<= (:rms-px r) accept-rms-px)
+                     ;; never drop good points to chase ambient click noise
+                     (not (gross-outlier? (:per-point r) intrinsics))))
           (-> r
               (assoc :outliers (mapv #(dissoc % ::i) outliers))
               (update :per-point (fn [pp] (mapv #(dissoc % ::i) pp))))

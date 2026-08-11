@@ -132,6 +132,62 @@
                          (+ v (* sigma (synth/gauss rng)))]}))
                marks))))
 
+(deftest cleans-a-bad-point-even-when-the-total-looks-acceptable
+  ;; Live webcam frames sit at 5-12px, not the 1-3px a phone photo gives, and the
+  ;; cleaning loop used to stop as soon as the rms fell under accept-rms-px (12).
+  ;; So every frame kept its worst point. Measured on a real session (2026-08-11):
+  ;; ten marks at 1-5px with ONE at 26-34px, which alone was three quarters of the
+  ;; reported error — and the joint refine could not help, because the damage was
+  ;; in the correspondences, not the poses (10.158 → 10.120 px over four views).
+  (println "\n=== PnP: un punto sbagliato va tolto anche se il totale è 'accettabile' ===")
+  ;; Built like the real thing: a PLATE (12 coplanar marks) on a 1920-wide frame,
+  ;; ten marks at ordinary sub-pixel noise and ONE mis-snapped by 30px — the exact
+  ;; signature the session showed.
+  (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+        pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+        marks (ring-marks 12 58.0 1.5)
+        rng (synth/rng 9)
+        clean (vec (map-indexed
+                    (fn [i w] {:ci i
+                               :world w
+                               :px (let [[u v] (cam/project kk pose w)]
+                                     [(+ u (* 0.4 (synth/gauss rng)))
+                                      (+ v (* 0.4 (synth/gauss rng)))])})
+                    marks))
+        bad (update-in clean [5 :px] (fn [[u v]] [(+ u 30.0) v]))
+        before (pnp/solve-pnp bad kk {:max-outliers 0})
+        sol (pnp/solve-pnp bad kk {})]
+    (println (str "  soglia grossolano su 1920px " (fmt (* pnp/outlier-floor-frac 1920.0) 1)
+                  "px · senza pulizia rms " (fmt (:rms-px before) 2)
+                  "px → con pulizia " (fmt (:rms-px sol) 2) "px · scartati "
+                  (mapv :ci (:outliers sol))))
+    (is (some? sol))
+    ;; the whole point: the UNCLEANED fit is already "acceptable", so the old loop
+    ;; stopped there and kept the bad point
+    (is (<= (:rms-px before) pnp/accept-rms-px)
+        "il residuo senza pulizia sta sotto la soglia — è per questo che passava")
+    (is (some #(= 5 (:ci %)) (:outliers sol))
+        "il mark mis-agganciato va tolto lo stesso")
+    (is (< (:rms-px sol) 1.5)
+        (str "tolto quello, il resto è pulito (" (fmt (:rms-px sol) 2) "px)")))
+
+  (testing "e su un fotogramma da 4032px la soglia resta quella di prima (~30px)"
+    (is (< (Math/abs (- 30.0 (* pnp/outlier-floor-frac 4032.0))) 1.0)
+        "il percorso delle foto da telefono non deve cambiare"))
+
+  (testing "dati puliti: non si scarta niente"
+    (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+          pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+          rng (synth/rng 11)
+          corr (vec (map (fn [w] {:world w
+                                  :px (let [[u v] (cam/project kk pose w)]
+                                        [(+ u (* 0.4 (synth/gauss rng)))
+                                         (+ v (* 0.4 (synth/gauss rng)))])})
+                         (ring-marks 12 58.0 1.5)))
+          sol (pnp/solve-pnp corr kk {})]
+      (is (empty? (:outliers sol))
+          "il rumore ordinario non deve far scartare punti innocenti"))))
+
 (deftest recovers-pose-from-coplanar-plate-marks
   ;; The plate gate that triggered the planar-PnP work: 12 marks all on the
   ;; plate's top face are exactly coplanar, so estimate-dlt is singular. The
