@@ -4086,8 +4086,16 @@
    Restituisce una SPECIFICA, non ancora un mark: i nomi si possono risolvere
    solo dopo che l'acquire ha costruito i suoi :edges, ed è `acquire` a farlo."
   [& args]
-  {:plane-from (vec (remove map? args))
-   :opts (first (filter map? args))})
+  (let [opts (first (filter map? args))
+        rest' (remove map? args)]
+    ;; SOLO nomi. Passare l'acquire — `(plane-from-edges A :uno :due)` — è
+    ;; l'errore naturale, perché ogni altra cosa in questo canale comincia da A;
+    ;; e il messaggio che ne usciva («non trovo #'user/A fra gli :edges») diceva
+    ;; il sintomo e non la causa. Qui si separano i nomi dal resto, così il
+    ;; rifiuto può nominare l'argomento di troppo per quello che è.
+    {:plane-from (vec (filter keyword? rest'))
+     :junk (vec (remove keyword? rest'))
+     :opts opts}))
 
 (def ^:private loo-swing-deg
   "Di quanto può ruotare il piano togliendo uno dei bordi che lo definiscono,
@@ -4109,7 +4117,7 @@
    soprattutto una formula deve dare lo stesso risultato a ogni Run, mentre le
    camere si spostano. Punta VIA DAL CENTRO dell'oggetto, che è la regola fisica
    della normale uscente di una faccia."
-  [dir nm {:keys [plane-from opts]} edges pose plate? centre]
+  [dir nm {:keys [plane-from junk opts]} edges pose plate? centre]
   (let [;; prefisso corto: la CARTELLA della sessione, non tutto il percorso, e il
         ;; nome del mark. Basta a distinguere due acquire e sta su una riga.
         folder (last (remove empty? (str/split (str dir) #"/")))
@@ -4120,6 +4128,16 @@
         missing (remove #(contains? edges %) plane-from)
         pts (vec (mapcat #(pcurve/edge-points (get edges %)) plane-from))]
     (cond
+      (seq junk)
+      ;; nomina il valore di troppo per com'è scritto: dire "un argomento così"
+      ;; lascerebbe indovinare QUALE, e `#'user/A` da solo diceva il sintomo
+      (do (say (str "vuole solo i NOMI dei bordi (:uno :due) · c'è anche "
+                    (str/join ", " (map #(let [t (pr-str %)]
+                                           (if (> (count t) 24) (str (subs t 0 24) "…") t))
+                                        junk))
+                    " · se è l'acquire, toglilo: bastano i nomi · ? plane-from-edges"))
+          nil)
+
       (empty? plane-from)
       (do (say "nessun bordo nominato · ? plane-from-edges") nil)
 

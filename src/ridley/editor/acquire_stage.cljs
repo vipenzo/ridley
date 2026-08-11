@@ -2961,6 +2961,52 @@
        " :length " (src/fmt-number (m/magnitude (m/v- b a)))
        "}"))
 
+(defn- commit-edge!
+  "Write the measured edge into the source and re-run the definitions.
+   `value-fn` renders the resting form — `(edge-mark {…})`. Returns
+   the name written, or nil.
+
+   Two ways in, and the FIRST is the one the channel is moving to (Vincenzo,
+   2026-08-09: «se una nuova linea la facessimo partire, anziché cliccando su
+   Spigolo, scrivendo nel codice (edit-edge-mark)?»):
+
+   - ARMED FROM THE SOURCE: an `(edit-edge-mark …)` form is open, and the
+     measurement REPLACES it in place. The name is the key the user typed in
+     front of it, so it is his — `:bordo-alto` rather than `:spigolo-7` — which
+     is what makes `(plane-from-edges :bordo-alto :bordo-basso)` readable;
+   - free-hand: no form, so the entry is appended to the `:edges` block with a
+     generated name. Still there for as long as the Spigolo button is.
+
+   Either way the edit is BOUNDED: everything outside the range written survives
+   byte-identical."
+  [stem value-fn]
+  (let [text (cm/get-value)
+        {:keys [head name]} (get-in @stage [:edge :target])]
+    (if-let [[from to] (and head (modal/find-form-bounds text head))]
+      (do (modal/replace-source! from to (value-fn (or name stem)))
+          (swap! stage update :edge dissoc :target)
+          (modal/run-definitions!)
+          (or name stem))
+      (if-let [[from to] (acquire-form-bounds text)]
+        (let [text (if (src/map-value-bounds text from to ":edges")
+                     text
+                     (ensure-slot! text from to ":edges" ":marks"))
+              [from to] (when text (acquire-form-bounds text))]
+          (if-let [[o e i] (and text (src/map-value-bounds text from to ":edges"))]
+            (let [nm (next-edge-name (.substring text from to) stem)
+                  updated (src/append-map-entry
+                           (.substring text o e)
+                           (str ":" nm " " (value-fn nm))
+                           ":edges" (src/column-of text i))]
+              (modal/replace-source! o e updated)
+              (modal/run-definitions!)
+              nm)
+            (do (deny! (str "non riesco ad aggiungere uno slot :edges alla forma "
+                            "(acquire …) — aggiungi :edges {} dentro la mappa e riprova"))
+                nil)))
+        (do (deny! "non trovo la forma (acquire …) nel sorgente")
+            nil)))))
+
 (defn- accept-edge!
   "Invio — scrivi lo spigolo misurato AL POSTO della forma che ha armato il gesto."
   []
