@@ -251,6 +251,36 @@
                    (set! (.-onerror img) (fn [e] (reject e)))
                    (set! (.-src img) url)))))
 
+(defn sampler-of
+  "{:size [w h] :data <RGBA> :lum-at (fn [x y] -> 0-255|nil)} for anything
+   drawable — a decoded <img>, or a <canvas> a live camera frame was drawn into.
+   The pixel side of the acquisition channel is written against this shape and
+   nothing else, which is what lets a frame that never touched the disk be
+   detected, identified and registered exactly like a photo that did.
+
+   Kept separate from load-luminance-sampler (which is this, plus the file) because
+   a grabbed frame must be measurable BEFORE it is written: a frame that fails to
+   register never becomes a file at all."
+  [^js drawable iw ih]
+  (let [canvas (.createElement js/document "canvas")]
+    (set! (.-width canvas) iw)
+    (set! (.-height canvas) ih)
+    (let [ctx (.getContext canvas "2d" #js {:willReadFrequently true})]
+      (.drawImage ctx drawable 0 0)
+      (let [data (.-data (.getImageData ctx 0 0 iw ih))]
+        {:size [iw ih]
+         ;; the raw RGBA byte array (4/px), so the global blob detector can
+         ;; downsample in one tight loop instead of ~12M lum-at CLOSURE calls per
+         ;; photo (the batch-freezes-the-browser fix, fetta C)
+         :data data
+         :lum-at (fn [x y]
+                   (let [px (Math/round x) py (Math/round y)]
+                     (when (and (>= px 0) (>= py 0) (< px iw) (< py ih))
+                       (let [o (* (+ (* py iw) px) 4)]
+                         (+ (* 0.299 (aget data o))
+                            (* 0.587 (aget data (+ o 1)))
+                            (* 0.114 (aget data (+ o 2))))))))}))))
+
 (defn load-luminance-sampler
   "Load the photo at `file-path` OFF-SCREEN — without disturbing the displayed
    backdrop — and resolve to {:lum-at (fn [x y] -> 0-255|nil) :size [w h]}. Lets a
@@ -264,27 +294,9 @@
                (let [url (js/URL.createObjectURL blob)]
                  (-> (load-image url)
                      (.then (fn [^js img]
-                              (let [iw (.-naturalWidth img) ih (.-naturalHeight img)
-                                    canvas (.createElement js/document "canvas")]
-                                (set! (.-width canvas) iw)
-                                (set! (.-height canvas) ih)
-                                (let [ctx (.getContext canvas "2d" #js {:willReadFrequently true})]
-                                  (.drawImage ctx img 0 0)
-                                  (let [data (.-data (.getImageData ctx 0 0 iw ih))]
-                                    (js/URL.revokeObjectURL url)
-                                    {:size [iw ih]
-                                     ;; the raw RGBA byte array (4/px), so the global
-                                     ;; blob detector can downsample in one tight loop
-                                     ;; instead of ~12M lum-at CLOSURE calls per photo
-                                     ;; (the batch-freezes-the-browser fix, fetta C)
-                                     :data data
-                                     :lum-at (fn [x y]
-                                               (let [px (Math/round x) py (Math/round y)]
-                                                 (when (and (>= px 0) (>= py 0) (< px iw) (< py ih))
-                                                   (let [o (* (+ (* py iw) px) 4)]
-                                                     (+ (* 0.299 (aget data o))
-                                                        (* 0.587 (aget data (+ o 1)))
-                                                        (* 0.114 (aget data (+ o 2))))))))})))))))))))
+                              (let [s (sampler-of img (.-naturalWidth img) (.-naturalHeight img))]
+                                (js/URL.revokeObjectURL url)
+                                s)))))))))
 
 (defn luminance-at
   "Grayscale value (0-255ish) at pixel (x,y) of the currently loaded photo,

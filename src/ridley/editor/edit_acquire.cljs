@@ -44,6 +44,7 @@
             [ridley.editor.gizmo :as gizmo]
             [ridley.editor.acquire-backdrop :as backdrop]
             [ridley.editor.acquire-stage :as stage]
+            [ridley.editor.camera-capture :as camera]
             [ridley.editor.state :as state]
             [ridley.editor.ui :as ui]
             [ridley.geometry.primitives :as prims]
@@ -59,6 +60,7 @@
             [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.blob-detect :as blob-detect]
             [ridley.photogrammetry.match-plate :as match-plate]
+            [ridley.photogrammetry.plate-focal :as plate-focal]
             [ridley.photogrammetry.match :as match]
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
@@ -87,8 +89,14 @@
 ;;                                     hfov-deg (diagonal convention + the
 ;;                                     photo's aspect) wherever it feeds the
 ;;                                     backdrop/camera/intrinsics
-;;  :focal-source :exif|:manual|:default — provenance of :focal-mm, for the
-;;                                     panel's honest label
+;;  :focal-source :exif|:live|:refined|:manual|:default — provenance of :focal-mm,
+;;                                     for the panel's honest label AND for deciding
+;;                                     whether a live grab may adopt its own
+;;                                     single-frame measurement (see
+;;                                     own-lens-sources). :live = measured off the
+;;                                     plate by a grabbed frame; :refined = the joint
+;;                                     fit over every view, which no single frame may
+;;                                     overwrite
 ;;  :acquire-results {idx {:picks :matched :rms-px}} — `s`'s edge-snap outcome
 ;;                                     per photo, feeding both the filmstrip's
 ;;                                     badges and acquire-state.json
@@ -279,7 +287,11 @@
 (defn- parse-session-json [text]
   (let [obj (js/JSON.parse text)]
     {:photos (mapv (fn [[file theta]] {:file file :theta theta})
-                   (js->clj (.-photos obj)))}))
+                   (js->clj (.-photos obj)))
+     ;; the WHOLE document, so appending a grabbed frame rewrites the film without
+     ;; dropping the keys this editor doesn't read (:bootstrap, :caliper — the
+     ;; CLI's, and its own to keep)
+     :doc (js->clj obj :keywordize-keys true)}))
 
 (declare set-status-message!)
 
@@ -302,8 +314,13 @@
   (let [{:keys [focal-mm focal-source]} @session
         mm (js/Math.round focal-mm)]
     (set-status-message!
-     (if (= focal-source :exif)
-       (str "Focale da EXIF: " mm "mm")
+     (case focal-source
+       :exif (str "Focale da EXIF: " mm "mm")
+       ;; measured off the plate itself by a live grab — say WHERE it came from,
+       ;; because "no EXIF" would now be a lie about a number that was measured
+       :live (str "Focale misurata dal piatto: " mm "mm")
+       :refined (str "Focale rifinita su tutte le viste: " mm "mm")
+       :manual (str "Focale impostata a mano: " mm "mm")
        (str "EXIF senza focale — uso " mm "mm (regola con lo slider)")))))
 
 ;; ============================================================
@@ -2100,11 +2117,13 @@
 ;; the ring. The plate's analogue of nothing on the box — dispatched by 'a'.
 ;; ============================================================
 
-(def ^:private auto-snap-radius
-  "blob-snap window (px) for an identified crown mark before the final PnP. The
-   detector centroid + fit-crown's reprojection land within a disc-radius, well
-   inside this."
-  40)
+(defn- snap-radius-for
+  "The blob-snap window (px) this frame's crown deserves — sized to the imaged disc
+   rather than fixed at 40, so a 1920px live frame and a 4032px photo both land
+   inside blob-snap's dark-fraction band. See match-plate/snap-window-radius for
+   the arithmetic, and for why the phone-photo path is unchanged by this."
+  [pixels marks disc-r]
+  (match-plate/snap-window-radius pixels marks disc-r))
 
 (def ^:private auto-fit-blobs
   "How many of the detector's TOP-scored blobs fit-crown samples the crown from. The
@@ -2193,16 +2212,12 @@
                      cands (blob-detect/detect-blobs lum-at [iw ih] {:rgba (:data sampler)})
                      centers (mapv :center cands)     ; best-first (detector score order)
                      ;; GEOMETRIC judge (no pixel reads): a reprojection "hits a disc"
-                     ;; if a DETECTED blob sits within its radius. fit-crown's per-
-                     ;; candidate scoring runs this thousands of times, so reading the
-                     ;; photo there (blob/disc-at?) was the ~5s/photo churn; the blobs
-                     ;; are already the pixel evidence. Final accuracy still comes from
-                     ;; the real-pixel blob-snap + PnP + rms gate below.
-                     judge (fn [[px py] r]
-                             (let [r2 (* r r)]
-                               (boolean (some (fn [[bx by]]
-                                                (<= (+ (* (- bx px) (- bx px)) (* (- by py) (- by py))) r2))
-                                              centers))))
+                     ;; if a DETECTED blob of mark SIZE sits within its radius.
+                     ;; fit-crown's per-candidate scoring runs this thousands of times,
+                     ;; so reading the photo there (blob/disc-at?) was the ~5s/photo
+                     ;; churn; the blobs are already the pixel evidence. Final accuracy
+                     ;; still comes from the real-pixel blob-snap + PnP + rms gate below.
+                     judge (match-plate/blob-judge cands)
                      ;; sample the crown from the TOP-scored blobs only (the discs
                      ;; outrank the noise), so a good quartet lands on the first sample
                      res (match-plate/fit-crown (vec (take auto-fit-blobs centers)) marks zero-obj
@@ -2215,8 +2230,9 @@
                                                       (when-not (:zero-hit? res) ", zero-indice mancante"))) ")"
                                        " — la lascio all'anello / 'p'"))
                        false)
-                   (let [picks (into {} (keep (fn [[mi px]]
-                                                (some->> (blob/snap-to-blob lum-at px auto-snap-radius)
+                   (let [snap-r (snap-radius-for (:pixels res) marks (:disc-r det))
+                         picks (into {} (keep (fn [[mi px]]
+                                                (some->> (blob/snap-to-blob lum-at px snap-r)
                                                          :center (vector mi)))
                                               (:pixels res)))
                          corr (vec (for [[ci px] picks]
@@ -2309,7 +2325,18 @@
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           targets (pnp-targets)
           views (vec (keep (fn [idx]
-                             (let [picks (get-in @session [:pnp-picks idx] {})
+                             ;; A pick the per-photo solve already REJECTED must not
+                             ;; vote here. solve-pnp reports its rms over the
+                             ;; survivors, but the rejected picks stay in :pnp-picks
+                             ;; (they are kept so the user can re-click them), and
+                             ;; feeding them back made the joint fit both look worse
+                             ;; and BE worse — it re-fitted every pose against points
+                             ;; known to be wrong. Measured 2026-08-11: a photo the
+                             ;; solve had cleaned to 1.7px came back as 8.04px here,
+                             ;; and its pose was being dragged to earn that number.
+                             (let [dropped (set (get-in @session [:pnp-outliers idx] #{}))
+                                   picks (remove (fn [[ci _]] (dropped ci))
+                                                 (get-in @session [:pnp-picks idx] {}))
                                    cam (get-in @session [:camera-poses idx])]
                                (when (and cam (>= (count picks) 4))
                                  {:idx idx
@@ -2328,13 +2355,38 @@
                                    poses)]
             (swap! session assoc-in [:camera-poses (:idx view)]
                    (bridge/solver-pose->camera pose proxy-pose)))
-          (swap! session assoc :focal-mm focal-mm :focal-source :manual)
+          ;; :refined, not :manual. The joint fit is the BEST focal the session will
+          ;; ever have — one lens against every view's picks — and calling it "manual"
+          ;; made it indistinguishable from a slider nudge, so the next live grab
+          ;; treated the session as having no lens of its own, measured its own from
+          ;; ONE frame, and adopted it over the joint fit (found live 2026-08-11:
+          ;; 28.41mm fitted on 5 views, replaced by 27.25mm from a single grab).
+          (swap! session assoc :focal-mm focal-mm :focal-source :refined)
           (auto-log! (str "=== rifinitura congiunta: " (count poses) " foto ==="))
           (auto-log! (str "  focale " (modal/fmt-number (:focal-mm before))
                           " → " (modal/fmt-number focal-mm) " mm"
                           (when (:clamped? out) "  (fermata al limite: guarda i click, non la lente)")))
           (auto-log! (str "  riproiezione " (modal/fmt-number (:rms-px before))
                           " → " (modal/fmt-number rms-px) " px"))
+          ;; ONE number over N views cannot be judged — Vincenzo, 2026-08-11: "non so
+          ;; giudicare, un po' migliora, ma poco". It was 9.3px because five views
+          ;; registered before the outlier fix still carried their bad picks, and the
+          ;; three good new ones (1.7-5.1px) were buried in the average. A per-view
+          ;; line makes that visible instead of leaving it to be deduced, and the
+          ;; badges are brought up to date so the filmstrip stops showing what each
+          ;; photo scored BEFORE the joint fit.
+          (let [idxs (:views out)
+                per (:per-view out)
+                per-before (:per-view before)
+                worst (when (seq per) (reduce max per))]
+            (doseq [[idx b a] (map vector idxs per-before per)]
+              (auto-log! (str "    foto " (inc idx) ": " (modal/fmt-number b)
+                              " → " (modal/fmt-number a) " px"
+                              (when (and worst (= a worst) (> a (* 2.0 rms-px)))
+                                "   ← è questa che tira su la media"))))
+            (doseq [[idx a] (map vector idxs per)]
+              (when (get-in @session [:acquire-results idx])
+                (swap! session assoc-in [:acquire-results idx :rms-px] a))))
           (save-acquire-state!)
           ;; Re-ENTER the photo, don't just redraw over it. The refinement moves
           ;; two things the viewport only picks up when a photo is loaded: the
@@ -2386,6 +2438,428 @@
                          (ring-fill-then-finish! (count pending) detect-ok))))))))
     (set-status-message! "Foto non ancora caricata."))
   (update-panel!))
+
+;; ============================================================
+;; Live capture ('g') — "scatta e registra": a camera in the room is a source of
+;; VIEWS, and a view only counts once it is registered.
+;;
+;; The gesture is one key. What it saves is the round trip that used to sit
+;; between wanting a view and having one: shoot, unlock the phone, find the file,
+;; copy it into the session folder, rename it into the convention, re-open. With
+;; that gone, a view costs about as much as looking, which changes what it is FOR
+;; — not another lap of the turntable, but one more angle exactly where the edge
+;; you are measuring is poorly seen.
+;;
+;; Two rules make it honest, and both are about refusing:
+;;
+;; 1. A frame that does not register never enters the session. It is measured
+;;    BEFORE it is written, so a rejected frame leaves nothing behind — not a file
+;;    to clean up, not a line in session.json to roll back. Re-shooting costs one
+;;    key, so "take another one" is the right answer to a bad frame, and a frame
+;;    kept in the hope of rescuing it by hand later is the old economy, from when
+;;    photos were expensive.
+;; 2. The lens is MEASURED, never assumed. A live frame carries no EXIF, and on
+;;    the first frame of a session there is no second view to fit a focal against —
+;;    so the plate is asked, in closed form (photogrammetry/plate-focal). Without
+;;    that, `solve-pnp` still converges at whatever focal it is handed: it puts the
+;;    camera at the wrong distance and reports a residual that looks fine. The
+;;    first frame of a session therefore calibrates the camera; the rest reuse it,
+;;    and 'R' refines it jointly once there are two.
+;; ============================================================
+
+(def ^:private seed-focal-ladder
+  "Focals (35mm-equivalent) to TRY when the crown must be identified before the
+   lens is known. Identity is nearly focal-blind — the crown and the zero-index are
+   coplanar, so their reprojection goes through the homography, which the focal does
+   not change (see plate-focal's docstring) — but not perfectly: `assign-marks` also
+   LM-refines in pose space and rejects a back-facing twin, and far from the truth
+   the refined pose drifts enough that the blob-snap grabs a neighbouring disc.
+   Measured on a synthetic plate at a true 28mm: the rungs within roughly ±50%
+   identify it correctly, the far ones mis-snap. Ordered by likelihood — a webcam
+   or a phone in Continuity Camera sits near 28mm-equivalent — because the search
+   stops at the first rung that works."
+  [28.0 35.0 22.0 45.0 18.0 60.0])
+
+(def ^:private own-lens-sources
+  "Focal provenances that mean 'this belongs to the lens the session is shooting
+   with'. Everything a live grab does downstream keys off this, so it is written
+   once rather than as a scattered `(= :live …)`:
+
+   - `:live`    measured off the plate by a grabbed frame;
+   - `:refined` the joint fit over every registered view — strictly better than any
+                single frame, and the reason this is a SET and not one keyword;
+   - `:manual`  the user's own slider, which in a live session is their intent.
+
+   Excluded: `:default` (a guess belonging to nothing) and `:exif` (a real lens, but
+   the phone's STILLS camera, which is not the camera now pointed at the plate)."
+  #{:live :refined :manual})
+
+(defn- live-focal
+  "The session's own lens, or nil when it has none yet. Provenance is what decides
+   whether the next grab may skip the seed ladder AND — more importantly — whether
+   it is allowed to adopt its own single-frame measurement over what the session
+   already knows."
+  []
+  (when (own-lens-sources (:focal-source @session)) (:focal-mm @session)))
+
+(defn- next-grab-name
+  "grab-01.jpg, grab-02.jpg, … one past the highest already in the film. Numbered
+   rather than timestamped so the filmstrip reads in the order the frames were
+   taken, and so a name is predictable enough to talk about."
+  []
+  (let [n (reduce (fn [best {:keys [file]}]
+                    (if-let [[_ d] (re-find #"^grab-(\d+)\." (or file ""))]
+                      (max best (js/parseInt d 10))
+                      best))
+                  0 (:photos @session))]
+    (str "grab-" (.padStart (str (inc n)) 2 "0") ".jpg")))
+
+(defn- write-session-json!
+  "Rewrite session.json with the current film, keeping every other key the document
+   arrived with (:bootstrap, :caliper — the CLI's, and not ours to drop). Returns a
+   Promise."
+  []
+  (let [doc (or (:session-doc @session) {})
+        photos (mapv (fn [{:keys [file theta]}] [file theta]) (:photos @session))
+        body (js/JSON.stringify (clj->js (assoc doc :photos photos)) nil 1)]
+    (swap! session assoc-in [:session-doc :photos] photos)
+    (stl/desktop-write-file body (str (:base-dir @session)
+                                      (if (str/ends-with? (:base-dir @session) "/") "" "/")
+                                      "session.json"))))
+
+(defn- identify-failure-rank
+  "How ACTIONABLE a failure is, for picking which one the user hears about when
+   several seed focals all fail. Higher = the user can do more about it. nil (no
+   failure seen yet) ranks below everything."
+  [reason]
+  ({:crown-not-found 0
+    :too-few-blobs 1
+    :not-identified 2
+    :too-few-crown 3
+    :too-few-snapped 4
+    ;; the one with a two-second remedy: turn the plate
+    :zero-not-visible 5}
+   reason -1))
+
+(defn- definitive-failure?
+  "Failures no other seed focal can talk out of. The seed ladder exists to get the
+   crown IDENTIFIED; once a rung has done that, whether the zero-index is covered —
+   or whether the marks are sharp enough to snap — is a fact about the picture, not
+   about the focal, and trying five more focals only makes a refusal slow."
+  [reason]
+  (contains? #{:zero-not-visible :too-few-snapped :no-zero-index :no-marks} reason))
+
+(defn- identify-crown
+  "Find the plate in an already-sampled frame at an assumed `focal-mm`: fit the
+   crown, then snap each identified mark onto the real blob under it. Returns
+   {:picks {mark-idx px} :corr [{:ci :world :px}] :crown-hits n} or nil.
+
+   `cands` are the detector's blobs, passed in because detection is the expensive
+   part and is focal-INDEPENDENT: the seed ladder re-identifies, it never re-detects."
+  [{:keys [lum-at size]} focal-mm marks zero-obj det cands blobs rings]
+  (let [[iw ih] size
+        intrinsics (pcamera/intrinsics-from-fov
+                    (pcamera/equiv-focal->hfov-deg focal-mm (/ iw ih)) iw ih)
+        ;; The judge scores against EVERY detected blob (a mark just outside the
+        ;; top-scored slice still counts as evidence), while the ring search runs on
+        ;; the slice — `blobs` — that `rings`' indices refer to. It weighs SIZE as
+        ;; well as position: a speck one tenth the area of a disc once stood in for a
+        ;; covered zero-index and let a frame register at an unknown rotation.
+        judge (match-plate/blob-judge cands)
+        res (match-plate/fit-crown-explained blobs marks zero-obj
+                                             intrinsics judge
+                                             {:disc-r (:disc-r det) :face-normal (:face-normal det)
+                                              ;; the rings were found once, from pixels
+                                              ;; alone — they don't change with the focal
+                                              :rings rings})]
+    (if (:reason res)
+      res ; carries :message, and a remedy the caller can pass on verbatim
+      (let [snap-r (snap-radius-for (:pixels res) marks (:disc-r det))
+            picks (into {} (keep (fn [[mi px]]
+                                   (some->> (blob/snap-to-blob lum-at px snap-r)
+                                            :center (vector mi)))
+                                 (:pixels res)))]
+        (if (< (count picks) min-plate-picks)
+          {:reason :too-few-snapped
+           :message (str "the crown is recognised, but only " (count picks) " marks could be "
+                         "located precisely enough (at least " min-plate-picks " are needed) — "
+                         "the frame is probably blurred or the plate is too small in it")}
+          {:picks picks
+           :crown-hits (:crown-hits res)
+           :snap-radius snap-r
+           :corr (vec (for [[ci px] picks]
+                        {:ci ci :world (:obj (nth marks ci)) :px px}))})))))
+
+(defn- register-live-frame
+  "Everything a grabbed frame must survive to earn a place in the session, in the
+   order that makes each step trustworthy:
+
+     detect blobs  →  identify the crown (seed ladder, or the known lens)
+                   →  MEASURE the focal off the plate
+                   →  re-identify at the measured focal
+                   →  solve the pose, and judge it by its residual
+
+   The re-identification is not belt-and-braces: the ladder stops at the first rung
+   that identifies the crown, and a rung that is merely close enough can have
+   snapped a mark onto its neighbour. Once the true focal is known, the reprojections
+   land where the discs actually are, and the picks that come out are the ones the
+   pose is entitled to be judged on.
+
+   Pure with respect to the session: reads the proxy, mutates nothing. Returns
+   {:ok? true :sol :picks :focal-mm :measured :crown-hits} or
+   {:ok? false :message …}."
+  [sampler]
+  (let [{:keys [lum-at size data]} sampler
+        proxy-mesh (:proxy-mesh @session)
+        det (bridge/plate-detect proxy-mesh)
+        marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
+        zero-obj (:zero-obj det)]
+    (if (nil? zero-obj)
+      {:ok? false :message (str "This proxy is not a registration plate (no zero-index): "
+                                "live capture registers against the plate's crown.")}
+      (let [cands (blob-detect/detect-blobs lum-at size {:rgba data})
+            ;; The candidate RINGS, once. Stage 1 reads pixels only, so it is the
+            ;; same answer at every seed focal — recomputing it per rung made a
+            ;; failed grab take as long as six good ones and left the status line
+            ;; saying "registering…" with nothing happening (found live 2026-08-11).
+            ;; ONE slice, shared: `rings` holds INDICES into it, so the ring search
+            ;; and every identify pass must be looking at the same vector
+            blobs (vec (take auto-fit-blobs (mapv :center cands)))
+            rings (match-plate/crown-ring-hypotheses blobs {})
+            known (live-focal)
+            ladder (if known (cons known seed-focal-ladder) seed-focal-ladder)
+            ;; Try the seed focals in turn, stopping at the first that identifies the
+            ;; crown. When none does, report the most ACTIONABLE failure any of them
+            ;; saw rather than the last one: a covered zero-index ("turn the plate")
+            ;; is worth more than "no ring found", and a rung that got that far knew
+            ;; something the others didn't.
+            first-pass (loop [fs ladder best nil]
+                         (if (empty? fs)
+                           best
+                           (let [r (identify-crown sampler (first fs) marks zero-obj det cands blobs rings)]
+                             (cond
+                               (not (:reason r)) (assoc r :seed (first fs))
+
+                               ;; The ladder exists to fix IDENTIFICATION. Once a rung
+                               ;; has identified the crown, another focal cannot change
+                               ;; whether the zero-index is physically visible or the
+                               ;; marks are sharp enough — so stop, instead of paying
+                               ;; five more solves to be told the same thing.
+                               (definitive-failure? (:reason r)) r
+
+                               :else
+                               (recur (rest fs)
+                                      (if (> (identify-failure-rank (:reason r))
+                                             (identify-failure-rank (:reason best)))
+                                        r best))))))]
+        (if (:reason first-pass)
+          {:ok? false
+           :message (str (:message first-pass) " (" (count cands) " dark blobs in the frame.)")}
+          (let [measured (plate-focal/estimate-focal (:corr first-pass) size)
+                ;; The SESSION's focal wins when it has one, even though this frame
+                ;; measured its own: one lens, one number. Solving this pose at a
+                ;; per-frame focal while the session keeps another would put the
+                ;; camera at a depth the backdrop's field of view contradicts, and
+                ;; the disagreement would show up as everything else being slightly
+                ;; wrong. The frame's own measurement is still reported — a lens
+                ;; that has genuinely changed (zoom, another camera) should be
+                ;; visible, not silently averaged in.
+                focal (or known (:focal-mm measured))]
+            (if (nil? focal)
+              ;; nothing to fall back on: this is the FIRST frame and it cannot see
+              ;; the lens. Naming the geometry is the whole value of refusing here.
+              {:ok? false
+               :message (str "The lens cannot be measured from this frame — "
+                             (:message measured)
+                             " (the first frame of a session has no other view to fit against.)")}
+              (let [[iw ih] size
+                    intrinsics (pcamera/intrinsics-from-fov
+                                (pcamera/equiv-focal->hfov-deg focal (/ iw ih)) iw ih)
+                    ;; re-identify at the MEASURED focal; if that somehow fails, the
+                    ;; seed's picks are still a valid (if slightly looser) answer
+                    re (identify-crown sampler focal marks zero-obj det cands blobs rings)
+                    final (if (:reason re) first-pass re)
+                    sol (pnp/solve-pnp (:corr final) intrinsics {})]
+                (cond
+                  (nil? sol)
+                  {:ok? false :message "The pose has no solution from these marks."}
+
+                  (> (:rms-px sol) pnp/accept-rms-px)
+                  {:ok? false
+                   :message (str "Rejected: reprojection " (.toFixed (:rms-px sol) 1)
+                                 "px, over the " pnp/accept-rms-px "px bar. "
+                                 "Hold still, or move closer to the plate.")}
+
+                  :else
+                  {:ok? true :sol sol :picks (:picks final) :focal-mm focal
+                   :measured measured :crown-hits (:crown-hits final)
+                   :n (count (:corr final))})))))))))
+
+(defn- accept-live-frame!
+  "Write the frame, put it in the film, and apply its pose — in that order, because
+   until the JPEG is on disk there is nothing for session.json to point at.
+   Returns a Promise resolving when the session is consistent again."
+  [^js canvas {:keys [sol picks focal-mm measured crown-hits n]}]
+  (let [idx (count (:photos @session))
+        file (next-grab-name)
+        proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        adopt? (and (:focal-mm measured) (nil? (live-focal)))]
+    (-> (camera/canvas->jpeg canvas)
+        (.then (fn [blob] (stl/desktop-write-file blob (photo-path file))))
+        (.then (fn [_]
+                 ;; the lens of the session, measured once off the first live frame;
+                 ;; later frames only REPORT theirs, because adopting a new focal
+                 ;; silently re-scales every pose already solved at the old one
+                 (when adopt?
+                   (swap! session assoc :focal-mm (:focal-mm measured) :focal-source :live))
+                 ;; θ nil = "foto libera": a hand-held frame has no turntable angle,
+                 ;; and the channel already knows what to do with one (free-photo?
+                 ;; keeps it out of the ring model and its predictions).
+                 (swap! session update :photos conj {:file file :theta nil})
+                 (apply-auto-solve! idx sol picks proxy-pose)
+                 ;; the first frame is the one that MOVES the proxy (it is the anchor):
+                 ;; carry the whole system back to the construction turtle, so an
+                 ;; object acquired from nothing appears where it is being built and
+                 ;; not at the acquisition frame's arbitrary origin. A pure
+                 ;; translation — registration is translation-invariant.
+                 (when (zero? idx) (reanchor-to-build-pose!))
+                 (save-acquire-state!)
+                 (write-session-json!)))
+        (.then (fn [_]
+                 (enter-photo! idx)
+                 (auto-log! (str "  " file " registrata ✓  rms "
+                                 (.toFixed (:rms-px sol) 1) "px, " n " dischetti, corona "
+                                 crown-hits "/12"
+                                 (if adopt?
+                                   (str " · focale MISURATA dal piatto: "
+                                        (.toFixed (:focal-mm measured) 1) "mm-equiv"
+                                        (when (:single-constraint? measured) " (un solo vincolo)"))
+                                   (when-let [m (:focal-mm measured)]
+                                     (str " · questa presa dice " (.toFixed m 1)
+                                          "mm, la sessione usa " (.toFixed focal-mm 1) "mm")))))
+                 (set-status-message! (str file ": registered, " (.toFixed (:rms-px sol) 1)
+                                           "px over " n " marks")))))))
+
+(defn- on-grab!
+  "'g' / the Grab button: one frame, measured, and kept only if it registers."
+  []
+  (cond
+    (not (camera/active?))
+    (set-status-message! "No camera open — press Camera first.")
+
+    (not (plate-proxy?))
+    (set-status-message! "Live capture needs the registration plate as the proxy.")
+
+    :else
+    (if-let [{:keys [^js canvas size]} (camera/grab-frame)]
+      (let [[w h] size
+            sampler (backdrop/sampler-of canvas w h)]
+        (auto-log! (str "=== presa dal vivo (" w "×" h ") ==="))
+        (set-status-message! "Grabbed — registering… (detail in the REPL)")
+        ;; hand the browser a frame first, so the status line paints before the
+        ;; (seconds-long) detection blocks the thread
+        (-> (yield-frame)
+            (.then (fn [_] (register-live-frame sampler)))
+            (.then (fn [outcome]
+                     (if (:ok? outcome)
+                       (accept-live-frame! canvas outcome)
+                       (do (auto-log! (str "  scartata: " (:message outcome)))
+                           (set-status-message! (str "Not kept — " (:message outcome)))
+                           (update-panel!)))))
+            (.catch (fn [err]
+                      (auto-log! (str "  errore: " err))
+                      (set-status-message! (str "Grab failed: " err))))))
+      (set-status-message! "The camera has not delivered a frame yet."))))
+
+(def ^:private photo-indexed-keys
+  "Every session map keyed by PHOTO INDEX. Removing a view has to renumber all of
+   them together, so they are listed once here rather than remembered at each call
+   site — a map left out would silently keep pointing at the wrong photo, which is
+   the kind of mistake that shows up three steps later as geometry that makes no
+   sense."
+  [:camera-poses :acquire-results :pnp-picks :pnp-residuals :pnp-outliers
+   :pnp-occluded :pnp-batch :marker-picks])
+
+(defn- drop-index
+  "Remove key `gone` from an index-keyed map and shift every higher key down one."
+  [m gone]
+  (into {} (keep (fn [[i v]]
+                   (cond (= i gone) nil
+                         (> i gone) [(dec i) v]
+                         :else [i v])))
+        m))
+
+(defn- delete-view!
+  "Remove view `idx` from the session: its JPEG from the folder, its entry from the
+   film, and everything keyed to it — renumbering the views above it.
+
+   Worth having because a live capture loop MAKES bad views. When a photo cost a
+   trip to the phone and back you lived with the ones you had; when it costs one
+   key you take another, and the folder fills with attempts. Without a way to drop
+   one, every bad frame stays in the joint fit forever, which is the opposite of
+   what cheap views are for.
+
+   The file goes too — leaving the JPEG behind would put session.json and the
+   folder out of step, and the next thing to read the folder would disagree with
+   the session about what was shot."
+  [idx]
+  (let [{:keys [file]} (nth (:photos @session) idx nil)]
+    (when file
+      (-> (stl/desktop-delete-file (photo-path file))
+          ;; a JPEG already gone is not a reason to keep the view
+          (.catch (fn [_] nil))
+          (.then
+           (fn [_]
+             (swap! session
+                    (fn [s]
+                      (let [s (update s :photos (fn [ps] (vec (concat (subvec ps 0 idx)
+                                                                      (subvec ps (inc idx))))))
+                            s (reduce (fn [acc k] (update acc k #(drop-index (or % {}) idx)))
+                                      s photo-indexed-keys)
+                            n (count (:photos s))]
+                        (assoc s :current-idx (max 0 (min (dec n) (:current-idx s)))))))
+             (save-acquire-state!)
+             (write-session-json!)))
+          (.then (fn [_]
+                   (auto-log! (str "  " file " eliminata dalla sessione"))
+                   (if (seq (:photos @session))
+                     (enter-photo! (:current-idx @session))
+                     (update-panel!))
+                   (set-status-message! (str file " deleted — " (count (:photos @session))
+                                             " views left"))))
+          (.catch (fn [err]
+                    (set-status-message! (str "Could not delete " file ": " err))))))))
+
+(defn- mount-camera-preview!
+  "Put the live preview in the corner of the viewport — you frame by looking at the
+   OBJECT, so the preview has to be the thing you glance at, not the thing you stare
+   at. Idempotent."
+  []
+  (when-let [^js host (.getElementById js/document "viewport-panel")]
+    (when-let [^js v (camera/video-el)]
+      (when-not (.-parentNode v) (.appendChild host v)))))
+
+(defn- start-camera!
+  "Open a camera (the given device, or the default) and show its preview. Also
+   refreshes the device list — labels only become real once permission has been
+   granted, so the picker is worth rebuilding after every successful open."
+  [device-id]
+  (-> (camera/start! device-id)
+      (.then (fn [info]
+               (mount-camera-preview!)
+               (swap! session assoc :camera-info info)
+               (set-status-message! (str "Camera: " (:label info) " · "
+                                         (first (:size info)) "×" (second (:size info))))
+               (-> (camera/list-cameras)
+                   (.then (fn [ds] (swap! session assoc :camera-devices ds) (update-panel!))))))
+      (.catch (fn [err]
+                (set-status-message! (str "Camera not opened: " (.-message err)))
+                (update-panel!)))))
+
+(defn- stop-camera! []
+  (camera/stop!)
+  (swap! session dissoc :camera-info)
+  (set-status-message! "Camera closed."))
 
 ;; ============================================================
 ;; Retrace ('d'): P3 thin slice — trace a planar feature ON a declared face of
@@ -3006,6 +3480,7 @@
         pnp-box (.createElement js/document "div")
         retrace-box (.createElement js/document "div")
         mark-box (.createElement js/document "div")
+        live-box (.createElement js/document "div")
         message (.createElement js/document "div")
         {:keys [row slider]} (ui/create-slider-row {:label "Focale (mm)"
                                                     :value (:focal-mm @session)
@@ -3017,8 +3492,6 @@
     (set! (.-className header) "pilot-header")
     (set! (.-textContent header) "edit-acquire — gate ingegneristico")
     (.appendChild panel header)
-    (set! (.-textContent hint)
-          "1) la Focale è letta da EXIF — ritoccala con lo slider (foto 1) solo se il box è della taglia sbagliata, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto agganciate, 'f' per il fit congiunto sulle altre. 'v' nasconde/mostra il proxy per leggere la foto sotto.")
     (.appendChild panel hint)
     (.appendChild panel row)
     (.appendChild panel filmstrip)
@@ -3041,6 +3514,8 @@
     (.appendChild panel retrace-box)
     (set! (.-className mark-box) "eaq-mark-box")
     (.appendChild panel mark-box)
+    (set! (.-className live-box) "eaq-live-box")
+    (.appendChild panel live-box)
     (set! (.-className message) "ems-message")
     (.appendChild panel message)
     ;; Conferma emits (acquire "dir" {…}) over the marker; Chiudi discards
@@ -3060,7 +3535,9 @@
     (.appendChild buttons close-btn)
     (.appendChild panel buttons)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
+           :hint-el hint
            :message-el message :pnp-el pnp-box :retrace-el retrace-box :mark-el mark-box
+           :live-el live-box
            :stage-btn-el stage-btn :frustum-btn-el frustum-btn)
     (modal/mount-panel! panel)
     (update-panel!)))
@@ -3456,16 +3933,134 @@
           (.appendChild actions exit))
         (.appendChild box actions)))))
 
+(defn- render-live-panel!
+  "The live-capture controls: a way in (Camera), a way to shoot (Grab), a device
+   picker only once there is more than one device, and a way out. Shown only for a
+   registration plate — a live frame registers against the crown, and offering the
+   button on a box proxy would be offering a gesture that cannot work.
+
+   The camera is deliberately NOT opened on entering the session: opening a camera
+   turns on a light on the user's machine, and that should follow an intention."
+  []
+  (when-let [^js box (:live-el @session)]
+    (set! (.-innerHTML box) "")
+    (when (and (plate-proxy?) (not (:stage? @session)))
+      (let [supported? (camera/supported?)
+            on? (camera/active?)
+            info (:camera-info @session)
+            devices (:camera-devices @session)
+            ^js info-el (.createElement js/document "div")
+            ^js actions (.createElement js/document "div")]
+        (set! (.-className info-el) "eaq-pnp-info")
+        (set! (.-textContent info-el)
+              (cond
+                (not supported?)
+                (str "No camera here: getUserMedia needs a secure context "
+                     "(localhost or the desktop app, not an http:// LAN address).")
+                on?
+                (str "Live: " (:label info) " · " (first (:size info)) "×" (second (:size info))
+                     " · Grab keeps the frame ONLY if it registers."
+                     (if-let [f (live-focal)]
+                       (str " Lens: " (.toFixed f 1) "mm-equiv ("
+                            (name (or (:focal-source @session) :?)) ").")
+                       " The first frame will measure the lens — give the plate some tilt."))
+                :else
+                "A camera in the room is a source of views: open it, aim, and grab."))
+        (.appendChild box info-el)
+        (when (and supported? on? (> (count devices) 1))
+          (let [^js sel (.createElement js/document "select")]
+            (doseq [{:keys [id label]} devices]
+              (let [^js o (.createElement js/document "option")]
+                (set! (.-value o) id)
+                (set! (.-textContent o) label)
+                (when (= id (:device-id info)) (set! (.-selected o) true))
+                (.appendChild sel o)))
+            (.addEventListener sel "change" (fn [^js e] (start-camera! (.. e -target -value))))
+            (.appendChild box sel)))
+        (set! (.-className actions) "eaq-pnp-actions")
+        (let [^js toggle (.createElement js/document "button")]
+          (set! (.-type toggle) "button")
+          (set! (.-textContent toggle) (if on? "Camera off" "Camera"))
+          (set! (.-disabled toggle) (not supported?))
+          (.addEventListener toggle "click"
+                             (fn [_] (if (camera/active?)
+                                       (do (stop-camera!) (update-panel!))
+                                       (start-camera! (:device-id info)))))
+          (.appendChild actions toggle))
+        (let [^js grab (.createElement js/document "button")]
+          (set! (.-type grab) "button")
+          (set! (.-textContent grab) "Grab (g)")
+          (set! (.-disabled grab) (not on?))
+          (.addEventListener grab "click" (fn [_] (on-grab!)))
+          (.appendChild actions grab))
+        ;; Dropping a bad view: two clicks, no keyboard shortcut. A cheap view makes
+        ;; bad views, so this has to exist — but it removes a file, so it must not be
+        ;; something a stray keypress or a single mis-aimed click can do.
+        (when (seq (:photos @session))
+          (let [idx (:current-idx @session)
+                armed? (= idx (:delete-armed @session))
+                ^js del (.createElement js/document "button")]
+            (set! (.-type del) "button")
+            (set! (.-textContent del) (if armed?
+                                        (str "Sure? delete view " (inc idx))
+                                        (str "Delete view " (inc idx))))
+            (when armed? (.add (.-classList del) "eaq-danger"))
+            (.addEventListener del "click"
+                               (fn [_]
+                                 (if armed?
+                                   (do (swap! session dissoc :delete-armed)
+                                       (delete-view! idx))
+                                   (do (swap! session assoc :delete-armed idx)
+                                       (update-panel!)
+                                       ;; disarm on its own: a button left saying
+                                       ;; "Sure?" is a trap for the next click
+                                       (js/setTimeout
+                                        (fn [] (when (= idx (:delete-armed @session))
+                                                 (swap! session dissoc :delete-armed)
+                                                 (update-panel!)))
+                                        4000)))))
+            (.appendChild actions del)))
+        (.appendChild box actions)))))
+
+(defn- session-hint
+  "The procedure this session actually has, in one line. Three, because they are
+   three different jobs and one text that covers all of them covers none: a BOX is
+   aligned by hand and snapped to its own edges; a PLATE of photos registers itself
+   off the crown; an EMPTY folder has no photos at all and is filled by shooting."
+  []
+  (cond
+    (empty? (:photos @session))
+    (str "Sessione vuota: apri la Camera, inquadra il piatto con l'oggetto sopra e premi Grab "
+         "(o 'g'). Il primo scatto MISURA l'obiettivo — dagli un po' di inclinazione, "
+         "un piatto ripreso perfettamente in faccia non può dire la focale. "
+         "Uno scatto che non si registra non entra: si riscatta.")
+
+    (plate-proxy?)
+    (str "Piatto di registrazione: 'a' registra da sola tutte le foto (rilevamento della corona), "
+         "'p' per quelle che non ce la fanno, 'R' rifinisce focale e pose insieme. "
+         "Grab (o 'g') aggiunge una vista dal vivo, già registrata. "
+         "'v' nasconde/mostra il proxy per leggere la foto sotto.")
+
+    :else
+    (str "1) la Focale è letta da EXIF — ritoccala con lo slider (foto 1) solo se il box è "
+         "della taglia sbagliata, SENZA spostarlo — 2) poi trascina per posizione/rotazione — "
+         "3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto "
+         "agganciate, 'f' per il fit congiunto sulle altre. "
+         "'v' nasconde/mostra il proxy per leggere la foto sotto.")))
+
 (defn- update-panel! []
   (let [stage? (:stage? @session)]
+    (when-let [^js hint (:hint-el @session)]
+      (set! (.-textContent hint) (session-hint)))
     ;; In the stage the Phase-1 sub-panels don't apply — blank their boxes so
     ;; no 'Registra…'/'Ricalca…' entry buttons linger over the free-orbit view.
     (if stage?
-      (doseq [k [:pnp-el :retrace-el :mark-el]]
+      (doseq [k [:pnp-el :retrace-el :mark-el :live-el]]
         (when-let [^js b (k @session)] (set! (.-innerHTML b) "")))
       (do (render-pnp-panel!)
           (render-retrace-panel!)
-          (render-mark-panel!)))
+          (render-mark-panel!)
+          (render-live-panel!)))
     ;; Focale is a phase-0-only control (see build-panel!'s hint): the lens
     ;; doesn't change between photos, so re-tuning it later would silently
     ;; rescale a photo the user thinks is already locked in. Disabled, not
@@ -3628,7 +4223,14 @@
           (do (.preventDefault e) (.stopPropagation e)
               (arm-corner! (dec (js/parseInt key 10))))
 
-          (= key "[")
+        ;; 'g' — grab a frame from the live camera and register it on the spot.
+        ;; Gated to gizmo/pnp like the other registration keys: during a retrace or
+        ;; a mark the proxy pose is frozen on purpose, and a new view moving it
+        ;; underneath would be the one thing those modes must not suffer.
+          (and (not retrace?) (not mark?) (= key "g"))
+          (do (.preventDefault e) (.stopPropagation e) (on-grab!))
+
+          (and (pos? n) (= key "["))
           (do (.preventDefault e) (.stopPropagation e)
               (enter-photo! (mod (dec idx) n)))
 
@@ -3663,7 +4265,7 @@
           (do (.preventDefault e) (.stopPropagation e)
               (on-refine-session!))
 
-          (= key "]")
+          (and (pos? n) (= key "]"))
           (do (.preventDefault e) (.stopPropagation e)
               (enter-photo! (mod (inc idx) n))))))))
 
@@ -4690,6 +5292,10 @@
     (stop-mark!) ; removes the named-mark pointer/wheel handlers + labels
     (teardown-retrace-listeners!) ; removes retrace pointer/wheel handlers + loupe
     (teardown-frustum-listeners!) ; removes the stage click-a-frustum pointer handlers
+    ;; Release the camera. A live stream left running keeps the recording light on
+    ;; after the session that asked for it is gone — a device the user can see is
+    ;; on, with nothing on screen explaining why.
+    (camera/stop!)
     ;; The ricalco is no longer printed loose here (P4a-3): confirm! folds it into
     ;; the acquire form's :shapes via emit-acquire-code; discard/cancel emit nothing.
     (viewport/unregister-frame-callback! :edit-acquire)
@@ -4943,12 +5549,21 @@
                               :caliper caliper})
                     nil 1)))))))
 
+(defn- empty-session-json
+  "session.json for a folder with nothing in it yet — the LIVE case: the session is
+   opened first and filled afterwards, one grabbed frame at a time. An empty film
+   is a legitimate starting state, not a missing file: refusing to open here would
+   mean there is no way to reach the Grab control that would create the photos the
+   refusal is complaining about."
+  [dir]
+  (js/JSON.stringify (clj->js {:dir dir :photos [] :bootstrap []}) nil 1))
+
 (defn- ensure-session-json!
-  "Resolve to session.json's TEXT for `dir`: read it if present, otherwise BUILD
-   it from NOTE.md (+ the folder's images) and write it back — so a fresh session
-   opens with no manual CLI step (Vincenzo 2026-07-26: 'non possiamo lanciare
-   --init-session a mano per ogni sessione'). Persisting is best-effort: a build
-   that can't be written still opens the session."
+  "Resolve to session.json's TEXT for `dir`: read it if present; otherwise BUILD it
+   from NOTE.md (+ the folder's images) — so a session of real photos opens with no
+   manual CLI step (Vincenzo 2026-07-26: 'non possiamo lanciare --init-session a
+   mano per ogni sessione') — and failing that, start an EMPTY one. Persisting is
+   best-effort: a document that can't be written still opens the session."
   [dir]
   (-> (stl/desktop-read-file (str dir "/session.json"))
       (.catch (fn [_]
@@ -4956,6 +5571,12 @@
                  (str "edit-acquire: session.json assente in " dir
                       " — la costruisco dal NOTE.md"))
                 (-> (build-session-json-from-note dir)
+                    (.catch (fn [err]
+                              (state/capture-println
+                               (str "edit-acquire: nessun NOTE.md leggibile in " dir
+                                    " (" err ") — apro una sessione VUOTA: riempila"
+                                    " scattando dal vivo (Camera → Grab)."))
+                              (empty-session-json dir)))
                     (.then (fn [text]
                              (-> (stl/desktop-write-file text (str dir "/session.json"))
                                  (.then (fn [_] text))
@@ -4971,7 +5592,7 @@
   [proxy-mesh session-dir from-marker? build-pose]
   (-> (ensure-session-json! session-dir)
       (.then (fn [text]
-               (let [{:keys [photos]} (parse-session-json text)]
+               (let [{:keys [photos doc]} (parse-session-json text)]
                  (viewport/hide-user-geometry!)
                  ;; The camera must stay LOCKED for the whole session — but
                  ;; gizmo's own on-pointer-up unconditionally re-enables the
@@ -4991,6 +5612,9 @@
                  (viewport/register-frame-callback!
                   :edit-acquire (fn [_camera] (viewport/set-controls-enabled! false)))
                  (reset! session {:photos photos
+                                  ;; session.json as read, so appending a grabbed
+                                  ;; frame rewrites the film and nothing else
+                                  :session-doc doc
                                   :base-dir session-dir
                                   ;; build-pose = the construction turtle's pose
                                   ;; when edit-acquire ran; emit-acquire-code
@@ -5066,8 +5690,16 @@
                               (backdrop/create! (viewport/get-camera))
                               (build-panel!)
                               (swap! session assoc :key-handler (modal/install-keydown! on-keydown))
-                              (enter-photo! 0)
-                              (report-focal!)))))))
+                              ;; A session with no photos yet (the live case: it is
+                              ;; filled by grabbing) has nothing to enter — put the
+                              ;; camera at photo 0's vantage so the proxy is there to
+                              ;; aim at, and let Grab create the first view.
+                              (if (seq (:photos @session))
+                                (do (enter-photo! 0) (report-focal!))
+                                (do (viewport/set-camera-pose! (ensure-photo-pose 0))
+                                    (set-status-message!
+                                     (str "Empty session: open the camera and grab a frame "
+                                          "— the first one measures the lens."))))))))))
       (.catch (fn [err]
                 (state/capture-println (str "edit-acquire: couldn't load session — " err))
                 (modal/release!)))))

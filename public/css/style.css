@@ -530,6 +530,54 @@ html, body {
   padding: 3px 8px;
 }
 
+/* Live capture ('g'): the Camera/Grab controls, same visual family as the mode
+   boxes above. The device picker only appears when there is more than one camera,
+   so the row is usually two buttons. */
+.modal-panel .eaq-live-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 4px;
+  border-top: 1px solid #3a3b42;
+}
+
+/* the armed state of a destructive button — it says "Sure?" and it should look
+   like it means it, so the second click is a decision and not a reflex */
+.modal-panel .eaq-live-box button.eaq-danger {
+  background: #6e2b2b;
+  border-color: #a34a4a;
+  color: #ffdede;
+}
+
+.modal-panel .eaq-live-box select {
+  background: #2a2b31;
+  color: #ccc;
+  border: 1px solid #4a4b52;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+/* The live preview, bottom-right of the viewport: you frame by looking at the
+   OBJECT, so this is the thing you glance at, not the thing you stare at — small,
+   out of the way, and never a click target (the canvas underneath owns the
+   pointer). Deliberately NOT mirrored: a webcam preview is usually flipped because
+   it is pointed at you, but this one is pointed at the plate, and a mirrored
+   preview of a non-mirrored capture sends the hand the wrong way. */
+#eaq-cam-preview {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 260px;
+  max-width: 32vw;
+  border: 1px solid #3c3c3c;
+  border-left: 3px solid #ff5f56;
+  border-radius: 4px;
+  background: #000;
+  z-index: 115;
+  pointer-events: none;
+}
+
 .modal-panel .eaq-mark-list {
   display: flex;
   flex-direction: column;

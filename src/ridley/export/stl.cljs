@@ -326,6 +326,26 @@
                           (fn [_] (reject (js/Error. "write-file request failed"))))
                     (.send xhr (js/Uint8Array. ab)))))))))
 
+(defn desktop-delete-file
+  "Delete the file at `file-path` via Rust geo_server. Returns Promise<nil>.
+   Rejects when the file isn't there or can't be removed — the caller decides
+   whether that matters (removing a view whose JPEG is already gone should still
+   remove it from the session)."
+  [file-path]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [xhr (js/XMLHttpRequest.)]
+       (.open xhr "POST" (str geo-server-url "/delete-file") true)
+       (.setRequestHeader xhr "X-File-Path" file-path)
+       (set! (.-onload xhr)
+             (fn [_]
+               (if (= 200 (.-status xhr))
+                 (resolve nil)
+                 (reject (js/Error. (.-responseText xhr))))))
+       (set! (.-onerror xhr)
+             (fn [_] (reject (js/Error. "delete-file request failed"))))
+       (.send xhr "")))))
+
 (defn desktop-list-dir
   "List the directory at `dir` via Rust geo_server. Returns
    Promise<#js [{name, is_dir, size}, …]>. NB: the Rust handler CREATES the
