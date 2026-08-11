@@ -1459,15 +1459,15 @@
         obs (count (:obs cur))
         fit (:fit cur)]
     (if (:candidate (:plane @stage))
-      "Piano proposto · Invio accetta"
-      (str "Piano · punto " n
+      "Plane proposed · Enter accepts"
+      (str "Plane · point " n
            (cond
-             (zero? obs) " (clicca)"
-             (= 1 obs) " (1 foto — vai su un'altra)"
-             fit (str " (" obs " foto, "
+             (zero? obs) " (click)"
+             (= 1 obs) " (1 photo — go to another)"
+             fit (str " (" obs " photos, "
                       (src/fmt-number (:rms-px fit)) "px, "
                       (src/fmt-number (:parallax-deg fit)) "°)")
-             :else (str " (" obs " foto)"))))))
+             :else (str " (" obs " photos)"))))))
 
 (defn- start-plane! []
   (swap! stage assoc :plane {:picks [{:obs {}}] :committed []})
@@ -3265,7 +3265,7 @@
   (let [cur (:current-idx @stage)
         n (count (nav-order))
         theta (:theta (nth (:photos @stage) cur nil))]
-    (str "foto " (nav-rank cur) "/" n
+    (str "photo " (nav-rank cur) "/" n
          (when theta (str " · " (js/Math.round theta) "°"))
          (when (poorly-registered? cur) " ⚠"))))
 
@@ -3278,7 +3278,7 @@
       (do (.add (.-classList lock) "active")
           (set! (.-textContent lock) (theta-label)))
       (do (.remove (.-classList lock) "active")
-          (set! (.-textContent lock) "Foto"))))
+          (set! (.-textContent lock) "Photo"))))
   (when-let [^js mk (.getElementById js/document "eaq-stage-marks")]
     (if (:show-source-marks? @stage true)
       (.add (.-classList mk) "active")
@@ -3288,7 +3288,7 @@
       (do (.add (.-classList pl) "active")
           (set! (.-textContent pl) (plane-status)))
       (do (.remove (.-classList pl) "active")
-          (set! (.-textContent pl) "Piano"))))
+          (set! (.-textContent pl) "Plane"))))
   (refresh-hud!))
 
 (defn- toggle-lock! []
@@ -3325,21 +3325,21 @@
         (set! (.-id wrap) "eaq-stage-tools")
         (set! (.-className wrap) "eaq-stage-tools")
         (.appendChild wrap (make-tool-btn "eaq-stage-prev" "‹"
-                                          "Foto precedente (ordine giradischi) — tasto ["
+                                          "Previous photo (turntable order) — key ["
                                           #(nav-photo! -1)))
-        (.appendChild wrap (make-tool-btn "eaq-stage-lock" "Foto"
-                                          "Blocca/sblocca la vista sulla foto corrente"
+        (.appendChild wrap (make-tool-btn "eaq-stage-lock" "Photo"
+                                          "Lock/unlock the view on the current photo"
                                           toggle-lock!))
         (.appendChild wrap (make-tool-btn "eaq-stage-next" "›"
-                                          "Foto successiva (ordine giradischi) — tasto ]"
+                                          "Next photo (turntable order) — key ]"
                                           #(nav-photo! 1)))
-        (.appendChild wrap (make-tool-btn "eaq-stage-marks" "Mark"
-                                          (str "Mostra i mark COME SONO SCRITTI nel sorgente: "
-                                               "piano, origine e punti da cui è nato")
+        (.appendChild wrap (make-tool-btn "eaq-stage-marks" "Marks"
+                                          (str "Show/hide ALL the marks and edges the source holds. "
+                                               "To hide just one, put :show false on it.")
                                           toggle-source-marks!))
-        (.appendChild wrap (make-tool-btn "eaq-stage-plane" "Piano"
-                                          (str "Crea un piano di lavoro sull'oggetto: clicca lo stesso "
-                                               "punto su 2+ foto, 'n' per il punto dopo, 3 punti, Invio")
+        (.appendChild wrap (make-tool-btn "eaq-stage-plane" "Plane"
+                                          (str "Working plane from POINTS: click the same point on 2+ "
+                                               "photos, 'n' for the next one, 3 points, Enter")
                                           toggle-plane-mode!))
         (.insertBefore tb wrap (.-firstChild tb))))
     (update-toolbar!)))

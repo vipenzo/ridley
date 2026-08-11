@@ -62,6 +62,11 @@ between photographs, so it carries none of a curve's ghost trouble.
   border on *another* face must not be able to tilt this one a little, which
   would be the worst way to be wrong. When that happens the output says which
   edge was left out and by how much.
+- **With only two edges there is no leave-one-out**, and its silence means
+  nothing: removing one of two leaves a single line, which lies on infinitely
+  many planes, so the test would have no meaning. Two edges are exact, not
+  checked — the check is your eyes, changing photograph with `[` and `]` and
+  seeing the disc stay glued to the face.
 - **From three edges up it reports the leave-one-out**: how far the plane would
   turn if you removed each one. On a real face those numbers are small. Nine
   degrees means the edges are describing different surfaces — a chamfer, a
