@@ -27,6 +27,8 @@
        " :dir \"scans/x/\""
        " :marks {:piano-1 {:position [10 20 30] :heading [0 0 1] :up [0 1 0]}"
        "         :piano-h {:position [1 2 3] :heading [1 0 0] :up [0 0 1]}}"
+       " :edges {:spigolo-1 {:position [4 0 0] :heading [0 1 0] :up [0 0 1]"
+       "                     :a [4 0 0] :b [4 30 0] :length 30}}"
        " :faces {:top {:position [0 0 9] :heading [0 0 1] :up [0 1 0]}"
        "         :piano-1 {:position [-5 -5 -5] :heading [0 1 0] :up [0 0 1]}}}"))
 
@@ -60,8 +62,18 @@
     (is (v= [10 20 30] (run (str "(def A " acq ") (turtle A :at :piano-1 (turtle-position))")))
         "the face named :piano-1 sits at [-5 -5 -5] and must not win")))
 
+(deftest a-measured-edge-is-an-anchor-too
+  (testing "the edge poses the turtle at one end, heading ALONG the edge"
+    (is (v= [4 0 0] (run (str "(def A " acq ") (turtle A :at :spigolo-1 (turtle-position))"))))
+    (is (v= [0 1 0] (run (str "(def A " acq ") (turtle A :at :spigolo-1 (turtle-heading))")))
+        "an edge's heading runs down its own length, not out of a surface"))
+  (testing "so (f length) walks the whole edge and arrives at its other end"
+    (is (v= [4 30 0]
+            (run (str "(def A " acq ") (turtle A :at :spigolo-1 (f 30) (turtle-position))")))
+        "which is exactly what a fillet laid along the edge needs")))
+
 (deftest anchors-lists-them
-  (is (= #{:piano-1 :piano-h :top}
+  (is (= #{:piano-1 :piano-h :spigolo-1 :top}
          (set (run (str "(def A " acq ") (keys (anchors A))"))))))
 
 (deftest the-other-carriers-are-untouched

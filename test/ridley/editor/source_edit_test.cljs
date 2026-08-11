@@ -75,20 +75,22 @@
       (is (re-find #":piano-1 \{:position \[1 2 3\]" result)))
     (testing "the result is still balanced source"
       (is (pos? (src/find-matching-bracket result (.indexOf result "(acquire")))))
-    (testing "the new entry aligns under the first, as the emitter lays them out"
-      (let [lines (.split result "\n")
-            marks-line (first (filter #(re-find #":marks \{" %) lines))
-            new-line (first (filter #(re-find #":piano-1" %) lines))]
-        (is (= (.indexOf marks-line ":cima") (.indexOf new-line ":piano-1"))
-            "second entry starts in the same column as the first")))))
+    (testing "every entry is a whole LINE, so undo is deleting that line"
+      (let [lines (vec (.split result "\n"))
+            col-of #(.indexOf (first (filter (fn [l] (re-find % l)) lines)) (str %2))]
+        (is (= (col-of #":cima" ":cima") (col-of #":piano-1" ":piano-1"))
+            "old and new entry start in the same column")
+        (is (re-find #"^\s*\}" (second (drop-while #(not (re-find #":piano-1" %)) lines)))
+            "the line AFTER the last entry is where the block closes")))))
 
 (deftest appending-to-an-empty-marks-block
   (let [text "(acquire \"d\" {:proxy (box 1 2 3)\n              :marks {}})"
         [o e i] (src/map-value-bounds text 0 (count text) ":marks")
         updated (src/append-map-entry (subs text o e) ":piano-1 {:position [0 0 1]}"
-                                      ":marks" (src/column-of text i))]
-    (is (= "{:piano-1 {:position [0 0 1]}}" updated)
-        "a single entry stays on one line — no gratuitous newline")))
+                                      ":marks" (src/column-of text i))
+        pad (apply str (repeat 22 " "))]     ; :marks at col 14 + ":marks {"
+    (is (= (str "{\n" pad ":piano-1 {:position [0 0 1]}\n" pad "}") updated)
+        "even the first entry gets its own line, and the brace closes below it")))
 
 (deftest unwrapping-a-wrapper-form-gives-back-what-it-wrapped
   ;; The cancel path of (edit-plane-mark …): unlike the rest of the edit-* family
@@ -154,3 +156,95 @@
   (is (= "1.2346" (src/fmt-number 1.23456789)) "4 decimals")
   (is (= "0" (src/fmt-number 1e-9)) "noise rounds away rather than printing 1e-9")
   (is (= "[1 -2.5 0]" (src/fmt-vec3 [1.0 -2.5 0.0]))))
+
+(deftest a-commented-out-form-is-not-a-target
+  ;; The write-backs (edge, curve, plane) locate their acquire form by searching
+  ;; the buffer for its head. Vincenzo commented out an earlier `(def A (acquire …`
+  ;; to start over, and `n` wrote into THAT one — it was the first occurrence in
+  ;; the file, and nothing in the search said "must be live code".
+  (let [text (str ";; (def A\n"
+                  ";;   (acquire \"dir\" {:edges {}}))\n"
+                  "(def A\n"
+                  "  (acquire \"dir\" {:edges {}}))\n")
+        dead (.indexOf text "(acquire")
+        live (.indexOf text "(acquire" (inc dead))]
+    (is (src/commented? text dead) "the one behind ;; is dead text")
+    (is (not (src/commented? text live)) "the one that runs is not"))
+  (testing "a ; inside a string is not a comment"
+    (let [text "(acquire \"dir;x\" {:edges {}})"]
+      (is (not (src/commented? text (.indexOf text ":edges"))))))
+  (testing "a comment ends at its newline"
+    (let [text "; nota\n(acquire \"d\" {})"]
+      (is (not (src/commented? text (.indexOf text "(acquire"))))))
+  (testing "code, then a trailing comment on the same line"
+    (let [text "(acquire \"d\" {}) ; e questo e' morto (acquire \"d\" {})"]
+      (is (not (src/commented? text 0)))
+      (is (src/commented? text (.lastIndexOf text "(acquire"))))))
+
+(deftest dead-code-is-not-a-target
+  ;; Second round of the same defect, and the reason the question had to get
+  ;; bigger: Vincenzo had not commented the old form with `;;` at all — he had
+  ;; wrapped it in `(comment def A (acquire …`, which is live text by every
+  ;; lexical measure and kept winning the search.
+  (let [text (str "(comment def A (acquire \"dir\"\n"
+                  "  {:marks {} :edges {}}))\n"
+                  "\n"
+                  "(def A (acquire \"dir\"\n"
+                  "  {:marks {}}))\n")
+        dead (.indexOf text "(acquire")
+        live (.indexOf text "(acquire" (inc dead))]
+    (is (src/dead-code? text dead) "inside (comment …)")
+    (is (not (src/dead-code? text live)) "the one that runs")
+    (is (not (src/commented? text dead))
+        "and it is NOT a line comment — which is why the first fix missed it"))
+  (testing "the discard reader macro, on the form that wraps it"
+    (let [text "#_(def A (acquire \"d\" {}))\n(def A (acquire \"d\" {}))"
+          dead (.indexOf text "(acquire")
+          live (.indexOf text "(acquire" (inc dead))]
+      (is (src/dead-code? text dead))
+      (is (not (src/dead-code? text live)))))
+  (testing "(comment …) closes, and what follows is alive again"
+    (let [text "(comment (acquire \"d\" {}))\n(acquire \"d\" {})"]
+      (is (not (src/dead-code? text (.lastIndexOf text "(acquire"))))))
+  (testing "a head that merely starts with comment is a normal call"
+    (let [text "(comment-on (acquire \"d\" {}))"]
+      (is (not (src/dead-code? text (.indexOf text "(acquire"))))))
+  (testing "parens inside strings and line comments do not unbalance the walk"
+    (let [text (str "(def s \"a ) ( b\")\n"
+                    "; ) ( )\n"
+                    "(def A (acquire \"d\" {}))")]
+      (is (not (src/dead-code? text (.indexOf text "(acquire")))))))
+
+(deftest creating-a-missing-slot
+  ;; A form trimmed by hand down to :proxy and :pose has no :marks to hang
+  ;; :edges off. Refusing there means answering a measured edge with "go type
+  ;; :edges {} and draw it again".
+  (let [text "(def A (acquire \"d\"\n         {:proxy (registration-plate)\n          :pose {:position [0 0 0]}}))"
+        [o e] (src/first-map-bounds text 0 (count text))]
+    (is (= "{" (.charAt text o)))
+    (is (= "}" (.charAt text (dec e))) "and it is the OPTS map, not :pose's")
+    (is (= 10 (src/entry-column text o)) "entries line up under :proxy"))
+  (testing "the dir string's own braces are stepped over"
+    (let [text "(acquire \"d{x\" {:marks {}})"
+          [o _] (src/first-map-bounds text 0 (count text))]
+      (is (= (.indexOf text "{:marks") o))))
+  (testing "an empty map: entries would go one past the brace"
+    (is (= 1 (src/entry-column "{}" 0))))
+  (testing "no map in range"
+    (is (nil? (src/first-map-bounds "(acquire \"d\")" 0 13)))))
+
+(deftest a-commented-entry-inside-the-block-survives-an-append
+  ;; How Vincenzo parks a mark he does not want right now: he comments the line
+  ;; INSIDE :marks. Re-flowing the block from parsed entries would delete those
+  ;; lines silently, which is why append only adds whitespace.
+  (let [block (str "{;:notch (plane-mark {:position [1 1 1]})\n"
+                   "         :head (plane-mark {:position [2 2 2]})}")
+        updated (src/append-map-entry block ":piano-9 (plane-mark {:position [3 3 3]})"
+                                      ":marks" 1)]
+    (is (re-find #";:notch \(plane-mark" updated) "the parked one is still there")
+    (is (re-find #":head \(plane-mark" updated))
+    (is (re-find #":piano-9 \(plane-mark \{:position \[3 3 3\]\}\)\n\s+\}$" updated)
+        "new entry on its own line, brace below it")
+    (is (= (count (re-seq #"plane-mark" block))
+           (dec (count (re-seq #"plane-mark" updated))))
+        "exactly one entry was added, none lost")))

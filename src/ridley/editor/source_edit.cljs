@@ -33,8 +33,83 @@
         (= (.charAt text j) "\"") (inc j)
         :else (recur (inc j))))))
 
+(defn commented?
+  "Is the character at `idx` inside a LINE COMMENT? Scans its own line from the
+   start, honouring strings, so a `;` inside a string literal does not count.
+
+   A commented-out form is not part of the program, so it must never be the
+   target of a write-back. This bit for real (2026-08-07): an earlier
+   `(def A (acquire …))` had been commented out to start over, and the stage's
+   edge write-back landed in THAT one — it was merely the first occurrence in
+   the file.
+
+   Line comments only — see `dead-code?` for the question a write-back actually
+   needs to ask."
+  [text idx]
+  (let [start (inc (.lastIndexOf (.substring text 0 idx) "\n"))]
+    (loop [i start]
+      (if (>= i idx)
+        false
+        (let [ch (.charAt text i)]
+          (cond
+            (= ch ";") true
+            (= ch "\"") (let [after (skip-string text i)]
+                          (if (neg? after) false (recur after)))
+            :else (recur (inc i))))))))
+
 (def ^:private closer-of {"(" ")" "[" "]" "{" "}"})
 (def ^:private closer? #{")" "]" "}"})
+
+(defn- comment-opener?
+  "Is the `(` at `i` the head paren of a `(comment …)` form?"
+  [text i]
+  (let [after (subs text (inc i) (min (count text) (+ i 9)))]
+    (and (.startsWith after "comment")
+         (or (= 7 (count after))
+             (some? (re-find #"[\s,()\[\]{}\"]" (.charAt after 7)))))))
+
+(defn- discarded-opener?
+  "Is the bracket at `i` preceded by the reader discard `#_`?"
+  [text i]
+  (loop [j (dec i)]
+    (cond
+      (< j 1) false
+      (some? (re-find #"\s" (.charAt text j))) (recur (dec j))
+      :else (and (= "_" (.charAt text j)) (= "#" (.charAt text (dec j)))))))
+
+(defn dead-code?
+  "Is the character at `idx` OUTSIDE the running program — i.e. inside a line
+   comment, inside a `(comment …)` form, or inside a form discarded with `#_`?
+
+   This is the question a write-back has to ask, and asking a smaller one twice
+   cost two rounds with Vincenzo (2026-08-07). The write-backs locate their
+   `(acquire …)` by searching the buffer for its head, and take the FIRST hit —
+   but the way you start over is to disable the old form and write a new one
+   BELOW it, so the disabled one is always the first hit. First I only skipped
+   `;;` comments; he had disabled his with `(comment def A (acquire …`, which is
+   live text by every lexical measure, and it kept winning.
+
+   So this walks the brackets from the start of the buffer — honouring strings
+   and line comments — and asks whether any form still OPEN at `idx` is one of
+   the three kinds that mean 'not part of the program'. Unbalanced text ahead of
+   `idx` (a buffer mid-edit) can only make it answer 'not dead', which is the
+   old behaviour."
+  [text idx]
+  (or (commented? text idx)
+      (loop [i 0, stack ()]
+        (if (>= i idx)
+          (boolean (some true? stack))
+          (let [ch (.charAt text i)]
+            (cond
+              (= ch "\"") (let [after (skip-string text i)]
+                            (if (neg? after) false (recur after stack)))
+              (= ch ";") (let [nl (.indexOf text "\n" i)]
+                           (if (neg? nl) false (recur (inc nl) stack)))
+              (closer-of ch) (recur (inc i)
+                                    (conj stack (boolean (or (and (= ch "(") (comment-opener? text i))
+                                                             (discarded-opener? text i)))))
+              (closer? ch) (recur (inc i) (if (seq stack) (rest stack) stack))
+              :else (recur (inc i) stack)))))))
 
 (defn find-matching-bracket
   "Given text and the index of an opening bracket — `(`, `[` or `{` — return the
@@ -86,6 +161,26 @@
   [text idx]
   (- idx (inc (.lastIndexOf (.substring text 0 idx) "\n"))))
 
+(defn first-map-bounds
+  "[open end) of the first `{…}` inside text[from to), skipping strings and line
+   comments — for `(acquire \"dir\" {…})` that is the opts map itself. nil when
+   there is none.
+
+   Where a MISSING slot gets created. `map-value-bounds` finds a block that is
+   already there; a form written before edges existed, or trimmed by hand, has
+   only the map, and the alternative is telling the user to type `:edges {}`
+   before the gesture will work."
+  [text from to]
+  (loop [i from]
+    (cond
+      (>= i to) nil
+      (= "\"" (.charAt text i)) (let [a (skip-string text i)] (if (neg? a) nil (recur a)))
+      (= ";" (.charAt text i)) (let [nl (.indexOf text "\n" i)]
+                                 (if (neg? nl) nil (recur (inc nl))))
+      (= "{" (.charAt text i)) (let [e (find-matching-bracket text i)]
+                                 (when (and (pos? e) (<= e to)) [i e]))
+      :else (recur (inc i)))))
+
 (defn form-inner
   "The text INSIDE `(head …)` occupying [from to): everything after the head
    token and before the closing paren, trimmed. `(edit-plane-mark {…})` → `{…}`.
@@ -112,6 +207,17 @@
         (= ";" (.charAt text j)) (let [nl (.indexOf text "\n" j)]
                                    (if (neg? nl) len (recur (inc nl))))
         :else j))))
+
+(defn entry-column
+  "The column at which entries of the `{…}` opening at `o` are laid out: the
+   column of its first entry, or one past the brace when the map is empty. What
+   a newly created slot indents to, so it lands in the column its neighbours
+   already use rather than at some fixed guess."
+  [text o]
+  (let [i (skip-blanks text (inc o))]
+    (if (and (< i (count text)) (not= "}" (.charAt text i)))
+      (column-of text i)
+      (inc (column-of text o)))))
 
 (defn map-entries
   "The TOP-LEVEL entries of a `{…}` block, as [{:key \":id\" :text \":id value\"} …]
@@ -163,13 +269,28 @@
       [nil value-start])))
 
 (defn append-map-entry
-  "The `{…}` block text with `entry` added, laid out the way the emitted forms
-   already are: entries one per line, aligned under the first, which sits right
-   after `<kw> {`. `key-col` is the column the key token starts at. An empty
-   block gets its single entry inline."
+  "The `{…}` block text with `entry` added: entries one per line, aligned in the
+   column right after `<kw> {`, and BOTH BRACES ALONE ON THEIR OWN LINE.
+   `key-col` is the column the key token starts at.
+
+   The lonely closing brace is the whole point (Vincenzo, 2026-08-07). These
+   entries are long — a measured edge or a fitted plane carries its numbers —
+   and undo here is deleting the text. With the block closing at the end of the
+   last entry,
+
+       {:spigolo-4 (edge-mark …molto lungo…)}
+
+   that last entry cannot be killed as a LINE: you have to scroll a screenful to
+   the right to find where the entry stops and the block's brace begins. One
+   newline turns every entry into a line you can select and delete.
+
+   Only whitespace is added: the existing entries keep their own bytes, so a
+   mark the user commented out INSIDE the block survives (his blocks have
+   several). That is also why the block is not re-flowed from parsed entries —
+   parsing them back would drop those comment lines."
   [block entry kw key-col]
   (let [inner (.trim (subs block 1 (dec (count block))))
         align (apply str (repeat (+ key-col (count kw) 2) " "))]
-    (if (empty? inner)
-      (str "{" entry "}")
-      (str "{" (subs block 1 (dec (count block))) "\n" align entry "}"))))
+    (str "{\n" align
+         (when (seq inner) (str inner "\n" align))
+         entry "\n" align "}")))

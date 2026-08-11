@@ -675,6 +675,38 @@
    ;; with it, re-opening a mark is the family's own gesture (put `edit-` in
    ;; front of the head and Run) instead of hand-wrapping a multi-line map.
    'plane-mark          edit-acquire/plane-mark
+   ;; edge-mark (dev-docs/brief-observation-driven-acquire.md, gradino 3): the
+   ;; resting form of a MEASURED EDGE, written by the stage's Spigolo gesture into
+   ;; the emitted (acquire …)'s :edges block. Same gentle-constructor contract as
+   ;; plane-mark. Its pose runs ALONG the edge, so `(turtle (:spigolo-1 (:edges A))
+   ;; (extrude (circle 2) (f len)))` needs no new DSL to lay a fillet down it.
+   'edge-mark           edit-acquire/edge-mark
+   ;; curve-mark: un bordo CURVO già misurato, come nuvola di punti. NON si
+   ;; misura più (2026-08-10: misurare una curva chiede di APPAIARE punti fra le
+   ;; foto, ed è proprio ciò che questo canale è nato per non fare) — la forma
+   ;; resta perché i punti di una curva presa prima sono prove valide per un
+   ;; piano, e un sorgente che la contiene deve continuare a girare.
+   'curve-mark          edit-acquire/curve-mark
+   ;; edit-edge-mark: the same edit-* grammar as edit-plane-mark,
+   ;; applied to the bordi gesture — and the reason it exists is that the gesture
+   ;; had grown a UI of its own (Vincenzo, 2026-08-09: «proporrei di togliere
+   ;; stati alla UI e usare di più il codice»). Writing
+   ;;   :edges {:bordo-alto (edit-edge-mark)}
+   ;; ARMS the measurement; the drag on two photos makes it; confirming replaces
+   ;; the form with `(edge-mark {…})` under that same name. So the name is the
+   ;; user's, the arming is text, and nothing has to be listed or selected in a
+   ;; panel. Re-opening one REMEASURES from zero: the observations are pixel
+   ;; lines against photo identities, which the source deliberately does not know.
+   ;; plane-from-edges: il PIANO come formula. Scritto fra i :marks dello stesso
+   ;; acquire, nomina i bordi che gli fanno da prova —
+   ;;   :marks {:coperchio (plane-from-edges :bordo-alto :bordo-basso)}
+   ;; — e si rifà a ogni Run: correggi uno spigolo e il piano lo segue, ne
+   ;; cancelli uno e il piano cambia. Non potendo vedere i :edges al momento in
+   ;; cui viene valutato (la mappa si costruisce prima dell'acquire), restituisce
+   ;; una specifica differita che `acquire` risolve — lo stesso trucco a due
+   ;; tempi di edit-plane-mark.
+   'plane-from-edges    edit-acquire/plane-from-edges
+   'edit-edge-mark      (fn [& [e]] (acquire-stage/request-edge-edit! :retta e))
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here
    ;; (request!, opened from the definitions panel) and a proxy-mesh first arg to

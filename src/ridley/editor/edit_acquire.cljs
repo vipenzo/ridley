@@ -64,6 +64,7 @@
             [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.bootstrap :as boot]
             [ridley.photogrammetry.note :as note]
+            [ridley.photogrammetry.curve :as pcurve]
             [ridley.math :as m]
             [ridley.export.stl :as stl]))
 
@@ -4022,7 +4023,12 @@
 
    A bare `{…}` literal remains valid wherever a mark is accepted — marks
    emitted before this form exists keep working, they simply do not announce
-   what they are."
+   what they are.
+
+   Display keys, honoured by the stage and carried through untouched (Vincenzo,
+   2026-08-09: «troppi puntini e lineette»): `:show` — `false` hides it,
+   `:prove` also draws the points it came from, absent means the plain sign —
+   and `:label` — `false` for no name, a string for a different one."
   [m]
   (when (map? m)
     (let [missing (remove #(contains? m %) [:position :heading :up])
@@ -4042,6 +4048,179 @@
                 "° — la turtle userà comunque questa coppia"))))))
   m)
 
+;; ============================================================
+;; plane-from-edges — il piano come FORMULA, non come copia
+;; ============================================================
+;;
+;; «L'utente può creare un nuovo piano scrivendo (plane-from-edges :spigolo-1
+;; :spigolo-2 :curva-1)» (Vincenzo, 2026-08-09). Il guadagno più profondo non è
+;; togliere la UI di selezione — è che il piano smette di essere una COPIA dei
+;; numeri calcolati una volta e diventa una formula: si rifà a ogni Run dalle
+;; prove che nomina. Correggi uno spigolo e il piano lo segue; ne cancelli uno e
+;; il piano cambia; e il caso «piano vecchio, prove nuove» smette di esistere.
+;;
+;; Scritta dentro la mappa dell'acquire, la chiamata viene valutata PRIMA che
+;; l'acquire esista, quindi non può risolvere i nomi da sé: restituisce una
+;; specifica DIFFERITA che `acquire` risolve dopo aver costruito i suoi :edges.
+;; È lo stesso trucco a due tempi di edit-plane-mark.
+
+(defn ^:export plane-from-edges
+  "`(plane-from-edges :bordo-alto :bordo-basso)` — il PIANO che passa per i
+   bordi nominati, scritto dove sta un mark:
+
+       :marks {:coperchio (plane-from-edges :bordo-alto :bordo-basso)}
+
+   I nomi sono quelli del blocco `:edges` dello STESSO acquire. Vale ogni tipo
+   di bordo misurato: uno spigolo dritto (campionato lungo sé stesso), una curva
+   (i suoi punti), un cerchio (il suo anello) — tutti diventano punti, e il
+   piano è il fit robusto attraverso di essi.
+
+   Due spigoli NON PARALLELI della stessa faccia la fissano esattamente, ed è la
+   prova più solida che ci sia qui: uno spigolo dritto si misura senza appaiare
+   nessun punto fra le foto, quindi non porta con sé i fantasmi che una curva
+   può portare.
+
+   Un ultimo argomento mappa passa dritto nel mark: `(plane-from-edges :a :b
+   {:show false})` fa il piano e lo tiene fuori dal disegno.
+
+   Restituisce una SPECIFICA, non ancora un mark: i nomi si possono risolvere
+   solo dopo che l'acquire ha costruito i suoi :edges, ed è `acquire` a farlo."
+  [& args]
+  (let [opts (first (filter map? args))
+        rest' (remove map? args)]
+    ;; SOLO nomi. Passare l'acquire — `(plane-from-edges A :uno :due)` — è
+    ;; l'errore naturale, perché ogni altra cosa in questo canale comincia da A;
+    ;; e il messaggio che ne usciva («non trovo #'user/A fra gli :edges») diceva
+    ;; il sintomo e non la causa. Qui si separano i nomi dal resto, così il
+    ;; rifiuto può nominare l'argomento di troppo per quello che è.
+    {:plane-from (vec (filter keyword? rest'))
+     :junk (vec (remove keyword? rest'))
+     :opts opts}))
+
+(def ^:private loo-swing-deg
+  "Di quanto può ruotare il piano togliendo uno dei bordi che lo definiscono,
+   prima che valga la pena dirlo. Due gradi: sotto, è il rumore di misure che
+   descrivono la stessa faccia; sopra, i bordi stanno descrivendo superfici
+   diverse e il piano è una media fra loro."
+  2.0)
+
+(defn- plane-spec? [v]
+  (and (map? v) (contains? v :plane-from)))
+
+(defn- resolve-plane-spec
+  "Fit del piano di una specifica, o nil dopo aver detto AD ALTA VOCE perché no.
+   Un rifiuto porta i suoi numeri, come ovunque in questo canale, e il mark non
+   viene creato: meglio un nome che manca di un piano sbagliato che nessuno ha
+   modo di sospettare.
+
+   Il verso della normale NON viene dalle camere — qui non ce ne sono, e
+   soprattutto una formula deve dare lo stesso risultato a ogni Run, mentre le
+   camere si spostano. Punta VIA DAL CENTRO dell'oggetto, che è la regola fisica
+   della normale uscente di una faccia."
+  [dir nm {:keys [plane-from junk opts]} edges pose plate? centre]
+  (let [;; prefisso corto: la CARTELLA della sessione, non tutto il percorso, e il
+        ;; nome del mark. Basta a distinguere due acquire e sta su una riga.
+        folder (last (remove empty? (str/split (str dir) #"/")))
+        say (fn [msg] (state/capture-println
+                       (str ";; plane-from-edges · " folder " · :" (name nm) " · " msg)))
+        ;; due decimali: in una riga sintetica 26.5651° è rumore, 26.57° è la misura
+        n2 (fn [x] (modal/fmt-number (/ (js/Math.round (* 100.0 x)) 100.0)))
+        missing (remove #(contains? edges %) plane-from)
+        pts (vec (mapcat #(pcurve/edge-points (get edges %)) plane-from))]
+    (cond
+      (seq junk)
+      ;; nomina il valore di troppo per com'è scritto: dire "un argomento così"
+      ;; lascerebbe indovinare QUALE, e `#'user/A` da solo diceva il sintomo
+      (do (say (str "vuole solo i NOMI dei bordi (:uno :due) · c'è anche "
+                    (str/join ", " (map #(let [t (pr-str %)]
+                                           (if (> (count t) 24) (str (subs t 0 24) "…") t))
+                                        junk))
+                    " · se è l'acquire, toglilo: bastano i nomi · ? plane-from-edges"))
+          nil)
+
+      (empty? plane-from)
+      (do (say "nessun bordo nominato · ? plane-from-edges") nil)
+
+      (seq missing)
+      (do (say (str "non trovo " (str/join ", " missing) " fra gli :edges")) nil)
+
+      (< (count pts) 3)
+      (do (say "punti insufficienti per un piano") nil)
+
+      :else
+      (if-let [pl (pcurve/plane-from-points
+                   pts {:up-hints (if plate? [(:heading pose) (:up pose)]
+                                      [(:up pose) (:heading pose)])})]
+        (if (< (:width-mm pl) pcurve/min-width-mm)
+          (do (say (str "NON creato · bordi in fila (larghi "
+                        (n2 (:width-mm pl)) " mm, min "
+                        (n2 pcurve/min-width-mm) ") · 1 mm d'errore = "
+                        (n2 (:tilt-per-mm-deg pl)) "° · serve un bordo "
+                        "trasversale · ? plane-from-edges"))
+              nil)
+          (let [outward (m/v- (:position pl) centre)
+                flip? (neg? (m/dot (:heading pl) outward))
+                mk (cond-> (select-keys pl [:position :heading :up])
+                     flip? (update :heading #(m/v* % -1.0)))]
+            ;; QUANTO DI OGNI BORDO È SERVITO. Il fit è robusto: un bordo che sta
+            ;; oltre `plane-outlier-mm` dal piano su cui gli altri sono d'accordo
+            ;; viene scartato — ed è giusto, perché un bordo di un'ALTRA faccia
+            ;; non deve poter inclinare questo piano. Ma scartarlo in silenzio no:
+            ;; si nomina un terzo bordo credendo di rinforzare il piano, e invece
+            ;; non conta niente, senza che nulla lo dica (Vincenzo, 2026-08-10:
+            ;; «del terzo prende solo il centro, è giusto?»).
+            (doseq [en plane-from]
+              (let [ps (pcurve/edge-points (get edges en))
+                    d (fn [q] (Math/abs (m/dot (m/v- q (:position pl)) (:heading pl))))
+                    ds (map d ps)
+                    out (count (filter #(> % pcurve/plane-outlier-mm) ds))]
+                (when (pos? out)
+                  (say (str en (if (= out (count ps))
+                                 " SCARTATO"
+                                 (str " · usati " (- (count ps) out) "/" (count ps) " punti"))
+                            " · fino a " (n2 (reduce max ds)) " mm fuori (max "
+                            pcurve/plane-outlier-mm ") · ? plane-from-edges")))))
+            ;; LEAVE-ONE-OUT: di quanto ruoterebbe il piano togliendo ciascun
+            ;; bordo. È la domanda che la planarità in millimetri non risponde —
+            ;; sui dati veri di Vincenzo 0.69 mm di scarto su una nuvola larga
+            ;; 8 mm valgono NOVE GRADI, e una soglia assoluta in mm lasciava
+            ;; passare tutto in silenzio. Con due bordi non ha senso (togliendone
+            ;; uno resta una retta, che sta su infiniti piani); da tre in su è la
+            ;; misura di quanto le prove sono d'accordo fra loro.
+            (when (> (count plane-from) 2)
+              (let [hints (if plate? [(:heading pose) (:up pose)] [(:up pose) (:heading pose)])
+                    swing (fn [en]
+                            (let [ps (vec (mapcat #(pcurve/edge-points (get edges %))
+                                                  (remove #(= % en) plane-from)))]
+                              (when-let [o (and (>= (count ps) 3)
+                                                (pcurve/plane-from-points ps {:up-hints hints}))]
+                                [en (* (/ 180.0 Math/PI)
+                                       (Math/acos (min 1.0 (Math/abs (m/dot (:heading pl)
+                                                                            (:heading o))))))])))
+                    swings (sort-by (comp - second) (keep swing plane-from))]
+                (when (> (or (second (first swings)) 0.0) loo-swing-deg)
+                  (say (str "prove in disaccordo · "
+                            (str/join " · " (map (fn [[en d]]
+                                                   (str "senza " en " " (n2 d) "°"))
+                                                 swings))
+                            " · ? plane-from-edges")))))
+            (when (> (:flatness-mm pl) 1.0)
+              (say (str "planarità " (n2 (:flatness-mm pl)) " mm")))
+            (merge mk {:from (mapv vec (pcurve/subsample (:points pl) 12))} opts)))
+        (do (say "i bordi nominati non definiscono un piano · ? plane-from-edges") nil)))))
+
+(defn- resolve-plane-specs
+  "Sostituisce ogni `(plane-from-edges …)` di `:marks` col piano che nomina. Le
+   specifiche che non si risolvono spariscono, dopo aver detto perché."
+  [dir marks edges pose plate? centre]
+  (reduce-kv (fn [acc nm v]
+               (if-not (plane-spec? v)
+                 (assoc acc nm v)
+                 (if-let [mk (resolve-plane-spec dir nm v edges pose plate? centre)]
+                   (assoc acc nm mk)
+                   acc)))
+             {} marks))
+
 (defn ^:export acquire
   "(acquire \"dir\") / (acquire \"dir\" {:proxy (box …) :pose {…} :shapes {} :marks {}})
    — the self-contained acquisizione-parametrica form (P4a). Mounts the posed
@@ -4054,20 +4233,38 @@
   ([dir opts]
    (let [posed (resolve-proxy opts)
          pose (or (:pose opts) (:creation-pose posed))
-         faces (face-poses posed pose)]
+         faces (face-poses posed pose)
+         edges (or (:edges opts) {})
+         ;; ogni `(plane-from-edges …)` fra i :marks diventa QUI il suo piano:
+         ;; dopo che gli :edges esistono, prima che chiunque legga i marks
+         marks (resolve-plane-specs dir (or (:marks opts) {}) edges pose
+                                    (boolean (seq (:anchors posed)))
+                                    (:position pose))]
      (record-scaffolds! [posed])
      ;; A mark named like one of the proxy's faces WINS over it in
      ;; `(turtle A :at …)` (turtle/named-poses merges faces under marks, on
      ;; purpose: a name you chose beats a generated one). That is the right
      ;; precedence and a silent surprise, so say it once — the plate's own faces
      ;; are called :top/:bottom/:side, which are tempting names for a zone.
-     (when-let [clash (seq (filter (set (keys faces)) (keys (:marks opts))))]
+     (when-let [clash (seq (filter (set (keys faces)) (keys marks)))]
        (state/capture-println
         (str ";; acquire · " dir ": " (str/join ", " (map str clash))
              (if (next clash) " sono nomi" " è un nome")
              " di faccia del proxy — il mark ha la precedenza, quindi "
              "(turtle A :at " (first clash) " …) userà il MARK. "
              "La faccia resta raggiungibile come (" (first clash) " (:faces A)).")))
+     ;; The same silent-precedence trap one level up: a mark and an edge that
+     ;; share a name are BOTH the user's, so neither is the obvious winner, and
+     ;; `(turtle A :at …)` has to pick one (the mark). Worth saying, because an
+     ;; edge's heading runs along it and a mark's points out of a surface — the
+     ;; wrong one of the two aims an extrusion 90° away.
+     (when-let [clash (seq (filter (set (keys marks)) (keys edges)))]
+       (state/capture-println
+        (str ";; acquire · " dir ": " (str/join ", " (map str clash))
+             (if (next clash) " sono nomi" " è un nome")
+             " sia di mark che di spigolo — (turtle A :at " (first clash)
+             " …) userà il MARK. Lo spigolo resta raggiungibile come ("
+             (first clash) " (:edges A)).")))
      ;; P4b: note the stage so the post-eval hook (core/after refresh-viewport!)
      ;; turns this evaluated directive into the interactive palcoscenico —
      ;; clickable frustums + click→pose, viewport state, camera left where it is.
@@ -4076,16 +4273,106 @@
      ;; what was emitted and what is displayed shows up at once, instead of
      ;; three steps later as displaced geometry.
      (stage/note-eval! {:proxy posed :pose pose :dir dir
-                        :marks (or (:marks opts) {})})
+                        :marks marks
+                        :edges edges})
      {:proxy posed
       :pose pose
       :shapes (or (:shapes opts) {})
-      :marks (or (:marks opts) {})
+      :marks marks
+      ;; Measured EDGES of the object (brief-observation-driven-acquire, gradino
+      ;; 3): each one a pose that runs ALONG the edge, plus its two ends. Kept
+      ;; apart from :marks on purpose — a mark's heading is a surface normal and
+      ;; an edge's is a direction, and everything that reads marks as planes
+      ;; (acquire-union's anchors, above all) would quietly misread an edge as a
+      ;; plane whose normal points down its own length.
+      :edges edges
       ;; P4b Pezzo (iii): the 6 box faces as turtle poses, so the user can drop the
       ;; turtle onto a face by name — `(turtle (:top (:faces A)) (edit-path-2d …))`
       ;; — and draw the ricalco there over the stage backdrop. Computed, not stored.
       :faces faces
       :dir dir})))
+
+(def ^:private edge-length-tol-mm
+  "Allowed disagreement between an edge's declared :length and the distance
+   between its own ends. 0.01 mm is far above the emitter's rounding and far
+   below anything a hand-edit would leave by accident."
+  0.01)
+
+(defn ^:export edge-mark
+  "A MEASURED EDGE of an acquisition: a pose that runs ALONG the edge —
+   `{:position <one end> :heading <direction> :up …}` — plus `:a`/`:b`, its two
+   ends, and `:length`, their distance. Returns the map UNCHANGED; it is the
+   resting form the stage's Spigolo gesture writes, in the same family as
+   `plane-mark`.
+
+   Heading along the edge, not across it, is what makes it useful without any new
+   DSL: `(turtle (:spigolo-1 (:edges A)) (extrude (circle 2) (f 42.13)))` lays a
+   fillet down the whole edge, because `(f …)` travels the heading.
+
+   Gentle, not silent, exactly like plane-mark: it checks the little there is to
+   check — the expected keys, and that :length still matches the ends — and
+   REPORTS what looks wrong without touching the data. An edge whose length has
+   been hand-edited is still the user's edge; correcting it quietly would hide
+   the fact that the two no longer describe the same segment.
+
+   Display keys, honoured by the stage and carried through untouched (Vincenzo,
+   2026-08-09: «troppi puntini e lineette»): `:show` — `false` hides it,
+   `:prove` also draws the points it came from, absent means the plain sign —
+   and `:label` — `false` for no name, a string for a different one."
+  [e]
+  (when (map? e)
+    (let [missing (remove #(contains? e %) [:position :heading :a :b])]
+      (when (seq missing)
+        (state/capture-println
+         (str ";; edge-mark: mancano " (str/join ", " missing)
+              " — uno spigolo ha bisogno dei suoi due capi e di una posa che li percorra")))
+      (when (and (:a e) (:b e) (:length e))
+        (let [d (m/magnitude (m/v- (:b e) (:a e)))]
+          (when (> (Math/abs (- d (:length e))) edge-length-tol-mm)
+            (state/capture-println
+             (str ";; edge-mark: :length dice " (modal/fmt-number (:length e))
+                  " mm ma fra :a e :b ce ne sono " (modal/fmt-number d)
+                  " — uno dei due è stato modificato a mano")))))))
+  e)
+
+(defn ^:export curve-mark
+  "A measured CURVED edge of an acquisition: `{:points [[x y z] …]}`, the 3D
+   points recovered from the photographs.
+
+   It carries no pose, because a curve has none — and that is the whole of what
+   it is for. A curve's value is the PLANE it lies in, and a plane wants
+   evidence: several curves, and straight edges too, pooled. So this is stored
+   evidence and nothing more, written into the same `:edges` block as its
+   straight siblings.
+
+   Why it lives in the SOURCE rather than in the gesture's own memory (Vincenzo,
+   2026-08-07): «non sarebbe meglio accumulare le cose (piani, segmenti) nel
+   sorgente, così li posso cancellare come testo invece che nella UI?». Yes — and
+   it is what this channel does everywhere else. A bench that lives in the source
+   can be renamed, deleted, kept across sessions and diffed, with no editing UI
+   at all; one that lives in a gesture's state needs a UI for each of those, and
+   is lost the moment the gesture closes.
+
+   Gentle, not silent, like the rest of the family.
+
+   Its points are drawn only when it asks for them with `:show :prove` — forty
+   dots per curve is exactly the clutter that key exists to stop. `:show false`
+   hides it entirely, `:label false`/`\"testo\"` its name.
+
+   NON si misura più (2026-08-10). Misurare una curva chiede di APPAIARE punti
+   fra due foto, che è precisamente ciò che questo canale è nato per non fare, e
+   il piano — l'unica cosa per cui serviva — lo danno meglio due spigoli dritti
+   non paralleli, che si misurano senza appaiare niente. La forma resta perché i
+   punti di una curva presa prima sono prove valide, e un sorgente che la
+   contiene deve continuare a girare."
+  [m]
+  (when (map? m)
+    (let [pts (:points m)]
+      (when-not (and (sequential? pts) (>= (count pts) 3))
+        (state/capture-println
+         (str ";; curve-mark: servono almeno 3 punti in :points — questo bordo curvo "
+              "non e' utilizzabile come evidenza per un piano")))))
+  m)
 
 ;; ------------------------------------------------------------
 ;; acquire-union — fusing two shooting sessions (brief-session-fusion.md)
@@ -4215,6 +4502,20 @@
             "quindi niente che possa smentire il fit. Una terza posa dello stesso "
             "oggetto lo metterebbe alla prova.")))))
 
+(defn- transform-edge
+  "Carry a measured edge through the fusion motion. Its pose moves like any mark
+   (transform-pose keeps the keys it does not know about); its two ENDS are
+   points and move as points. :length is invariant — the motion is rigid."
+  [rt e]
+  (cond-> (fuse/transform-pose rt e)
+    ;; a curve's luggage is its cloud of points, each of which moves as a point
+    (:points e) (assoc :points (mapv #(vec (fuse/transform-point rt %)) (:points e)))
+    ;; a straight edge carries its two ENDS, which are points and move as
+    ;; points; a circle carries only its radius, which a rigid motion does not
+    ;; touch at all. Same transport, different luggage.
+    (:a e) (assoc :a (vec (fuse/transform-point rt (:a e))))
+    (:b e) (assoc :b (vec (fuse/transform-point rt (:b e))))))
+
 (defn- fuse-sessions
   "`sessions` is [[label acq] …] with the REFERENCE first; `anchors-for` builds
    the correspondences between two labelled sessions."
@@ -4246,7 +4547,9 @@
                            :transform (select-keys fit [:R :t :rvec])
                            :rms-mm (:rms-mm fit)
                            :marks (into {} (map (fn [[nm p]] [(prefix lbl nm) (fuse/transform-pose fit p)])
-                                                (:marks b)))})
+                                                (:marks b)))
+                           :edges (into {} (map (fn [[nm e]] [(prefix lbl nm) (transform-edge fit e)])
+                                                (:edges b)))})
                         fits)
             ;; Every mark of every session survives under its own address,
             ;; `:label/name` — nothing collides, nothing is dropped, and nothing
@@ -4264,6 +4567,18 @@
             marks (reduce (fn [acc {:keys [marks]}] (merge marks acc))
                           (merge zones
                                  (into {} (map (fn [[nm p]] [(prefix ref-lbl nm) p]) (:marks a))))
+                          moved)
+            ;; Edges follow the same addressing — every one survives as
+            ;; `:label/name` — with one difference: the REFERENCE session's edges
+            ;; also keep their bare names. A mark's bare name is reserved (it
+            ;; means the declared ZONE, as opposed to one session's measurement of
+            ;; it), but an edge belongs to exactly one session and has no such
+            ;; second meaning, so leaving A's names alone costs nothing and keeps
+            ;; every `(:spigolo-1 (:edges A))` already written against A working
+            ;; the day a second session is fused onto it.
+            edges (reduce (fn [acc {:keys [edges]}] (merge edges acc))
+                          (merge (:edges a)
+                                 (into {} (map (fn [[nm e]] [(prefix ref-lbl nm) e]) (:edges a))))
                           moved)]
         (loop-closure! sessions anchors-for fits)
         ;; The stage works in the REFERENCE session's frame — the fused frame —
@@ -4272,7 +4587,8 @@
         ;; can be traced from angles no single turntable pass could reach. Which
         ;; is the entire point of the fusion, and the check on it too: a mark
         ;; measured in B must land on the object in A's photos.
-        (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a) :marks marks
+        (stage/note-eval! {:proxy (:proxy a) :pose (:pose a) :dir (:dir a)
+                           :marks marks :edges edges
                            :sessions (into [{:dir (:dir a) :label ref-lbl
                                              :emit-pose (:pose a) :transform nil}]
                                            (map (fn [{:keys [dir label pose transform]}]
@@ -4281,6 +4597,7 @@
                                                 moved))})
         (assoc a
                :marks marks
+               :edges edges
                :sessions (into [{:label ref-lbl :dir (:dir a) :proxy (:proxy a)
                                  :pose (:pose a) :transform nil :rms-mm 0.0}]
                                (mapv #(dissoc % :marks) moved)))))))
@@ -4428,17 +4745,22 @@
           (marks))))
 
 (defn- fmt-map-block
-  "Render a source map from its \"key value\" entry strings on their own lines: the
-   first right after `{`, the rest aligned under it (pretty-print, so the emitted
-   form is readable instead of one long line — Vincenzo 2026-07-24). `owner` is the
-   key this map is the value of (e.g. \":shapes\"), `key-indent` the indent string
-   where that key sits, so alignment = key-indent + width of \"<owner> {\". A single
-   entry stays on one line; empty → \"{}\"."
+  "Render a source map from its \"key value\" entry strings, one per line, with
+   both braces alone on their own line (pretty-print, so the emitted form is
+   readable instead of one long line — Vincenzo 2026-07-24). `owner` is the key
+   this map is the value of (e.g. \":shapes\"), `key-indent` the indent string
+   where that key sits, so alignment = key-indent + width of \"<owner> {\".
+   Empty → \"{}\".
+
+   Same layout as source-edit/append-map-entry, and for the same reason: every
+   entry is a whole LINE, so undoing one is deleting that line (Vincenzo
+   2026-08-07). Two writers of the same block must agree, or a re-confirm would
+   undo the layout the stage's writes had."
   [owner entries key-indent]
   (if (empty? entries)
     "{}"
     (let [align (str key-indent (apply str (repeat (+ (count owner) 2) " ")))]
-      (str "{" (str/join (str "\n" align) entries) "}"))))
+      (str "{\n" align (str/join (str "\n" align) entries) "\n" align "}"))))
 
 (defn- preserved-entries
   "The entries of the marker's own `:kw {…}` block, as they are written NOW.
@@ -4522,7 +4844,13 @@
                                                      (shapes-entries anchor-pose)) i3) "\n"
          i3 ":marks " (fmt-map-block ":marks"
                                      (merge-entries (preserved-entries ":marks")
-                                                    (marks-entries anchor-pose)) i3) "})")))
+                                                    (marks-entries anchor-pose)) i3) "\n"
+         ;; :edges is emitted EMPTY (this session measures none — edges are the
+         ;; stage's Spigolo gesture, which runs after registration is over) but it
+         ;; is emitted, so the gesture finds its slot instead of having to insert
+         ;; one. Whatever a re-opened marker already carried is preserved, like
+         ;; the other two blocks.
+         i3 ":edges " (fmt-map-block ":edges" (preserved-entries ":edges") i3) "})")))
 
 (defn- confirm!
   "OK: write the aligned proxy+pose back to source as (acquire \"dir\" {…}),

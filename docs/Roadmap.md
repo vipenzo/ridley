@@ -20,6 +20,50 @@ scelta: il dettaglio vive nei brief. Si aggiorna a ogni cambio di fase
 (chiusura di una Parte di un brief, apertura di un fronte), come da
 istruzioni in CLAUDE.md.*
 
+**Fase CHIUSA (2026-08-11): acquire guidata dalle osservazioni, gradino 3 —
+BORDI DICHIARATI, e la svolta "il gesto si guida dal codice".** 42 commit,
+integrati in main. Documento di governo:
+`dev-docs/brief-observation-driven-acquire.md`; entry point
+`dev-docs/HANDOVER-edge-declared.md`.
+
+**Prossimo fronte (proposto da Vincenzo, non iniziato): "SCATTA E REGISTRA"** —
+il telefono usato come webcam (Continuity Camera), un tasto, e il fotogramma
+entra nella sessione già registrato. Entry point
+`dev-docs/HANDOVER-grab-and-register.md`, che porta i vincoli già accertati (la
+focale fittata rende superfluo l'EXIF; la scrittura file è desktop-only; i
+permessi camera in Tauri non ci sono ancora; il telefono come client web
+richiederebbe HTTPS).
+
+Si dichiara un bordo dipingendolo su due foto e ne esce un segmento 3D misurato;
+da più bordi, il piano. Poi, dopo sei giri d'uso vero, Vincenzo ha chiesto di
+togliere stati alla UI e usare il codice — e ne è uscito un canale più piccolo:
+
+- `(edit-edge-mark)` / `(edit-curve-mark)` scritte fra gli `:edges` ARMANO il
+  gesto; la conferma sostituisce la forma con `(edge-mark {…})` sotto il nome
+  che le ha dato l'utente. Niente bottone, niente modo da accendere;
+- `(plane-from-edges :a :b …)` fra i `:marks` è il piano come FORMULA: si rifà a
+  ogni Run dalle prove che nomina, quindi correggere uno spigolo muove il piano;
+- demoliti banco, selezione, tasti numerici e bottone Spigolo (−347 righe);
+- chiavi di visibilità `:show` / `:label` su ogni mark, perché il viewport si
+  pilota dal sorgente e non da un pannello di caselle;
+- feedback dove sta la mano: inchiostro vivo durante la pennellata, riga di
+  risposta ✓/✗ nel pannello, e **leave-one-out** sul piano (di quanto ruota
+  togliendo un bordo) — che ha scoperto sui dati veri un disaccordo di 9° che la
+  planarità in millimetri non vedeva.
+
+**Come si è chiusa**: gate umani passati su tutto (il gesto, il piano come
+formula, la demolizione, e infine il piano di una faccia CURVA ricavato da
+segmenti fra punti riconoscibili — il dischetto resta incollato in tutte le
+foto). Le curve sono state TOLTE per decisione di Vincenzo: misurarle chiede di
+appaiare punti fra le foto, che è ciò che questo canale evita, e due spigoli
+dritti danno lo stesso piano senza appaiare niente. Manuale: nove schede nuove
+(`acquire`, `edge-mark`, `curve-mark`, `plane-from-edges`, `edit-edge-mark`,
+`registration-plate`, …). **Dichiarato e non costruito**: il `path-2d` dai bordi
+di una faccia — Vincenzo stesso dubita che paghi. **Non attaccato**: i punti
+2/4/5 della scala del brief, cioè i bordi come VINCOLI per le pose delle camere
+(oggi si misurano DA pose fisse e non le migliorano) — resta il pezzo grosso.
+Scoperto e non chiuso: manca la scheda di manuale di `edit-acquire`.
+
 **Fronte (dal 2026-07): canale di acquisizione parametrica — SOSTANZIALMENTE
 CONSEGNATO.** Da foto su giradischi a geometria Ridley nativa, senza scanner.
 Registrazione camere via PnP su proxy, ricalco su viste in posa, emissione/
@@ -158,6 +202,216 @@ utente).
   fondazione, non lavoro da buttare. È la risposta alla radice della fatica
   segnalata nell'uso vero (punto b del 2026-08-03): il brief di ergonomia da
   scrivere e questa visione vanno progettati INSIEME.
+- **Spigoli dichiarati — COSTRUITO 2026-08-06, click singolo GATED** (gradino 3
+  del brief sopra, anticipato per scelta di Vincenzo: «è lì che sta la fatica»).
+  Bottone **Spigolo** sul palcoscenico, gemello di Piano: su ogni foto **UN
+  CLICK** sullo spigolo — non servono gli stessi punti delle altre foto — e ne
+  esce un segmento 3D misurato
+  che il palcoscenico disegna nel mondo (quindi `[`/`]` è già la verifica) e
+  scrive nel sorgente come `:edges {:spigolo-1 (edge-mark {…})}`. È una POSA che
+  corre LUNGO lo spigolo, così `(turtle A :at :spigolo-1 (extrude (circle 2)
+  (f len)))` posa un raccordo senza DSL nuovo; tenuta separata da `:marks`
+  perché l'heading di un mark è una normale e `acquire-union` leggerebbe uno
+  spigolo come un piano storto. `ridley.photogrammetry.edge` è puro: piani
+  d'interpretazione + intersezione in forma chiusa + LM sui 4 DOF, residuo in
+  px, `:exact?` con due sole foto, e con ≥4 foto NOMINA quella disegnata male.
+  **Numero non ovvio che ne è uscito**: la parallasse di uno spigolo è il giro
+  che le camere fanno INTORNO a lui, ripiegato in [0°,90°] — muoversi lungo lo
+  spigolo non serve, e mezzo giro è cieco quanto stare fermi (a 180° camere e
+  spigolo tornano complanari). **Un click basta** (chiesto da Vincenzo lo stesso
+  giorno): la direzione non può venire dalla geometria già nota — un click sulla
+  seconda foto vincola la retta di 1 grado di libertà su 4, il secondo
+  servirebbe comunque — ma viene dall'IMMAGINE, col tensore di struttura attorno
+  al click, che dà anche quanto quel punto è un bordo dritto invece che un
+  angolo; poi il programma cammina lungo il bordo e trova pure l'estensione (972
+  px contro i 120 di un tratto tracciato a mano). Il pezzo decisivo: i bordi veri
+  finiscono in curve, quindi si tiene il tratto dritto ATTORNO AL CLICK — senza,
+  sul collare nero un click alla cieca riusciva 1 volta su 1442; con, 33. Quattro
+  rifiuti nominati (niente contrasto / più di una direzione / troppo corto /
+  curvo) e in tutti restano i due click come via di scampo. Verificato dal vivo
+  sulla sessione vera: retta nota recuperata a 1e-14 mm da 3 pose reali,
+  round-trip nel sorgente, snap agganciato al contrasto vero. **Gate di Vincenzo
+  sul click singolo, 2026-08-06**: «una volta su due devo dare due click, va
+  abbastanza bene» — e un rifiuto costa UN click in più, non due, perché quel
+  click diventa il primo capo del tratto a mano (~1.5 click per foto). Resta: il
+  magazzino delle osservazioni (i tratti oggi non sopravvivono alla chiusura) e i
+  punti nel pool. Entry point `dev-docs/HANDOVER-edge-declared.md`.
+- **Il banco vive nel sorgente — 2026-08-07.** «Sembra non ci sia modo, se sbagli,
+  di annullare un piano e rifarlo. Non sarebbe meglio accumulare le cose (piani,
+  segmenti) nel sorgente, così li posso cancellare come testo invece che nella
+  UI?». Sì: era il resto del canale a essere coerente e questa gestura no — i
+  piani già finivano nel sorgente, erano i BORDI a restare in un magazzino
+  invisibile che per giunta spariva chiudendo il gesto. Ora `n` scrive il bordo
+  nel blocco `:edges` dell'acquire e il banco è la LETTURA di quel blocco; i
+  piani si leggono da `:marks`; nessuna copia in memoria di nessuno dei due,
+  perché una copia è proprio ciò che una riga cancellata non raggiunge. Il
+  guadagno non è solo l'annullamento: cancellare, rinominare, riordinare, tenere
+  fra sessioni, diffare — il testo fa già tutto, e ogni verbo che avrei dovuto
+  costruire nella UI è un verbo che non esiste. Nuova forma di riposo
+  `(curve-mark {:points …})`, senza posa perché una curva non ne ha (è evidenza,
+  non ancoraggio: `named-poses` la salta), trasportata da `acquire-union`.
+  Verificato: cancellare `:curva-1` toglie il bordo dal banco, cancellare
+  `:piano-1` annulla il piano — elenco, disegno ed etichette.
+- **La pennellata, terzo giro: tre quantità — 2026-08-07.** «Ancora non si riesce.
+  Qui siamo un pelo zoomati. Senza zoom viene verde, ma credo prenda altri bordi
+  che vengono inclusi». Due frasi, una causa: il tubo laterale era misurato dalla
+  pennellata DIPINTA, quindi doveva assorbire l'errore della mano — e la punta,
+  essendo in pixel-schermo, zoomando diventa stretta in pixel-foto. Zoomato: tubo
+  da 7 px, il cammino esce dopo 40 px su 564 dipinti e sotto soglia dice «non c'è
+  contrasto»; senza zoom: tubo da ~58 px, largo abbastanza da far saltare il
+  cammino su un bordo parallelo. Ora dalla gestura escono TRE quantità con tre
+  mestieri: la LARGHEZZA aggancia di lato i punti dipinti sul contrasto (quanto
+  la mano può sbagliare), la LUNGHEZZA ferma il cammino fra i capi, e il TUBO
+  (14 px, assoluto) tiene il cammino vicino al BORDO AGGANCIATO — non alla
+  pennellata, quindi non deve più assorbire niente e può essere stretto e
+  indipendente dallo zoom. Cinque regimi misurati, tutti ✓: zoomato con mano
+  peggiore 108 px a 1.19 di scarto; senza zoom con raggio 156 px, 66 px a 0.88.
+- **La pennellata: larghezza e lunghezza sono due cose — 2026-08-07.** «Non ce la
+  fa ancora con questo, ho provato sia con size grandi che piccoli». Misurato sul
+  suo bordo: con una fascia da 10-30 px viene DRITTO a 1.19 px di scarto, con una
+  da 60 px scappa di nuovo — e la punta di default, allo zoom normale, ne
+  produceva già ~56. La pennellata funzionava solo stretta, e stretta di default
+  non era. Il difetto era di disegno: la LARGHEZZA faceva due lavori in conflitto
+  (tollerare la mano, che la vuole generosa; fermare il cammino, che la vuole
+  stretta), mentre quello che si dichiara dipingendo è «fin qui», cioè una
+  LUNGHEZZA. Ora sono separate: lungo il tratto si sta fra i suoi capi
+  (proiezione sulla direzione principale, +12 px di margine), di lato entro il
+  raggio — e la larghezza guadagna il secondo mestiere che prima non poteva
+  avere, agganciare ogni seme al contrasto più forte dentro la fascia. Con le due
+  cose separate ogni raggio da 10 a 120 px dà lo stesso risultato, e il gesto vero
+  regge una mano fuori di 22 px.
+- **Il bordo sfocato: era la BANDA — 2026-08-07.** Vincenzo manda la foto di un
+  bordo in silhouette ovvio all'occhio che il cammino non prende: «un mix di
+  sfocatura e rotondita' dello spigolo … forse si puo' abbassare qualche
+  soglia?». Non era una soglia di contrasto: censimento su 186 punti con un salto
+  vero (>60 livelli su 24 px), quelli rifiutati avevano **coerenza 0.84** — la
+  direzione si vedeva benissimo. Era la banda di ricerca perpendicolare: un bordo
+  sfocato spalma la transizione su 10-15 px, quindi una scansione da ±10 ci sta
+  tutta dentro e il massimo cade all'ESTREMO, dove viene giustamente rifiutato
+  (un picco al bordo vuol dire che il bordo vero e' fuori). Allargata a ±16: i
+  rifiuti passano da **17 a ZERO**, al prezzo di un falso in piu' su 454 zone
+  piatte. Provata e SCARTATA, con le misure agli atti perche' non si ri-provi:
+  rendere il test del picco relativo invece che assoluto (17 → 21 → 26 a ogni
+  variante) — una gobba larga in una banda che riempie non ha fondo da cui
+  distinguersi, quindi la prominenza misurava la gobba contro se stessa.
+- **Vedere il banco — 2026-08-07.** «Comincia a essere usabile. La difficolta'
+  piu' grande ora e' interagire col banco: i segmenti listati li', come faccio a
+  vedere dove sono nelle foto?». Tre domande sue, un problema solo: il banco era
+  un elenco senza corrispondenza, e una lista di cose numerate i cui numeri non
+  compaiono sulla cosa e' un indovinello. Ora il numero e' scritto NELLA FOTO
+  accanto al bordo (billboard, le stesse etichette di edit-path); un bordo speso
+  in un piano non sparisce ma si smorza e dice a chi appartiene, nell'elenco e
+  nella foto (uno spigolo puo' servire a due facce); e i piani fatti sono un
+  elenco a se', ognuno coi numeri dei bordi di cui e' fatto. I numeri si spengono col tasto `l`,
+  perche' rispondono a una domanda che ci si fa TRA una pennellata e l'altra e
+  durante una stanno in mezzo — sono disegnati sopra tutto e coprono la foto dove
+  si dipinge. Trappola per chi tocca: `set-labels!` e' globale, va chiamata solo a
+  gesto attivo o cancella le etichette di un edit-path-2d aperto. **Direzione dichiarata e non costruita**:
+  raccogliere i bordi di una faccia in un `path-2d` editabile — sono semilavorati
+  di un contorno, e proiettati sul piano che definiscono lo sono gia'; manca
+  l'ordinamento (sequenza e cuciture agli angoli), non la geometria.
+- **Accontentarsi del pezzo in comune — 2026-08-07.** Vincenzo crea un piano, ma
+  solo coi tratti DRITTI: «con le curve e' difficile ripetere lo stesso segmento
+  in foto diverse, la parte comune sara' solo un pezzo, dovrebbe accontentarsi».
+  La misura gli da' ragione e dice perche': un accoppiamento vero passa a 0.23 mm
+  e uno falso a 32 — fattore sessanta, quindi la distanza e' gia' un giudice
+  quasi perfetto e i tenuti sono praticamente tutti veri; ma sono POCHI (3 su 40
+  raggi, il 7% in comune). Scartata per misura l'ipotesi che fosse granularita'
+  di campionamento (infittire da 40 a 567 punti non cambia niente). Il pericolo
+  non e' la contaminazione ma la scarsita', quindi la frazione d'ordine scende da
+  0.75 a 0.6 e — la parte che conta — **una curva sul banco non deve pinzare un
+  piano da sola**: bastano 3 punti in comune per tenerla, e se ce ne sia
+  abbastanza lo decide dopo la larghezza sui punti di tutti i bordi insieme. E'
+  per questo che il banco esiste. Misurato con una mano volutamente imprecisa:
+  pezzi da 3 e 18 punti tenuti, uno da 13 con ordine 33% rifiutato, piano dai due
+  a 1.1° dalla verticale e 0.87 mm di quota.
+- **Il PENNARELLO — COSTRUITO 2026-08-07, gate umano DA FARE.** Segnalato da
+  Vincenzo con una foto: «la cattura della linea ha preso troppo: insegue tratti
+  non complanari. Non è che può essere utile una sorta di pennarello a punta
+  spessa, con cui l'utente dice: la linea cercala in questa zona?». Coglie il
+  difetto alla radice: il cammino si ferma quando muore il CONTRASTO, ma un bordo
+  vero non muore a un angolo — si trasforma in un altro bordo, e il cammino lo
+  segue girando su una faccia di un altro piano. Quale bordo si intenda è
+  conoscenza che il programma non ha e l'utente sì. Ora **trascinare in posa
+  dipinge una fascia** e il cammino ci resta dentro; la pennellata resta
+  disegnata (così anche un rilevamento fallito mostra che il gesto è stato
+  sentito), la punta è spessa in pixel-SCHERMO e convertita con la scala che il
+  tratto stesso misura (stesso spessore a ogni zoom, e zoomare è il modo di
+  averla più fine), il seme si cerca lungo la pennellata dal centro in fuori, e
+  la soglia di lunghezza si abbassa da 60 a 25 px perché dipingere corto è un
+  atto deliberato. **Misurato**: stesso bordo del collare, click libero →
+  cammina 692 px, ne tiene 163 dritti, rifiutato; con la pennellata → confinato a
+  254 px, accettato, 1.19 px di scarto. I casi di cammino che scavalca, sul solo
+  collare, sono 48.
+- **Il BANCO dei bordi — COSTRUITO 2026-08-07, gate umano DA FARE.** Il primo
+  giro della curva→piano è stato bocciato all'uso da Vincenzo («troppo
+  complicato … al primo click dice che la curva c'è, ma non si vede nessuna
+  linea, e alla fine non sono mai riuscito ad andare oltre»), e la sua proposta
+  è migliore: «se accumulassimo semplicemente segmenti che restano visualizzati e
+  l'utente può selezionare per dire *questi stanno sullo stesso piano*?». Due
+  cose distinte, entrambe fatte. (a) Un **difetto vero**: la dichiarazione non
+  veniva disegnata — i punti comparivano solo dopo che la seconda foto rendeva
+  possibile il fit, quindi per due foto intere non c'era modo di distinguere un
+  click buono da uno cattivo. Ora si vede subito, alla profondità dell'oggetto
+  sul proprio raggio. (b) Il **banco**: ogni bordo misurato, dritto o curvo,
+  resta disegnato e numerato; `n` lo tiene, il numero lo seleziona, `p` scrive il
+  mark-piano dai selezionati, Invio scrive uno spigolo, `c` un cerchio. **Perché
+  è meglio e non solo più comodo**: una RETTA si misura intersecando i piani
+  delle sue righe-immagine, senza accoppiare nessun punto — niente fantasmi,
+  niente ordine, niente accordo al 62% — ed è proprio quella che il rilevatore
+  trova meglio; due rette non parallele su una faccia ne fissano il piano
+  esattamente. La curva smette di essere l'unica strada al piano. Ogni bordo è
+  indipendente e può venire da coppie di foto diverse. **Misurato dal vivo** sul
+  piatto (due archi dello stesso bordo, provatamente complanari, da foto
+  diverse): piano a **0.64° dalla verticale e 0.47 mm di quota**, contro i 6.9°
+  della singola curva.
+- **Da una curva, il PIANO — COSTRUITO 2026-08-06** (primo giro, superato dal
+  banco qui sopra ma la matematica è la stessa).
+  Correzione di rotta di Vincenzo dopo aver provato i cerchi sui suoi pezzi: «la
+  curva da identificare non è mai un cerchio, al massimo un segmento … potremmo
+  usare le linee curve per identificare PIANI. Quelle su cui sto cliccando sono
+  tutte curve adagiate su un piano». Ha ragione e la geometria concorda: un piano
+  ha 3 gradi di libertà contro i 6 di un cerchio, non chiede alla curva di essere
+  niente in particolare, ed esce come un **normale mark-piano** scritto in
+  `:marks` dallo STESSO write-back del gesto a tre punti — quindi turtle,
+  edit-path-2d e gli agganci di acquire-union funzionano intatti. Sostituisce il
+  gesto che costa di più: tre punti × due foto = sei click che chiedono ogni
+  volta di RITROVARE lo stesso punto fisico (il posto da cui venivano gli
+  "specchiati" del gate di fusione). Ora due click e nessuna corrispondenza
+  richiesta; `n` aggiunge una seconda curva sulla stessa faccia, che è l'unica
+  cura quando una curva poco pronunciata dà punti quasi in fila — e una fila sta
+  su infiniti piani (misurato: larghezza 3.05 → 56.5 mm). **Il difetto insidioso
+  e i due test sbagliati**: metà degli incroci fra i raggi sono fantasmi, e il
+  caso peggiore è un piano ordinato, pulito e sbagliato di 88°. L'elevazione
+  delle camere non basta (vera sul piatto, inutile in generale) e "le due foto
+  ricostruiscono la stessa curva" è **circolare** — i fantasmi SONO gli incroci,
+  quindi ogni piano che ci passa le fa coincidere (93% di accordo per un piano
+  sbagliato di 88°). Funziona l'ORDINE: il cammino dà i punti ordinati, e una
+  corrispondenza vera lo conserva mentre gli incroci casuali no — 100% contro
+  51%, dove il 51% è la sottosequenza monotona attesa di una permutazione a caso.
+  Misurato dal vivo: piano a 0.59 mm da quello vero del piatto, e rifiutato lo
+  stesso perché largo 2 mm su 4 richiesti.
+- **Cerchi e archi — COSTRUITO 2026-08-06** (fetta precedente, ora subordinata al
+  piano: da una curva si scrive il piano con Invio, il cerchio con 'c' quando la
+  curva è davvero un cerchio ben definito). Un bordo curvo non è più un rifiuto: il
+  cammino l'ha già seguito, e quei punti sono ciò che il fit del cerchio mangia,
+  quindi il gesto passa da solo in modo CERCHIO ed emette `(circle-mark {…})`
+  nello stesso blocco `:edges` — posa col centro e l'asse più `:radius`, così
+  `(turtle A :at :cerchio-1 (extrude (circle r) (f d)))` alesa dove le foto hanno
+  trovato un cerchio. La matematica è un'altra: una riga spanna un piano e due
+  piani si incontrano in una retta, ma una curva spanna un CONO e due coni si
+  incontrano in una quartica — quindi si recuperano prima i punti 3D (i raggi
+  delle due foto che si sfiorano; le pose sono note, l'accoppiamento lo fa la
+  geometria), poi piano, cerchio nel piano e LM in pixel. **Tre difetti veri
+  trovati sui dati veri**, tutti invisibili ai sintetici: la soglia di
+  accoppiamento era il triplo del necessario (giusto 0.15 mm contro sbagliato
+  3.3 — con 1.5 il RANSAC preferiva un cerchio di raggio 1838 mm a un bordo da
+  65); un modello illimitato si adatta a tutto (ora un candidato non supera 3×
+  l'estensione della nuvola); e mancava la guardia sul RESIDUO, per cui una
+  figura con 157 px di riproiezione passava ogni altro test — ora niente si
+  scrive sopra gli 8 px, rette comprese. Misurato sul piatto vero: **⌀128.4 su
+  ⌀130 nominale, asse a 2.4° dalla verticale, 5.2 px** — e rifiutato lo stesso
+  perché se ne era visto solo 73° di giro contro i 120 richiesti.
 - **Fusione di sessioni — FETTA A COSTRUITA 2026-08-03** (`brief-session-fusion.md`).
   `(acquire-union a b …)`: due sessioni dello stesso oggetto in un frame solo,
   agganciate sui mark OMONIMI (dichiarati dall'utente, nessun matching

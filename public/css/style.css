@@ -3273,6 +3273,19 @@ body.resizing-h * {
   user-select: none;
 }
 
+/* the live ink of the brush — the stroke while it is being painted, in screen
+   space, over the photo. Below the HUD (120) and above the 3D canvas, and never
+   a click target: it is a mirror of the hand, never a surface to hit. */
+#eaq-ink {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 40;
+}
+
 .eaq-hud-title {
   color: #33ffcc;
   font-weight: bold;

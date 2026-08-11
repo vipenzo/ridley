@@ -3,7 +3,16 @@
 (ns ridley.manual.reference-index)
 
 (def reference-index
-  {"acquire-union"
+  {"acquire"
+   {:name "acquire"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(acquire dir)\n(acquire dir opts)"
+    :description "An **acquisition**: a photographed object, turned into a Ridley value you can build on. It is what the acquisition session writes into your source when you confirm, and from then on it is ordinary code — you edit it, delete lines of it, and re-run it like anything else."
+    :path "docs/manual/reference/en/acquire.md"}
+
+   "acquire-union"
    {:name "acquire-union"
     :category "acquisition"
     :status "experimental"
@@ -381,6 +390,15 @@
     :description "Rotate the geometry under a stationary anchor — the mesh (or SDF) rotates by `-angle` around the chosen local axis while the creation-pose's orientation stays fixed in world. The geometry spins beneath the anchor; the anchor still points where it pointed before."
     :path "docs/manual/reference/en/cp-rotation.md"}
 
+   "curve-mark"
+   {:name "curve-mark"
+    :category "acquisition"
+    :status "deprecated"
+    :since ""
+    :signature "(curve-mark points-map)"
+    :description "A **curved edge measured before 2026-08-10**, kept as its 3D points. It still counts as evidence for a plane, and it still draws — but **curves can no longer be measured**, and there is no gesture that writes one."
+    :path "docs/manual/reference/en/curve-mark.md"}
+
    "cut-candidates"
    {:name "cut-candidates"
     :category "mesh-operations"
@@ -462,6 +480,15 @@
     :description "Apply an easing function to a normalized fraction `t ∈ [0, 1]` and return the eased value, also in `[0, 1]`. The standalone form of the easings used by `span` inside `anim!`. Useful for previewing a curve numerically, for custom interpolations inside `anim-proc!` `gen-fn`s, or for tweak-style math that needs the same shaping the timeline applies."
     :path "docs/manual/reference/en/ease.md"}
 
+   "edge-mark"
+   {:name "edge-mark"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(edge-mark edge-map)"
+    :description "A **measured edge** of an acquisition: a pose that runs **along** the edge, plus its two ends. It is what the measuring gesture writes into an `(acquire …)`'s `:edges` block, and it **returns the map unchanged** — its job is grammatical, like `plane-mark`'s."
+    :path "docs/manual/reference/en/edge-mark.md"}
+
    "edit-attach-request!"
    {:name "edit-attach-request!"
     :category "live-interactive"
@@ -479,6 +506,15 @@
     :signature "(edit-bezier)\n(edit-bezier :shape)\n(edit-bezier :wireframe)\n(edit-bezier end ctrl-1 ctrl-2)\n(edit-bezier path :at :mark)\n(edit-bezier path :at :mark :symmetric)"
     :description "Author a cubic Bezier curve interactively, in 3D, from the keyboard — instead of solving the cubic by hand for its control points. `edit-bezier` is a stand-in for a `(bezier-to … :local)` call and is used **wherever `bezier-to` is**: top-level, or inside `(path …)` / `(attach …)`. Run it from the **definitions panel** (Cmd+Enter), not the REPL."
     :path "docs/manual/reference/en/edit-bezier.md"}
+
+   "edit-edge-mark"
+   {:name "edit-edge-mark"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(edit-edge-mark)\n(edit-edge-mark edge-map)"
+    :description "**Measure an edge of the photographed object.** Written as a value inside an evaluated `(acquire …)`'s `:edges`, it arms the gesture — there is no button to press and no mode to switch on:"
+    :path "docs/manual/reference/en/edit-edge-mark.md"}
 
    "edit-image-board"
    {:name "edit-image-board"
@@ -1425,6 +1461,15 @@
     :description "Resolve a path's marks at the **current turtle pose** and return the resulting `{anchor-name → {:position [x y z] :heading [x y z] :up [x y z]}}` map."
     :path "docs/manual/reference/en/pin-path.md"}
 
+   "plane-from-edges"
+   {:name "plane-from-edges"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(plane-from-edges name …)\n(plane-from-edges name … opts)"
+    :description "The **plane through the edges you name** — written where a mark goes, inside an evaluated `(acquire …)`'s `:marks`:"
+    :path "docs/manual/reference/en/plane-from-edges.md"}
+
    "plane-mark"
    {:name "plane-mark"
     :category "acquisition"
@@ -1541,6 +1586,15 @@
     :signature "(register name expr)\n(register name expr :hidden)\n(r name expr)\n(r name expr :hidden)"
     :description "Macro. Bind a name to a value and add it to the scene registry. For renderable values (meshes, panels) the object also becomes visible by default. Subsequent re-evaluations update the underlying value but preserve the current visibility state."
     :path "docs/manual/reference/en/register.md"}
+
+   "registration-plate"
+   {:name "registration-plate"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(registration-plate)\n(registration-plate :d 130 :marks 12 :disc 2.5 :h 3)"
+    :description "The **registration plate**: the printed disc the object stands on while you photograph it, as a Ridley mesh with its crown of marks already named. It is the usual `:proxy` of an `(acquire …)`, and needs no file import — the geometry and the map of marks come from the same place, so what the solver looks for and what you print can never drift apart."
+    :path "docs/manual/reference/en/registration-plate.md"}
 
    "render-all-views"
    {:name "render-all-views"
