@@ -529,6 +529,41 @@ insieme (`stl/desktop-delete-file`, rotta Rust `/delete-file` che già c'era ma
 non era esposta al browser): lasciarlo lì metterebbe cartella e `session.json` in
 disaccordo su cosa è stato scattato.
 
+### La camera nell'app desktop (2026-08-11)
+
+Vincenzo, a fetta committata: «mi sembra urgente». Ha ragione — finché manca,
+"scatta e registra" esiste solo in Chrome.
+
+Accertato prima di scrivere una riga, perché due delle tre cose che si sarebbero
+potute fare erano inutili:
+
+- **wry concede già il permesso al webview.** `WKWebView` nega `getUserMedia` se
+  l'app non risponde a
+  `webView:requestMediaCapturePermissionForOrigin:…:decisionHandler:`, ed è la
+  ragione per cui molte app in webview non vedono la camera. wry 0.54.4 lo
+  implementa e risponde `WKPermissionDecision::Grant` senza condizioni
+  (`wkwebview/class/wry_web_view_ui_delegate.rs`). **Niente da fare lato Rust.**
+- **L'entitlement `com.apple.security.device.camera` NON serve**, perché il DMG
+  non è firmato: `.github/workflows/desktop-build.yml` non ha identità né
+  notarizzazione, quindi l'hardened runtime non si applica e non c'è nessun
+  entitlement da soddisfare. Metterlo adesso farebbe invocare `codesign` con un
+  file di entitlement e nessuna identità — fallisce invece di preparare qualcosa.
+  Va aggiunto SE E QUANDO si firmerà.
+- **Serve solo `NSCameraUsageDescription`**, in `desktop/src-tauri/Info.plist`
+  (tauri-bundler cerca un file con quel nome accanto a `tauri.conf.json` — è
+  scritto nello schema del CLI stesso). Senza, macOS non NEGA l'accesso: termina
+  il processo, quindi la mancanza si presenta come un crash e non come un
+  permesso rifiutato — che è il modo peggiore in cui poteva mancare.
+
+Deliberatamente NON messo: `NSMicrophoneUsageDescription`. La cattura chiede
+`audio: false`, e dichiarare un permesso mai esercitato farebbe offrire
+all'utente una scelta su qualcosa che l'app non fa.
+
+**Limite da sapere**: `cargo tauri dev` esegue il binario NON impacchettato, che
+non ha Info.plist — e il CLI cerca solo `Info.plist` e `Info.ios.plist`, non una
+variante di sviluppo. La camera va quindi provata nell'app COSTRUITA (o in
+Chrome), non in `tauri dev`.
+
 ### Le due domande originali (per il record)
 
 1. **«Non si vede» non è «non c'è», e il programma deve dirlo.** Oggi
@@ -579,7 +614,8 @@ fra i frustum del palcoscenico al Run successivo, come tutte le altre.
    riportare al banco la correzione della selezione della corona: è verificata
    sui test e sui blob veri di quel fotogramma, **non ancora con le mani** su
    una presa nuova.
-2. **I permessi camera in Tauri** (`NSCameraUsageDescription`, e l'entitlement
+2. ~~I permessi camera in Tauri~~ — **FATTI** (vedi §"La camera nell'app desktop").
+   Vecchio testo: (`NSCameraUsageDescription`, e l'entitlement
    se l'app è sandboxata): in `desktop/src-tauri/` non c'è ancora niente di
    camera, quindi il gate va fatto **in Chrome su `localhost:9000`**. Nel DMG
    non funzionerà finché non si mettono.
