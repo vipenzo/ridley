@@ -2176,8 +2176,12 @@
 
           :else
           (do (when (> n 1)
-                (say! (str "ci sono " n " forme edit-…: apro la prima, le altre "
-                           "restano in attesa")))
+                ;; la CODA è il modo di non tornare all'editor per ogni bordo, ma
+                ;; era annunciata come se fosse un inconveniente («le altre
+                ;; restano in attesa»): scrivine dieci, un Run solo, e ogni
+                ;; scrittura apre la prossima
+                (say! (str n " misure in coda · questa è la prima · ogni Write "
+                           "apre la successiva, senza tornare all'editor")))
               (if marks
                 (open-mark-edit! (first marks))
                 (open-edge-edit! (first edges)))))))))

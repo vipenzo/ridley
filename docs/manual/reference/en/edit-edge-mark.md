@@ -72,7 +72,13 @@ keep straight against.
   photograph is the culprit when it can name one.
 - `+` and `-` change the marker's nib; `l` hides the names drawn over the photo;
   `r` throws away the stroke in hand; Backspace removes this photograph's stroke.
-- With several `edit-…` forms present, the first is opened and the others wait.
+- **Write them in a batch.** Several `(edit-edge-mark)` forms and ONE Run: the
+  first opens, and each Write opens the next — so a dozen edges cost one trip to
+  the editor, not a dozen.
+
+      :edges {:bordo-alto (edit-edge-mark)
+              :bordo-basso (edit-edge-mark)
+              :fianco (edit-edge-mark)}
 
 ## See also
 
