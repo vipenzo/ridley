@@ -26,13 +26,67 @@ integrati in main. Documento di governo:
 `dev-docs/brief-observation-driven-acquire.md`; entry point
 `dev-docs/HANDOVER-edge-declared.md`.
 
-**Prossimo fronte (proposto da Vincenzo, non iniziato): "SCATTA E REGISTRA"** —
-il telefono usato come webcam (Continuity Camera), un tasto, e il fotogramma
-entra nella sessione già registrato. Entry point
-`dev-docs/HANDOVER-grab-and-register.md`, che porta i vincoli già accertati (la
-focale fittata rende superfluo l'EXIF; la scrittura file è desktop-only; i
-permessi camera in Tauri non ci sono ancora; il telefono come client web
-richiederebbe HTTPS).
+**Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
+webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già
+registrato. Entry point `dev-docs/HANDOVER-grab-and-register.md`; complemento
+`dev-docs/brief-live-sources.md`.
+
+**Prima fetta COSTRUITA e GATE UMANO PASSATO (2026-08-11)**, su Logitech C922 a
+1920×1080, in Chrome su `localhost:9000` (in Tauri i permessi camera non ci sono
+ancora). Esito: `grab-01.jpg registrata ✓ rms 2.9px, corona 12/12, focale
+MISURATA dal piatto 31.1mm`, e il fit congiunto su 5 viste chiude a **28.4122mm /
+1.27px** — cioè lo stesso numero che un fotogramma singolo aveva misurato da solo
+(28.43), e coerente con i 78° di diagonale dichiarati dalla webcam. Una sessione
+tutta-webcam converge come quelle a foto.
+
+Cosa ha cambiato la fetta rispetto a come era stata proposta:
+
+- **la focale era il fronte, non un dettaglio.** Il primo fotogramma di una
+  sessione non ha né EXIF né una seconda vista contro cui fittare — e una focale
+  sbagliata non viene respinta, viene assorbita nella distanza: misurato, 20mm
+  invece di 28 dà rms 7.95px (sotto la soglia di 12) con la camera a 167mm
+  invece di 229. Risposta: `photogrammetry/plate-focal`, che ricava la focale dal
+  piatto in forma chiusa (vincoli di Zhang su un bersaglio piano). Esatta sulle
+  proiezioni esatte, ~1.5% con 0.5px di rumore, e **rifiuta per nome** un piatto
+  ripreso in faccia invece di inventare un numero;
+- **un difetto già presente**: la finestra di `blob/snap-to-blob` era fissa a
+  40px, tarata su foto da 4032px. Su un fotogramma da 1920px lo stesso dischetto
+  è ~8px e lo snap rifiutava in silenzio (6 mark su 12, 20px di scarto). Ora la
+  finestra vale 3 raggi del dischetto VISTO (`match-plate/snap-window-radius`):
+  12 su 12, 0.12px. Il percorso delle foto da telefono è invariato per
+  costruzione;
+- una cartella **vuota** ora apre (prima si rifiutava, negando l'accesso al
+  bottone che avrebbe creato le foto di cui si lamentava), e uno scatto è
+  misurato PRIMA di essere scritto: se non si registra non lascia niente;
+- **il gate stesso ha trovato due difetti**, entrambi corretti con regressione sui
+  blob VERI del fotogramma che aveva fallito. *(a)* «non si vede» non è «non c'è»:
+  un oggetto sul piatto copre il riferimento, e il messaggio unico «crown not
+  recognised» mandava a inquadrare meglio invece che a **girare il piatto** —
+  `fit-crown-explained` ora riporta il motivo. *(b)* la selezione della corona era
+  una scommessa: lo stadio 1 decideva da solo su un giudizio debole (conteggio
+  degli inlier), le ipotesi alternative erano quasi-copie della stessa, e sotto a
+  tutto un campionamento RANSAC che con 11 dischetti su 24 candidati aveva l'1.1%
+  di estrazioni utili su 250 tentativi. Ora: prime K ipotesi **diverse**, arbitrate
+  dallo stadio 2, con 1200 estrazioni. E la correzione ha reso il RIFIUTO
+  lentissimo (8s per passaggio, 49s per la scala delle focali: «non esce più»),
+  ripreso alla presa di controllo successiva — il costo non era la ricerca
+  dell'ellisse (14ms) ma l'identificazione di un anello PARZIALE, che enumera
+  `C(12,k)` sottoinsiemi: 24 candidati con k=12, 11088 con k=7. Ora solo gli anelli
+  vicini per taglia al migliore meritano un solve, e la scala si ferma su un
+  rifiuto definitivo: **509ms**;
+- **e il collaudo ha continuato a pagare**. *(c)* Un granello di sporco (raggio
+  4px contro i 13 di un dischetto) ha fatto da zero-indice a un fotogramma il cui
+  riferimento era coperto, **eleggendo la rotazione** — e il residuo di 1.9px non
+  lo smentiva, perché una corona simmetrica riproietta identica ruotata di 30°. Il
+  giudizio di presenza ora pesa la TAGLIA. *(d)* Il fit congiunto era marcato
+  `:manual` e veniva scavalcato dal primo scatto successivo (28.41mm su 5 viste →
+  27.25mm da uno solo): ora è `:refined`. *(e)* La pulizia degli outlier di
+  `solve-pnp` non partiva mai sui fotogrammi live — usciva appena sotto la soglia
+  di accettazione, e la soglia di "grossolano" era 30px assoluti (0.75% di 4032px,
+  enorme su 1920). Ogni foto teneva il suo punto peggiore: 1-5px su dieci
+  dischetti e uno a 26-34px, tre quarti dell'errore. Ora la soglia scala con
+  l'immagine e le due spie (rms per il danno sparso, `gross-outlier?` per quello
+  isolato) valgono in `or`.
 
 Si dichiara un bordo dipingendolo su due foto e ne esce un segmento 3D misurato;
 da più bordi, il piano. Poi, dopo sei giri d'uso vero, Vincenzo ha chiesto di
