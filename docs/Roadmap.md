@@ -20,11 +20,19 @@ scelta: il dettaglio vive nei brief. Si aggiorna a ogni cambio di fase
 (chiusura di una Parte di un brief, apertura di un fronte), come da
 istruzioni in CLAUDE.md.*
 
-**Fronte aperto (2026-08): acquire guidata dalle osservazioni, gradino 3 —
-BORDI DICHIARATI, e la svolta "il gesto si guida dal codice".** Branch
-`acquire-edges-declared` (33 commit, non ancora integrato in main). Documento di
-governo: `dev-docs/brief-observation-driven-acquire.md`; entry point
+**Fase CHIUSA (2026-08-11): acquire guidata dalle osservazioni, gradino 3 —
+BORDI DICHIARATI, e la svolta "il gesto si guida dal codice".** 42 commit,
+integrati in main. Documento di governo:
+`dev-docs/brief-observation-driven-acquire.md`; entry point
 `dev-docs/HANDOVER-edge-declared.md`.
+
+**Prossimo fronte (proposto da Vincenzo, non iniziato): "SCATTA E REGISTRA"** —
+il telefono usato come webcam (Continuity Camera), un tasto, e il fotogramma
+entra nella sessione già registrato. Entry point
+`dev-docs/HANDOVER-grab-and-register.md`, che porta i vincoli già accertati (la
+focale fittata rende superfluo l'EXIF; la scrittura file è desktop-only; i
+permessi camera in Tauri non ci sono ancora; il telefono come client web
+richiederebbe HTTPS).
 
 Si dichiara un bordo dipingendolo su due foto e ne esce un segmento 3D misurato;
 da più bordi, il piano. Poi, dopo sei giri d'uso vero, Vincenzo ha chiesto di
@@ -43,15 +51,18 @@ togliere stati alla UI e usare il codice — e ne è uscito un canale più picco
   togliendo un bordo) — che ha scoperto sui dati veri un disaccordo di 9° che la
   planarità in millimetri non vedeva.
 
-**Aperto qui**: gate con le mani della demolizione (soprattutto Esc/Chiudi che
-rimette il sorgente com'era); pagine di manuale per `acquire`, `edge-mark`,
-`curve-mark`, `circle-mark`, `plane-from-edges`, `edit-edge-mark`,
-`edit-curve-mark` (nessuna esiste); integrazione del branch. **Dichiarato e non
-costruito**: il `path-2d` dai bordi misurati di una faccia (la geometria c'è —
-i bordi proiettati sul loro piano sono già un contorno — manca l'ORDINE:
-sequenza e cuciture agli angoli). **Non attaccato**: i punti 2/4/5 della scala
-del brief, cioè i bordi come VINCOLI per le pose delle camere (oggi si misurano
-DA pose fisse e non le migliorano).
+**Come si è chiusa**: gate umani passati su tutto (il gesto, il piano come
+formula, la demolizione, e infine il piano di una faccia CURVA ricavato da
+segmenti fra punti riconoscibili — il dischetto resta incollato in tutte le
+foto). Le curve sono state TOLTE per decisione di Vincenzo: misurarle chiede di
+appaiare punti fra le foto, che è ciò che questo canale evita, e due spigoli
+dritti danno lo stesso piano senza appaiare niente. Manuale: nove schede nuove
+(`acquire`, `edge-mark`, `curve-mark`, `plane-from-edges`, `edit-edge-mark`,
+`registration-plate`, …). **Dichiarato e non costruito**: il `path-2d` dai bordi
+di una faccia — Vincenzo stesso dubita che paghi. **Non attaccato**: i punti
+2/4/5 della scala del brief, cioè i bordi come VINCOLI per le pose delle camere
+(oggi si misurano DA pose fisse e non le migliorano) — resta il pezzo grosso.
+Scoperto e non chiuso: manca la scheda di manuale di `edit-acquire`.
 
 **Fronte (dal 2026-07): canale di acquisizione parametrica — SOSTANZIALMENTE
 CONSEGNATO.** Da foto su giradischi a geometria Ridley nativa, senza scanner.
