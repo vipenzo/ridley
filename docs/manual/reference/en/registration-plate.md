@@ -11,6 +11,7 @@ status: stable
 
 `(registration-plate)`
 `(registration-plate :d 130 :marks 12 :disc 2.5 :h 3)`
+`(registration-plate :d 300)`   ; a 12-inch turntable
 
 ## Description
 
@@ -39,10 +40,43 @@ plate is.
 ## Parameters
 
 - `:d` — plate diameter in mm (default 130).
-- `:marks` — how many marks in the crown (default scales with the diameter:
-  denser when bigger).
-- `:disc` — diameter of each printed mark in mm (default 2.5).
-- `:h` — plate thickness in mm (default 3).
+- `:marks` — how many marks in the crown (default 12, and never more — see
+  *Bigger plates* below before pinning a larger number).
+- `:disc` — diameter of each printed mark in mm. Defaults to **a fraction of
+  `:d`** (2.5mm on the reference ⌀130), so a bigger plate gets bigger marks.
+- `:h` — plate thickness in mm (default 3). The only measurement that does *not*
+  scale: thickness is about stiffness, not about what the camera sees.
+
+## Bigger plates
+
+A plate of another size is a **scaled copy** of the ⌀130 reference: the crown
+radius, the mark diameter and the zero-index gap are all fractions of `:d`. Framed
+to fill the shot, a ⌀300 plate therefore puts the same imaged geometry in front of
+the detector as a ⌀130 one — which matters, because the detector's thresholds are
+in pixels.
+
+`(registration-plate :d 300)` suits a 12-inch record player used as a turntable.
+
+**The crown does not get denser, and that is deliberate.** Recovering which mark is
+which enumerates subsets over the marks a frame actually shows, and an object
+standing on the plate always hides a few: with 12 marks and 3 hidden that search is
+about 4 000 candidates, with 24 it is 85 000, with 36 half a million. A denser crown
+buys no accuracy — twelve marks spread around a ⌀300 plate condition the pose better
+than twelve around a ⌀130 — but it buys a registration that stops working the moment
+three marks are covered.
+
+**Printing one.** The sheet is the plate plus a 36mm margin, so ⌀154 is about the
+largest that fits an A4 at 100%. Never print "fit to page": it silently rescales the
+one thing that has to be exact, and the result does not look like an error — it looks
+like a successful registration with the wrong scale. For anything larger,
+`marks->svg-halves` cuts the sheet along a diameter into two pages (⌀200 fits two
+A4s, up to ⌀350 fits two A3s). The seam passes *between* marks, each half carries its
+own scale bars, and two alignment crosses on the seam pin the halves together when
+you glue them.
+
+**On a record player**, pass `:spindle-d` to the sheet: punch the centre hole, drop
+it over the spindle, and the plate is centred and coaxial with the rotation — which
+is the one thing the turntable machinery assumes and otherwise has to discover.
 
 ## Notes
 

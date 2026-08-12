@@ -1592,7 +1592,7 @@
     :category "acquisition"
     :status "stable"
     :since ""
-    :signature "(registration-plate)\n(registration-plate :d 130 :marks 12 :disc 2.5 :h 3)"
+    :signature "(registration-plate)\n(registration-plate :d 130 :marks 12 :disc 2.5 :h 3)\n(registration-plate :d 300)"
     :description "The **registration plate**: the printed disc the object stands on while you photograph it, as a Ridley mesh with its crown of marks already named. It is the usual `:proxy` of an `(acquire …)`, and needs no file import — the geometry and the map of marks come from the same place, so what the solver looks for and what you print can never drift apart."
     :path "docs/manual/reference/en/registration-plate.md"}
 

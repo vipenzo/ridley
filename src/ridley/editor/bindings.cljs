@@ -481,6 +481,10 @@
    'save-mesh           stl/download-mesh
    ;; Registration-plate paper variant: printable mark sheet + its saver
    'marks->svg          plate-svg/marks->svg
+   ;; a plate over ~⌀150 doesn't fit an A4 at 100%, and "fit to page" would
+   ;; rescale the one thing that must be exact — so it prints as two halves
+   'marks->svg-halves   plate-svg/marks->svg-halves
+   'sheet-fits-a4?      plate-svg/fits-on-a4?
    'save-svg            stl/download-svg
    'export              (fn export-smart
                           ([] (let [meshes (viewport/get-current-meshes)
