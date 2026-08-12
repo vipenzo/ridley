@@ -12,7 +12,8 @@
    Also exposes `download-mesh` — a format-aware downloader that lets the
    user pick the destination file name and STL/3MF format via the native
    file picker (or falls back to a download link)."
-  (:require [ridley.env :as env]
+  (:require [clojure.string :as str]
+            [ridley.env :as env]
             [ridley.export.threemf :as threemf]
             [ridley.manifold.core :as manifold]))
 
@@ -499,3 +500,58 @@
   "Save an SVG string to a .svg file (native picker / download)."
   ([svg] (download-svg svg "plate.svg"))
   ([svg filename] (download-text svg (swap-ext filename :svg) "image/svg+xml")))
+
+(defn expand-home
+  "Turn a leading `~` into the user's home directory (desktop only). Anyone
+   writing a path by hand writes `~/Downloads`, and a `~` that reaches the
+   filesystem verbatim creates a directory literally called `~` next to wherever
+   the app happened to be — a failure that looks like success."
+  [path]
+  (if (and (string? path) (str/starts-with? path "~"))
+    (let [xhr (js/XMLHttpRequest.)]
+      (try
+        (.open xhr "POST" (str geo-server-url "/home-dir") false)
+        (.send xhr "")
+        (if (= 200 (.-status xhr))
+          (let [home (.-path (js/JSON.parse (.-responseText xhr)))]
+            (str home (subs path 1)))
+          path)
+        (catch :default _ path)))
+    path))
+
+(defn save-text-at
+  "Write `text` to `path` — no picker. The picker is the right thing when a human
+   is choosing a destination; it is the wrong thing when the destination is part
+   of what the user WROTE, because then the dialog asks a question already
+   answered. Returns Promise<string> describing what happened.
+
+   On the web there is no filesystem: the file is downloaded instead and the
+   directory in `path` is dropped, which the message says out loud rather than
+   pretending the path was honoured."
+  [text path]
+  (let [full (expand-home path)
+        filename (last (str/split full #"/"))]
+    (if (env/desktop?)
+      (-> (desktop-write-file (js/Blob. #js [text]) full)
+          (.then (fn [_] (str "Salvato in " full))))
+      (do (download-blob-fallback (js/Blob. #js [text] #js {:type "image/svg+xml"}) filename)
+          (js/Promise.resolve
+           (str "Nel browser non c'è un filesystem: " filename " è stato SCARICATO "
+                "(la cartella richiesta è stata ignorata)."))))))
+
+(defn save-3mf-at
+  "Write mesh(es) as a 3MF to `path` — no picker, same reasoning as save-text-at.
+   Returns Promise<string>."
+  [mesh-or-meshes path]
+  (let [meshes (if (map? mesh-or-meshes) [mesh-or-meshes] (vec mesh-or-meshes))]
+    ;; meshes->3mf-blob is a PROMISE (the zip is generated asynchronously)
+    (-> (threemf/meshes->3mf-blob meshes)
+        (.then (fn [blob]
+                 (if (env/desktop?)
+                   (let [full (expand-home path)]
+                     (-> (desktop-write-file blob full)
+                         (.then (fn [_] (str "Salvato in " full)))))
+                   (let [filename (last (str/split path #"/"))]
+                     (download-blob-fallback blob filename)
+                     (str "Nel browser non c'è un filesystem: " filename
+                          " è stato SCARICATO (la cartella richiesta è stata ignorata)."))))))))

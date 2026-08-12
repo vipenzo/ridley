@@ -1952,7 +1952,7 @@
       ;; it. Say exactly that, not the misleading "clicca più sparsi".
       (set-status-message!
        (str "Questo piatto non espone lo zero-indice: rivaluta il file aggiornato "
-            "examples/param-acq-plate.clj (il piatto ora ha lo zero sotto :anchors) e "
+            "il proxy (il piatto ora ha lo zero sotto :anchors) e "
             "riapri la sessione — oppure premi 'b' per la modalità armata."))
 
       :else
@@ -2075,7 +2075,7 @@
           pending (filterv (fn [idx] (and (pos? idx) (not (registered? idx)))) (range n))]
       (cond
         (nil? zero-obj)
-        (set-status-message! "Questo piatto non espone lo zero-indice: rivaluta examples/param-acq-plate.clj e riapri.")
+        (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate) come proxy e riapri.")
         (empty? refs)
         (set-status-message! "Anello: registra prima almeno una foto con 'p' (poi 'f' propone le altre).")
         (empty? pending)
@@ -2419,7 +2419,7 @@
           pending (filterv #(not (registered? %)) (range n))]
       (cond
         (nil? (:zero-obj det))
-        (set-status-message! "Questo piatto non espone lo zero-indice: rivaluta examples/param-acq-plate.clj e riapri.")
+        (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate) come proxy e riapri.")
         (empty? pending)
         (set-status-message! "Auto: tutte le foto sono già registrate.")
         :else

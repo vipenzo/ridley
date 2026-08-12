@@ -3,7 +3,7 @@
    crown of evenly-spaced marks plus an asymmetric zero-index under :anchors, and
    :mark-disc-r. This is the PROXY the acquire flow needs (mesh + marks); the
    printable two-colour discs and the mark-sheet SVG stay in
-   examples/param-acq-plate.clj (fabrication, not registration).
+   the `acquire-plate` builtin library (fabrication, not registration).
 
    A NATIVE binding so no file import is needed: `(edit-acquire \"dir\" {:proxy
    (registration-plate)})` and the emitted `(acquire … {:proxy (registration-plate)})`

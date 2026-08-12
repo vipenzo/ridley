@@ -486,6 +486,11 @@
    'marks->svg-halves   plate-svg/marks->svg-halves
    'sheet-fits-a4?      plate-svg/fits-on-a4?
    'save-svg            stl/download-svg
+   ;; write to a path the CODE names, with no picker — the dialog is right when a
+   ;; human is choosing, wrong when the destination is already part of what was
+   ;; written. `~` is expanded.
+   'save-text-at        stl/save-text-at
+   'save-3mf-at         stl/save-3mf-at
    'export              (fn export-smart
                           ([] (let [meshes (viewport/get-current-meshes)
                                     fname  (or (first (registry/registered-names)) "model")]

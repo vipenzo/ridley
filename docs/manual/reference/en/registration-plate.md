@@ -84,8 +84,8 @@ is the one thing the turntable machinery assumes and otherwise has to discover.
   the object has been straightened.
 - The face is flat by construction, which the registration exploits: coplanar
   marks are solved with the planar method (a homography), not the general one.
-- `examples/param-acq-plate.clj` is the single source for both the printable
-  plate and this map of marks — print from there, not from a copy.
+- The `acquire-plate` library prints from THIS function's own `:anchors`, so the
+  discs on the paper are the marks the solver looks for — not a copy of them.
 
 ## See also
 

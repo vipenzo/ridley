@@ -185,6 +185,12 @@
   (let [margin 18
         half-w (+ plate-r margin)
         half-h (+ plate-r margin)
+        ;; Trim allowance BEYOND the seam. Without it the seam line and the
+        ;; alignment crosses sit exactly on the page edge, which is the one strip
+        ;; no printer prints — so the two features the halves are joined by would
+        ;; come out missing. It is also what you cut along, and cutting needs
+        ;; something to cut through.
+        seam-trim 12.0
         theta (* (seam-angle-deg n-crown) (/ Math/PI 180.0))
         ;; Everything is emitted ROTATED so the seam lies on the x-axis. Without
         ;; that, half a disc cut at an angle has a bounding box nearly as large as
@@ -204,15 +210,17 @@
                       pts (mapv #(nth rotated %) idx)
                       labs (mapv #(get labels %) idx)
                       w (* 2 half-w)
+                      page-h (+ half-h seam-trim)
                       ;; plate y runs [0, half-h] above the seam and [-half-h, 0]
-                      ;; below; SVG negates y, so the viewBox origin flips with it
-                      vb-y (if upper? (- half-h) 0)
+                      ;; below; SVG negates y, so the viewBox origin flips with it.
+                      ;; Either way the page reaches `seam-trim` PAST the seam.
+                      vb-y (if upper? (- half-h) (- seam-trim))
                       bar-y (if upper? (+ plate-r 8) (- (+ plate-r 8)))
                       v-cy (if upper? (/ half-h 2.0) (- (/ half-h 2.0)))]
                   (str
                    "<svg xmlns=\"http://www.w3.org/2000/svg\" "
-                   "width=\"" (n w) "mm\" height=\"" (n half-h) "mm\" "
-                   "viewBox=\"" (n (- half-w)) " " (n vb-y) " " (n w) " " (n half-h) "\">"
+                   "width=\"" (n w) "mm\" height=\"" (n page-h) "mm\" "
+                   "viewBox=\"" (n (- half-w)) " " (n vb-y) " " (n w) " " (n page-h) "\">"
                    "<circle cx=\"0\" cy=\"0\" r=\"" (n plate-r)
                    "\" fill=\"none\" stroke=\"#bbbbbb\" stroke-width=\"0.2\"/>"
                    (spindle-hole spindle-d)

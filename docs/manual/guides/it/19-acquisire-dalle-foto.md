@@ -44,7 +44,43 @@ Il flusso ha tre momenti: scattare la sessione fotografica, registrare le camere
 
 Servono tre cose: un piatto girevole (va bene anche uno manuale), un telefono, e il piatto di registrazione stampato.
 
-Il piatto di registrazione è un pezzo Ridley: lo trovi in `examples/param-acq-plate.clj`. È un disco con una corona di dischetti a due colori incassati a filo, più un dischetto fuori corona che fa da zero, cioè da riferimento per l'orientamento. Si stampa in due colori e si esporta con `save-3mf`. La sua funzione è essere un bersaglio che il software sa riconoscere da solo in ogni foto: i dischetti sono a posizioni note per costruzione, quindi trovarli nell'immagine basta a calcolare esattamente da dove la foto è stata scattata.
+Il piatto di registrazione è un pezzo Ridley: un disco con una corona di dischetti scuri, più un dischetto più interno che fa da **zero**, cioè da riferimento per l'orientamento. La sua funzione è essere un bersaglio che il software sa riconoscere da solo in ogni foto: i dischetti sono a posizioni note per costruzione, quindi trovarli nell'immagine basta a calcolare esattamente da dove la foto è stata scattata.
+
+### Farsene uno
+
+Attiva una volta la libreria **acquire-plate** dal pannello Librerie, poi:
+
+```clojure
+(acquire-plate/save-sheet 300 "~/Downloads")
+```
+
+Il numero è il **diametro in millimetri**: scegli quello del girevole che userai — 130 va bene per oggetti piccoli, 300 è il piatto di un giradischi da 12 pollici. La funzione decide da sola quanti file servono e te lo dice: un foglio solo se il piatto entra in una pagina A4, due metà da accostare se non ci entra.
+
+**Stampa al 100%**, voce "dimensione effettiva". Mai "adatta alla pagina": adattare riscala in silenzio proprio la cosa che deve essere esatta, e il risultato non sembra un errore — sembra una registrazione riuscita, con le misure sbagliate.
+
+Poi incolla il foglio su un disco rigido e liscio. Se hai stampato due metà, accostale facendo coincidere le due croci sulla cucitura. Se il girevole è un giradischi, buca il centro sul segno tratteggiato e infila il foglio sul perno: così il piatto è centrato e in asse con la rotazione, che è la cosa che il software dà per scontata.
+
+### Dire a Ridley quanto è venuto grande davvero
+
+Una stampante sbaglia la scala dello 0.1-0.5%, spesso in modo diverso sui due assi. Sul foglio ci sono due barre nominalmente da 100 mm: misurale col calibro e passa le due letture, così il modello combacia col foglio che hai davvero incollato.
+
+```clojure
+(acquire-plate/measured 300 100.2 99.8)
+```
+
+Restituisce il proxy da usare nella sessione al posto di `(registration-plate)`. Se hai stampato due metà, misura le barre di **entrambi** i fogli: sono due stampe diverse e possono essere uscite a scale diverse.
+
+### Oppure stamparlo in 3D
+
+```clojure
+(acquire-plate/save-3mf-plate 300 "~/Downloads")
+```
+
+Un 3MF a due materiali: base chiara, dischetti scuri incassati a filo, e il foro centrale per il perno del giradischi. È più solido della carta e non c'è niente da incollare — ma i bordi dei dischetti sono meno definiti, perché in FDM i confini sui layer alti vengono sfumati, e un centroide sfumato è un residuo più alto. **Stampalo coi dischetti verso il piano di stampa**: quella è la superficie più netta che l'FDM sappia fare.
+
+Le due strade non si escludono: puoi stampare il disco in 3D per la solidità e incollarci sopra la corona di carta per la definizione.
+
+Lo spessore lo sceglie la funzione e ti dice perché: deve essere almeno quanto il perno sporge, se no il perno esce dalla faccia di sopra proprio dove appoggi l'oggetto. Se il tuo girevole non ha un perno, chiedi il piatto senza foro con `(acquire-plate/save-3mf-plate 300 "~/Downloads" 0)`, e viene più sottile.
 
 La sessione si scatta così: l'oggetto sta fermo sul piatto di registrazione, il piatto sta sul girevole, e tu scatti una foto ogni rotazione di circa 30 gradi, per un giro completo. Foto aggiuntive da posizioni libere (un dettaglio dall'alto, un lato difficile) sono benvenute: si registrano anche loro. Le foto finiscono in una cartella, che è la sessione.
 
