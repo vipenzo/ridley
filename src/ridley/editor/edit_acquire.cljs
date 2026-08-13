@@ -2189,65 +2189,44 @@
     (swap! session assoc-in [:pnp-residuals idx] residuals)
     (swap! session assoc-in [:pnp-outliers idx] (set (map :ci (:outliers sol))))))
 
+(declare register-live-frame live-focal)
+
 (defn- register-one-auto-photo!
-  "Detect + identify + register ONE unregistered photo `idx` with zero clicks.
-   Samples off-screen, runs blob-detect → fit-crown → blob-snap → PnP, and applies
-   the pose only if it clears the rms bar and the crown threshold. Resolves true on
-   a registration, else false (poor detection / high rms is a skip, never a throw).
-   Recomputes marks + proxy-pose from the CURRENT proxy-mesh so it stays correct
-   after photo 0 has moved it."
+  "Register ONE unregistered photo `idx` with zero clicks, through EXACTLY the
+   same pipeline a live grab goes through — detect, identify, MEASURE THE LENS
+   off the plate, re-identify, solve, judge by residual.
+
+   It used to have its own copy of that pipeline, identical but for one
+   assumption: it took the focal from the session instead of measuring it. On a
+   session of live-grabbed frames there is no EXIF to have set one, so it ran at
+   the 48mm default while the lens was 28.6 — and the difference does not present
+   itself as a wrong focal, it presents itself as residuals of 8-10px and photos
+   that will not identify. Measured on the same eight frames: 0.3-2.5px through
+   the grab path, 7.9-10.7px and two failures through this one (2026-08-13).
+   Two copies of one pipeline is how one of them ends up with an assumption the
+   other doesn't have.
+
+   Resolves true on a registration, else false (a skip, never a throw)."
   [idx]
   (-> (backdrop/load-luminance-sampler (photo-path (:file (nth (:photos @session) idx))))
       (.then (fn [sampler]
-               (let [lum-at (:lum-at sampler)
-                     [iw ih] (:size sampler)
-                     proxy-mesh (:proxy-mesh @session)
-                     proxy-pose (:creation-pose proxy-mesh)
-                     det (bridge/plate-detect proxy-mesh)
-                     marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
-                     zero-obj (:zero-obj det)
-                     intrinsics (session-intrinsics iw ih)
-                     ;; FAST path: hand the raw RGBA array so the detector downsamples
-                     ;; in one tight loop, not ~12M lum-at closure calls (the freeze).
-                     cands (blob-detect/detect-blobs lum-at [iw ih] {:rgba (:data sampler)})
-                     centers (mapv :center cands)     ; best-first (detector score order)
-                     ;; GEOMETRIC judge (no pixel reads): a reprojection "hits a disc"
-                     ;; if a DETECTED blob of mark SIZE sits within its radius.
-                     ;; fit-crown's per-candidate scoring runs this thousands of times,
-                     ;; so reading the photo there (blob/disc-at?) was the ~5s/photo
-                     ;; churn; the blobs are already the pixel evidence. Final accuracy
-                     ;; still comes from the real-pixel blob-snap + PnP + rms gate below.
-                     judge (match-plate/blob-judge cands)
-                     ;; sample the crown from the TOP-scored blobs only (the discs
-                     ;; outrank the noise), so a good quartet lands on the first sample
-                     res (match-plate/fit-crown (vec (take auto-fit-blobs centers)) marks zero-obj
-                                                intrinsics judge
-                                                {:disc-r (:disc-r det) :face-normal (:face-normal det)})]
-                 (if-not (and res (:zero-hit? res) (>= (:crown-hits res) min-crown-assign))
-                   (do (auto-log! (str "  foto " idx ": corona non riconosciuta ("
-                                       (count cands) " blob rilevati"
-                                       (when res (str ", " (:crown-hits res) "/12 sui dischi"
-                                                      (when-not (:zero-hit? res) ", zero-indice mancante"))) ")"
-                                       " — la lascio all'anello / 'p'"))
-                       false)
-                   (let [snap-r (snap-radius-for (:pixels res) marks (:disc-r det))
-                         picks (into {} (keep (fn [[mi px]]
-                                                (some->> (blob/snap-to-blob lum-at px snap-r)
-                                                         :center (vector mi)))
-                                              (:pixels res)))
-                         corr (vec (for [[ci px] picks]
-                                     {:ci ci :world (:obj (nth marks ci)) :px px}))]
-                     (if (< (count corr) min-plate-picks)
-                       (do (auto-log! (str "  foto " idx ": pochi dischetti agganciati (" (count corr) ")")) false)
-                       (if-let [sol (pnp/solve-pnp corr intrinsics {})]
-                         (if (<= (:rms-px sol) pnp/accept-rms-px)
-                           (do (apply-auto-solve! idx sol picks proxy-pose)
-                               (auto-log! (str "  foto " idx ": registrata ✓  rms "
-                                               (.toFixed (:rms-px sol) 1) "px, " (count corr) " dischetti"))
-                               true)
-                           (do (auto-log! (str "  foto " idx ": scartata, rms "
-                                               (.toFixed (:rms-px sol) 1) "px > " pnp/accept-rms-px)) false))
-                         (do (auto-log! (str "  foto " idx ": PnP senza soluzione")) false))))))))
+               ;; proxy-pose BEFORE this photo — photo 0 moves the proxy
+               (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+                     adopt? (nil? (live-focal))
+                     out (register-live-frame sampler)]
+                 (if-not (:ok? out)
+                   (do (auto-log! (str "  foto " idx ": " (:message out))) false)
+                   (let [{:keys [sol picks measured n]} out]
+                     ;; the lens of the session, measured once off whichever photo
+                     ;; identifies first; the rest reuse it
+                     (when (and adopt? (:focal-mm measured))
+                       (swap! session assoc :focal-mm (:focal-mm measured) :focal-source :live)
+                       (auto-log! (str "  focale MISURATA dal piatto: "
+                                       (.toFixed (:focal-mm measured) 1) "mm-equiv")))
+                     (apply-auto-solve! idx sol picks proxy-pose)
+                     (auto-log! (str "  foto " idx ": registrata ✓  rms "
+                                     (.toFixed (:rms-px sol) 1) "px, " n " dischetti"))
+                     true)))))
       (.catch (fn [_] (auto-log! (str "  foto " idx ": errore di caricamento")) false))))
 
 (defn- finish-auto!
