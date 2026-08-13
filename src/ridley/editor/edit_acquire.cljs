@@ -2539,7 +2539,8 @@
                 (auto-log! (str "  " (:error r)))
                 (set-status-message! (str "Calibrazione rifiutata: " (:error r))))
             (let [{:keys [marks poses deviation-mm out-of-plane-mm radial-mm
-                          worst-mm rms-before rms-after]} r
+                          tangential-mm worst-mm rms-before rms-after
+                          per-view-before per-view view-idx]} r
                   proxy-pose (get-in @session [:proxy-mesh :creation-pose])]
               (apply-plate-calibration! marks)
               ;; adopt the poses the calibration re-solved against the measured
@@ -2552,11 +2553,31 @@
               (auto-log! (str "=== calibrazione del piatto: " (count views) " foto ==="))
               (auto-log! (str "  riproiezione " (modal/fmt-number rms-before)
                               " → " (modal/fmt-number rms-after) " px"))
-              (doseq [[i d op rad] (map vector (range) deviation-mm out-of-plane-mm radial-mm)]
-                (when (> d 0.2) ; below this it is click noise, not a plate
-                  (auto-log! (str "    " (:label (nth targets i)) ": "
-                                  (modal/fmt-number op) " mm fuori piano, "
-                                  (modal/fmt-number rad) " mm in raggio"))))
+              ;; Per photograph, like the joint refine: an aggregate that moves
+              ;; from 2.13 to 1.79 says something happened and refuses to say to
+              ;; whom — and on a plate the answer matters, because a warp presents
+              ;; differently depending which way each camera looks across it.
+              (doseq [[idx b a] (map vector view-idx per-view-before per-view)]
+                (when (and b a)
+                  (auto-log! (str "    foto " (inc idx) ": " (modal/fmt-number b)
+                                  " → " (modal/fmt-number a) " px"))))
+              ;; Three components, not two. They are the three ways a mark can be
+              ;; in the wrong place and they mean different things — warped,
+              ;; wrong radius, wrong angle around the crown — and printing only
+              ;; two left the headline number unaccounted for (2026-08-13: m00
+              ;; read -1.60 and -1.11 under a worst of 2.01, and the missing
+              ;; 0.51mm had no name).
+              (let [quiet (count (filter #(<= % 0.2) deviation-mm))]
+                (doseq [[i d op rad tan] (map vector (range) deviation-mm out-of-plane-mm
+                                              radial-mm tangential-mm)]
+                  (when (> d 0.2) ; below this it is click noise, not a plate
+                    (auto-log! (str "    " (:label (nth targets i)) ": "
+                                    (modal/fmt-number d) " mm — "
+                                    (modal/fmt-number op) " fuori piano, "
+                                    (modal/fmt-number rad) " in raggio, "
+                                    (modal/fmt-number tan) " di lato"))))
+                (when (pos? quiet)
+                  (auto-log! (str "    (" quiet " mark sotto 0.2 mm: a posto, non elencati)"))))
               (auto-log! (str "  il piatto è ora MISURATO: scostamento massimo "
                               (modal/fmt-number worst-mm) " mm"))
               (save-plate-calibration!

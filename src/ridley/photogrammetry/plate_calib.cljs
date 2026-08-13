@@ -152,8 +152,21 @@
 
 ;; ---------------------------------------------------------------------------
 
+(defn- view-rms
+  "Reprojection rms (px) of `marks` against one view's picks."
+  [{:keys [pose intrinsics picks]} marks]
+  (let [sq (for [[ci px] picks
+                 :let [p (cam/project intrinsics pose (nth marks ci))]
+                 :when p]
+             (+ (* (- (p 0) (px 0)) (- (p 0) (px 0)))
+                (* (- (p 1) (px 1)) (- (p 1) (px 1)))))
+        n (count sq)]
+    (when (pos? n) (Math/sqrt (/ (reduce + 0.0 sq) n)))))
+
 (defn- reproject-rms
-  "Reprojection rms (px) of `marks` against every view's picks."
+  "Reprojection rms (px) of `marks` over EVERY view's picks pooled — not the mean
+   of the per-view numbers, which would weight a view with four picks like one
+   with twelve."
   [views marks]
   (let [sq (for [{:keys [pose intrinsics picks]} views
                  [ci px] picks
@@ -219,6 +232,25 @@
                                     0.0)))
                               marks nominal)
                  out-of-plane (mapv (fn [m nm] (la/v-dot (la/v-sub m nm) n)) marks nominal)
+                 ;; The third component, and it is NOT decoration: without it the
+                 ;; two reported numbers do not add up to the headline, and a user
+                 ;; checking the arithmetic finds a discrepancy with no name (found
+                 ;; on the first real run, 2026-08-13: m00 reported -1.60 and -1.11,
+                 ;; while the worst deviation said 2.01 — the missing 0.51mm was
+                 ;; this). A mark off TANGENTIALLY is at the wrong angle around the
+                 ;; crown: not a warp and not a scale, a placement error.
+                 tangential (mapv (fn [m nm]
+                                    (let [d (la/v-sub m nm)
+                                          r (la/v-sub nm o)
+                                          rl (la/v-norm r)]
+                                      (if (> rl 1e-9)
+                                        (let [rhat (la/v-scale r (/ 1.0 rl))
+                                              that [(- (* (n 1) (rhat 2)) (* (n 2) (rhat 1)))
+                                                    (- (* (n 2) (rhat 0)) (* (n 0) (rhat 2)))
+                                                    (- (* (n 0) (rhat 1)) (* (n 1) (rhat 0)))]]
+                                          (la/v-dot d that))
+                                        0.0)))
+                                  marks nominal)
                  gauge (/ (reduce + 0.0 (map (fn [p] (la/v-norm (la/v-sub p o))) nominal))
                           (count nominal))]
              (if (> worst (* max-deviation-frac gauge))
@@ -234,9 +266,16 @@
                 :deviation-mm dev
                 :out-of-plane-mm out-of-plane
                 :radial-mm radial
+                :tangential-mm tangential
                 :worst-mm worst
                 :rms-before before
                 :rms-after (reproject-rms vs marks)
+                ;; per view, so the caller can show WHICH photographs the measured
+                ;; plate helped — an aggregate that moves from 2.13 to 1.79 says
+                ;; something happened and refuses to say to whom
+                :per-view-before (mapv #(view-rms % nominal) views)
+                :per-view (mapv #(view-rms % marks) vs)
+                :view-idx (mapv :idx views)
                 :views (count views)
                 :iterations iterations}))
            ;; 1. every mark, from every ray that saw it
