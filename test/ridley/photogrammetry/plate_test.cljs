@@ -15,7 +15,7 @@
 
 (deftest builds-a-parametric-plate
   (testing "defaults: 12 crown marks + zero-index + disc radius, renders as a mesh"
-    (let [p (plate/registration-plate)]
+    (let [p (plate/registration-plate :d 130)]
       (is (= 12 (count (crown p))) "⌀130 → 12 crown marks by default")
       (is (contains? (:anchors p) :zero) "carries the zero-index")
       (is (= 1.25 (:mark-disc-r p)) "disc radius = disc/2")
@@ -66,7 +66,7 @@
 
 (deftest plate-frame-registers-end-to-end
   (println "\n=== registration-plate: frame validato end-to-end (assign-marks) ===")
-  (let [p (plate/registration-plate)
+  (let [p (plate/registration-plate :d 130)
         targets (bridge/pnp-target-points p (:creation-pose p))
         det (bridge/plate-detect p)
         pose (synth/viewpoint 40 45 250.0)

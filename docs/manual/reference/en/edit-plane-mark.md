@@ -22,7 +22,7 @@ the head and Run.
 
 ```clojure
 (acquire "dir"
-  {:proxy (registration-plate)
+  {:proxy (registration-plate :d 300)
    :marks {:piano-1 (plane-mark {:position [...] :heading [...] :up [...]})
            :piano-2 (edit-plane-mark {:position [...] :heading [...] :up [...]
                                       :from [[...] [...] [...]]})}})

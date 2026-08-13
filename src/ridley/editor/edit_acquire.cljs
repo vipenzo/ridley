@@ -2075,7 +2075,7 @@
           pending (filterv (fn [idx] (and (pos? idx) (not (registered? idx)))) (range n))]
       (cond
         (nil? zero-obj)
-        (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate) come proxy e riapri.")
+        (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate :d <diametro>) come proxy e riapri.")
         (empty? refs)
         (set-status-message! "Anello: registra prima almeno una foto con 'p' (poi 'f' propone le altre).")
         (empty? pending)
@@ -2398,7 +2398,7 @@
           pending (filterv #(not (registered? %)) (range n))]
       (cond
         (nil? (:zero-obj det))
-        (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate) come proxy e riapri.")
+        (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate :d <diametro>) come proxy e riapri.")
         (empty? pending)
         (set-status-message! "Auto: tutte le foto sono già registrate.")
         :else

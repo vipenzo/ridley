@@ -50,14 +50,15 @@ consistent set. The manual routes are there for the frames that resist.
 ## The proxy is a promise about the real world
 
 `:proxy` is the object the solver looks for in the photographs, and it must be
-the object that is actually there. A `(registration-plate :d 300)` in your source
-and a ⌀250 plate on the table will still register — the solver will happily put
+the object that is actually there — which is why `:d` has no default and must be
+said out loud. A `(registration-plate :d 300)` in your source and a ⌀250 plate on
+the table will still register — the solver will happily put
 the camera at the wrong distance and report a residual that looks fine, because
 a wrong scale is indistinguishable from a wrong distance in a single view. What
 comes out is not an error, it is a measurement that is quietly wrong.
 
 If you printed the plate on paper, correct it for what the printer actually did:
-`(acquire-plate/measured 300 100.2 99.8)` in place of `(registration-plate)`.
+`(acquire-plate/measured 300 100.2 99.8)` in place of `(registration-plate :d 300)`.
 
 ## Keys
 

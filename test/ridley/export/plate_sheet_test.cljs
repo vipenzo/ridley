@@ -25,7 +25,7 @@
   (count (re-seq #"fill=\"#111111\" stroke=\"none\"" svg)))
 
 (deftest a-whole-sheet-carries-every-mark
-  (let [p (plate/registration-plate)
+  (let [p (plate/registration-plate :d 130)
         cs (centers-of p)
         svg (psvg/marks->svg cs {:disc-r (:mark-disc-r p) :plate-r 65})]
     (is (= (count cs) (disc-count svg)) "ogni mark, e lo zero, sono sul foglio")

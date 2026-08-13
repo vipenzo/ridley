@@ -31,7 +31,7 @@
   (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal-mm (/ w h)) w h))
 
 (defn- targets []
-  (scene/plate-targets (plate/registration-plate)))
+  (scene/plate-targets (plate/registration-plate :d 130)))
 
 (defn- corr-at
   "Exact correspondences: every crown mark projected through `pose` at `focal-mm`."
@@ -130,7 +130,7 @@
   ;; homography, which the focal does not change, so fit-crown can identify the
   ;; crown at a seed focal that is merely plausible — and the identities it returns
   ;; are enough to measure the TRUE focal.
-  (let [proxy (plate/registration-plate)
+  (let [proxy (plate/registration-plate :d 130)
         {:keys [marks zero-obj disc-r face-normal]} (scene/plate-targets proxy)
         true-focal 28.0
         pose (cam/look-at-pose [95.0 -75.0 195.0] [0.0 0.0 0.0] [0.0 1.0 0.0])

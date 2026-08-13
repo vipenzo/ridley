@@ -65,7 +65,7 @@
 
 (deftest plate-scene-recall
   (println "\n=== detector: scena piatto sintetica (corona + zero) ===")
-  (let [proxy (plate/registration-plate)
+  (let [proxy (plate/registration-plate :d 130)
         w 4032 h 3024
         intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 48.0 (/ w h)) w h)]
     (doseq [eye [[40.0 -30.0 210.0] [90.0 60.0 240.0]]]
@@ -120,7 +120,7 @@
              (let [st (js/JSON.parse (.readFileSync fs state-path "utf8"))
                    picks (js->clj (aget (aget (.-pnp st) "0") "picks"))
                    gt (into {} (for [[k v] picks] [(js/parseInt k) (get v "px")]))
-                   proxy (plate/registration-plate)
+                   proxy (plate/registration-plate :d 130)
                    {:keys [marks zero-obj disc-r face-normal]} (scene/plate-targets proxy)]
                (println "\n=== detector reale: param-plate-paper foto 0 (JPEG vero) ===")
                ;; RGBA (ensureAlpha) so the test exercises the PRODUCTION fast path

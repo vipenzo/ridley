@@ -68,7 +68,7 @@ Una stampante sbaglia la scala dello 0.1-0.5%, spesso in modo diverso sui due as
 (acquire-plate/measured 300 100.2 99.8)
 ```
 
-Restituisce il proxy da usare nella sessione al posto di `(registration-plate)`. Se hai stampato due metà, misura le barre di **entrambi** i fogli: sono due stampe diverse e possono essere uscite a scale diverse.
+Restituisce il proxy da usare nella sessione al posto di `(registration-plate :d 300)`. Se hai stampato due metà, misura le barre di **entrambi** i fogli: sono due stampe diverse e possono essere uscite a scale diverse.
 
 ### Oppure stamparlo in 3D
 
@@ -91,7 +91,7 @@ Sulla focale non devi fare niente: Ridley la legge dall'EXIF delle foto (la foca
 La registrazione si apre dichiarando la cartella e il proxy, cioè l'ancora geometrica che il software cerca nelle foto:
 
 ```clojure
-(edit-acquire "scans/reader/" {:proxy (registration-plate)})
+(edit-acquire "scans/reader/" {:proxy (registration-plate :d 300)})
 ```
 
 Si apre una sessione sul viewport: una pellicola di miniature mostra le foto, con un badge per ciascuna (grigia = non registrata, verde con il residuo in pixel = registrata). Con il piatto di registrazione, il gesto principale è uno solo: il bottone **Auto** (tasto `a`). Per ogni foto il software trova i dischetti della corona su tutto il fotogramma, li identifica usando lo zero come riferimento, e risolve la posa della camera. Il progresso scorre nel pannello REPL. Le foto ben inquadrate si registrano da sole in qualche secondo; gli scatti molto radenti, dove i dischetti diventano ellissi sottili, possono restare fuori, e vengono lasciati indietro apposta: meglio nessuna posa che una posa sbagliata.
@@ -110,7 +110,7 @@ Alla conferma, la sessione scrive nel sorgente una forma normale:
 
 ```clojure
 (acquire "scans/reader/"
-  {:proxy (registration-plate)
+  {:proxy (registration-plate :d 300)
    :pose  {:position [0 0 0] :heading [0 1 0] :up [0 0 1]}
    :shapes {}
    :marks  {}})

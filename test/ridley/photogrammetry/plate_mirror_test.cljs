@@ -49,7 +49,7 @@
   "Solve `picks` (crown index → pixel) against the plate, optionally reflecting
    every declared identity first. Returns {:rms-px :sees-face? :camera-z}."
   [picks mirror?]
-  (let [mesh (plate/registration-plate)
+  (let [mesh (plate/registration-plate :d 130)
         detect (bridge/plate-detect mesh)
         targets (bridge/pnp-target-points mesh nil)
         n (count targets)

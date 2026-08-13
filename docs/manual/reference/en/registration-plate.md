@@ -9,9 +9,8 @@ status: stable
 
 ## Signature
 
-`(registration-plate)`
+`(registration-plate :d 300)`
 `(registration-plate :d 130 :marks 12 :disc 2.5 :h 3)`
-`(registration-plate :d 300)`   ; a 12-inch turntable
 
 ## Description
 
@@ -23,7 +22,7 @@ you print can never drift apart.
 
 ```clojure
 (acquire "/Users/me/scans/collare"
-  {:proxy (registration-plate)
+  {:proxy (registration-plate :d 300)
    :pose  {:position [0 0 0] :heading [0 0 1] :up [0 1 0]}})
 ```
 
@@ -39,7 +38,14 @@ plate is.
 
 ## Parameters
 
-- `:d` — plate diameter in mm (default 130).
+- `:d` — plate diameter in mm. **Required, and deliberately without a default.**
+  It is the one number that ties this model to the object in the room, and a wrong
+  one does not announce itself: a uniform scale error on the target is absorbed
+  exactly by the camera distance, so the registration succeeds with clean residuals
+  and every measurement comes out silently scaled. ⌀130 used to be the default for
+  no better reason than being the first plate we built, and on 2026-08-13 a session
+  was registered against it while a ⌀300 plate sat on the turntable — eight views,
+  1.7px, and the whole scene 2.3× too small.
 - `:marks` — how many marks in the crown (default 12, and never more — see
   *Bigger plates* below before pinning a larger number).
 - `:disc` — diameter of each printed mark in mm. Defaults to **a fraction of

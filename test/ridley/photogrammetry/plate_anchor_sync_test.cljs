@@ -65,7 +65,7 @@
 
 (deftest the-crown-survives-every-transform-edit-acquire-applies
   (println "\n=== La corona resta incollata al piatto? ===")
-  (let [p0 (plate/registration-plate)]
+  (let [p0 (plate/registration-plate :d 130)]
     (check! "appena creato      " p0)
     (check! "dopo una traslazione" (attachment/translate-mesh p0 [12.0 -5.0 30.0]))
     (check! "dopo una rotazione  " (attachment/rotate-mesh p0 [0.3 0.9 0.2] 0.7))

@@ -6,7 +6,7 @@
    the `acquire-plate` builtin library (fabrication, not registration).
 
    A NATIVE binding so no file import is needed: `(edit-acquire \"dir\" {:proxy
-   (registration-plate)})` and the emitted `(acquire … {:proxy (registration-plate)})`
+   (registration-plate :d 300)})` and the emitted `(acquire … {:proxy (registration-plate :d 300)})`
    are both self-contained (the marks ride the mesh; nothing to keep in scope).
 
    Frame: the cylinder is built axis-along-+Z with an IDENTITY creation-pose
@@ -16,7 +16,19 @@
    its normal +Z — exactly the geometry match-plate/pnp were validated against."
   (:require [ridley.geometry.primitives :as prims]))
 
-(def ^:private default-diameter 130.0)
+;; There is NO default diameter, and that is a decision, not an omission.
+;;
+;; ⌀130 used to be one, for no better reason than being the first plate we built
+;; — and on 2026-08-13 it cost exactly what an unearned default costs. A session
+;; was registered against `(registration-plate)` while a ⌀300 plate sat on the
+;; turntable, and NOTHING could tell: a uniform scale error on the target is
+;; absorbed exactly by the camera distance, so every residual came back clean
+;; (1.7px over eight views) while the whole scene was 2.3× too small. It took
+;; triangulating the marks to see it.
+;;
+;; The diameter is the one number that ties the model to the object in the room.
+;; A default lets it be left unsaid, and a number left unsaid is a number nobody
+;; checks — so it is asked for.
 
 ;; The reference plate — ⌀130 — is the one every pixel-facing threshold in this
 ;; channel was tuned on, and it is why the geometry below is expressed as
@@ -104,7 +116,8 @@
 
 (defn ^:export registration-plate
   "The registration-plate proxy. Keyword options:
-     :d      diameter (mm), default 130
+     :d      diameter (mm) — REQUIRED, see the note above the namespace's
+             constants for why there is no default
      :marks  crown mark count, default `default-mark-count` (never more than
              `max-default-marks` — read its docstring before pinning a big one)
      :disc   disc diameter (mm), default SCALES with :d (2.5 on the reference 130)
@@ -119,7 +132,15 @@
    Returns a cylinder mesh with :anchors {mNN {:position :heading :up} … :zero {…}}
    and :mark-disc-r, in the solver's object frame."
   [& {:keys [d marks disc h]
-      :or {d default-diameter h 3.0}}]
+      :or {h 3.0}}]
+  (when-not (and (number? d) (pos? d))
+    (throw (js/Error.
+            (str "registration-plate: dimmi il diametro del piatto, per esempio "
+                 "(registration-plate :d 300).\n"
+                 "Non c'è un default apposta: il diametro è l'unico numero che lega "
+                 "il modello all'oggetto che hai sul tavolo, e se è sbagliato NON si "
+                 "presenta come un errore — la registrazione riesce lo stesso, con "
+                 "residui ottimi, e tutte le misure escono scalate in silenzio."))))
   (let [radius (/ d 2.0)
         crown-r (crown-radius d)
         disc (or disc (disc-diameter d))
