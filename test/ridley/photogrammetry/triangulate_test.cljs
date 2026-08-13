@@ -93,9 +93,23 @@
       (is (> (:max-residual-px r) 20.0) "a 120px slip must not pass quietly"))
     (testing "and the culprit is named correctly — which the residual alone does not do"
       (is (= 2 (:worst-obs r)) "leave-one-out finds the tampered view")
-      (is (not= 2 by-residual)
-          "the max residual points at an INNOCENT view — least squares spread the
-           error, which is exactly why :worst-obs exists"))))
+      ;; This used to assert that the max residual named an INNOCENT view. It did,
+      ;; but only because ring-pose 90° was a half-turn and camera/rot-mat->rodrigues
+      ;; got half-turns wrong until 2026-08-13 — the synthetic camera for that view
+      ;; was not where the test thought it was. With the cameras correct, the max
+      ;; residual happens to land on the guilty view here.
+      ;;
+      ;; That does not make the residual an identifier, and the numbers say why:
+      ;; least squares SPREADS a slip across every ray, so the innocent views come
+      ;; back nearly as accused as the guilty one. What is worth pinning is that
+      ;; separation, not which view happens to top the list — a ranking whose top
+      ;; two are within a few percent cannot single anybody out, and that is
+      ;; exactly the gap :worst-obs exists to fill.
+      (let [sorted (sort > residuals)]
+        (is (> (/ (second sorted) (first sorted)) 0.8)
+            (str "the residuals do not separate the guilty view from the innocent ones "
+                 "(" (mapv #(fmt % 1) sorted) ") — which is why leave-one-out exists"))
+        (is (some? by-residual) "…and the ranking itself is still reported")))))
 
 (deftest a-clean-set-blames-nobody
   (let [rng (synth/rng 5)
