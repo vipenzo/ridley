@@ -2459,6 +2459,15 @@
 
 (defn- labels-on? [] (get-in @stage [:edge :labels?] true))
 
+(defn- snap-on? [] (get-in @stage [:edge :snap?] true))
+
+(defn- toggle-snap! []
+  (swap! stage update-in [:edge :snap?] #(not (if (nil? %) true %)))
+  (say! (if (snap-on?)
+          "aggancio al contrasto ATTIVO: i due click sono un suggerimento, la riga la decide l'immagine"
+          "aggancio al contrasto SPENTO: valgono i tuoi due click, esatti come li hai messi"))
+  (refresh-hud!))
+
 (defn- toggle-labels!
   "'l' — put the numbers away, or bring them back.
 
@@ -2553,7 +2562,15 @@
         (deny! "TOO SHORT" (str "i due click distano meno di " pedge/min-segment-px
                                    " px · un tratto così non dice la direzione"))
         (redraw-overlay!))
-    (let [snap (edge-snap/snap-segment backdrop/luminance-at p1 p2)
+    (let [;; With the snap OFF the two clicks stand exactly as made. The snap is
+          ;; what turns two rough clicks into a measurement — but only where the
+          ;; edge the user means is the strongest contrast around. On glass, on a
+          ;; transparent part, on an edge running beside a brighter one, it locks
+          ;; onto something else and there was no way to overrule it: an
+          ;; imprecise click the user MEANT beats a precise one they didn't
+          ;; (Vincenzo, 2026-08-13: "il mio click, impreciso fin che vuoi, è
+          ;; meglio di niente").
+          snap (when (snap-on?) (edge-snap/snap-segment backdrop/luminance-at p1 p2))
           seg (if snap [(:p1 snap) (:p2 snap)] [p1 p2])]
       (swap! stage update :edge
              #(-> %
@@ -2565,8 +2582,11 @@
                   (str "tratto preso sulla foto " (nav-rank idx) " · agganciato al "
                        "contrasto su " (:n snap) " punti (scarto "
                        (src/fmt-number (:rms snap)) " px)")
-                  (str "tratto preso sulla foto " (nav-rank idx)
-                       " · NON agganciato al contrasto · valgono i tuoi due click"))]
+                  (if (snap-on?)
+                    (str "tratto preso sulla foto " (nav-rank idx)
+                         " · NON agganciato al contrasto · valgono i tuoi due click")
+                    (str "tratto preso sulla foto " (nav-rank idx)
+                         " · aggancio SPENTO · valgono i tuoi due click")))]
         (say! msg)
         ;; anche questo va detto DOVE STA LA MANO: il tratto si disegna, ma se
         ;; serve una seconda foto la riga del pannello è ciò che lo dice
@@ -2874,6 +2894,12 @@
               (open! (str "questa foto ha già il suo tratto: questo click apre un "
                           "tratto A MANO che lo sostituirà — clicca l'altro capo"))
 
+              ;; With the snap off the user has said they are drawing this one:
+              ;; asking the image to answer a single click would be asking exactly
+              ;; the thing they just turned off.
+              (not (snap-on?))
+              (open! "aggancio spento: clicca l'altro capo del tratto")
+
               ;; the normal case: one click, and the image answers
               (try-one-click! idx px pose k) nil
 
@@ -3121,6 +3147,12 @@
       (.appendChild row (hud-button (if (labels-on?) "Names: on" "Names: off")
                                     "Edge names over the photo (l)"
                                     true false toggle-labels!))
+      (.appendChild row (hud-button (if (snap-on?) "Snap: on" "Snap: off")
+                                    (str "With snap on, the image decides the line and your two "
+                                         "clicks only aim it. Turn it off when the contrast it "
+                                         "finds is not the edge you mean — on glass, or beside a "
+                                         "brighter edge — and your two clicks are taken exactly.")
+                                    true false toggle-snap!))
       (.appendChild row (hud-button (str "nib " (src/fmt-number (brush-px)) "px")
                                     "Marker width, in screen pixels (+ and -)"
                                     true false #(cycle-brush! 1)))
