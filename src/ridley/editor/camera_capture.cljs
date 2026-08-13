@@ -80,6 +80,28 @@
                       vec)))
         (.catch (fn [_] [])))))
 
+(defonce ^:private device-watcher (atom nil))
+
+(defn watch-devices!
+  "Call `f` whenever the set of connected cameras changes, and stop any previous
+   watcher. Cameras arrive and leave while the app is open — a phone offering
+   itself over Continuity, a webcam plugged in — and a list built once, when the
+   camera was opened, is a list that is wrong by the time the user goes looking
+   for the device they just woke up."
+  [f]
+  (when (supported?)
+    (let [^js md (.-mediaDevices js/navigator)]
+      (when-let [prev @device-watcher]
+        (.removeEventListener md "devicechange" prev))
+      (let [h (fn [_] (f))]
+        (reset! device-watcher h)
+        (.addEventListener md "devicechange" h)))))
+
+(defn unwatch-devices! []
+  (when (and (supported?) @device-watcher)
+    (.removeEventListener (.-mediaDevices js/navigator) "devicechange" @device-watcher)
+    (reset! device-watcher nil)))
+
 (defn stop!
   "Close the stream and drop the element. Idempotent."
   []

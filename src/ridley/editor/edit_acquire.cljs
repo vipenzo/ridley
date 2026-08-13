@@ -2839,6 +2839,24 @@
     (when-let [^js v (camera/video-el)]
       (when-not (.-parentNode v) (.appendChild host v)))))
 
+(defn- refresh-cameras!
+  "Re-read the list of connected cameras into the panel. Cheap, and worth doing
+   on every change: a phone that offers itself over Continuity appears WHILE the
+   session is open, and the user goes looking for it in the picker the moment
+   they have woken it."
+  []
+  (-> (camera/list-cameras)
+      (.then (fn [ds]
+               (when @session
+                 (swap! session assoc :camera-devices ds)
+                 (update-panel!))))))
+
+(defn- watch-cameras!
+  "Keep the picker honest for as long as the session is open."
+  []
+  (camera/watch-devices! refresh-cameras!)
+  (refresh-cameras!))
+
 (defn- start-camera!
   "Open a camera (the given device, or the default) and show its preview. Also
    refreshes the device list — labels only become real once permission has been
@@ -2850,8 +2868,7 @@
                (swap! session assoc :camera-info info)
                (set-status-message! (str "Camera: " (:label info) " · "
                                          (first (:size info)) "×" (second (:size info))))
-               (-> (camera/list-cameras)
-                   (.then (fn [ds] (swap! session assoc :camera-devices ds) (update-panel!))))))
+               (refresh-cameras!)))
       (.catch (fn [err]
                 (set-status-message! (str "Camera not opened: " (.-message err)))
                 (update-panel!)))))
@@ -3967,7 +3984,11 @@
                 :else
                 "A camera in the room is a source of views: open it, aim, and grab."))
         (.appendChild box info-el)
-        (when (and supported? on? (> (count devices) 1))
+        ;; The picker shows whether or not a camera is open: choosing the device
+        ;; BEFORE opening is the natural order when the one you want is the phone
+        ;; you just woke up, and a menu that only appears after you have opened
+        ;; the wrong camera is a menu that arrives too late.
+        (when (and supported? (> (count devices) 1))
           (let [^js sel (.createElement js/document "select")]
             (doseq [{:keys [id label]} devices]
               (let [^js o (.createElement js/document "option")]
@@ -5292,6 +5313,7 @@
     (stop-mark!) ; removes the named-mark pointer/wheel handlers + labels
     (teardown-retrace-listeners!) ; removes retrace pointer/wheel handlers + loupe
     (teardown-frustum-listeners!) ; removes the stage click-a-frustum pointer handlers
+    (camera/unwatch-devices!)
     ;; Release the camera. A live stream left running keeps the recording light on
     ;; after the session that asked for it is gone — a device the user can see is
     ;; on, with nothing on screen explaining why.
@@ -5690,6 +5712,9 @@
                               (backdrop/create! (viewport/get-camera))
                               (build-panel!)
                               (swap! session assoc :key-handler (modal/install-keydown! on-keydown))
+                              ;; keep the camera picker up to date for as long as
+                              ;; the session lives (a phone can arrive at any time)
+                              (watch-cameras!)
                               ;; A session with no photos yet (the live case: it is
                               ;; filled by grabbing) has nothing to enter — put the
                               ;; camera at photo 0's vantage so the proxy is there to
