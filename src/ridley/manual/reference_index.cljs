@@ -489,6 +489,15 @@
     :description "A **measured edge** of an acquisition: a pose that runs **along** the edge, plus its two ends. It is what the measuring gesture writes into an `(acquire …)`'s `:edges` block, and it **returns the map unchanged** — its job is grammatical, like `plane-mark`'s."
     :path "docs/manual/reference/en/edge-mark.md"}
 
+   "edit-acquire"
+   {:name "edit-acquire"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(edit-acquire dir)\n(edit-acquire dir opts)"
+    :description "Opens the **registration session** for a folder of photographs: the modal room where you tell Ridley where each camera was standing. It is the form you write first, and the only one you write by hand — everything else in the acquisition family is written back into your source when you confirm."
+    :path "docs/manual/reference/en/edit-acquire.md"}
+
    "edit-attach-request!"
    {:name "edit-attach-request!"
     :category "live-interactive"

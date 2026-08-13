@@ -84,6 +84,7 @@ And the names are anchors, so the turtle can stand on any of them:
 
 ## See also
 
+- `edit-acquire` — the same thing being worked on: where the cameras get registered
 - `edit-edge-mark` — measure an edge into `:edges`
 - `plane-from-edges` — a plane from the edges you have measured
 - `plane-mark` · `edge-mark` — the resting forms
