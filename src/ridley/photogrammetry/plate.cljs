@@ -166,4 +166,11 @@
         (assoc :vertices verts
                :creation-pose {:position [0.0 0.0 0.0] :heading [0.0 0.0 1.0] :up [0.0 1.0 0.0]}
                :anchors (assoc crown :zero zero)
-               :mark-disc-r (/ disc 2.0)))))
+               :mark-disc-r (/ disc 2.0)
+               ;; The plate's identity, carried on the mesh. A CALIBRATION — the
+               ;; measured positions of this physical plate's marks — is filed
+               ;; against the diameter and crown count, because that is what
+               ;; names the object on the table; the anchors themselves get
+               ;; overwritten by it, so they cannot say what plate they came from.
+               :plate-d d
+               :plate-marks n))))

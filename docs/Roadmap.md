@@ -88,6 +88,43 @@ Cosa ha cambiato la fetta rispetto a come era stata proposta:
   l'immagine e le due spie (rms per il danno sparso, `gross-outlier?` per quello
   isolato) valgono in `or`.
 
+**Il piatto smette di essere un'ipotesi (2026-08-13).** Con la sessione live che
+convergeva a 1.97px su 12 viste ma con residui per foto sparsi fra 0.36 e 3.42,
+tre spiegazioni sono state confutate con misure (colla — piatto sbagliato;
+distorsione — correlazione −0.065; nitidezza — nessuna spiegazione intra-lotto), e
+la quarta trovata triangolando i mark alla scala giusta: **il piatto ⌀300 stampato
+è imbarcato** — mark 0 a −1.63mm fuori piano, mark 10 a +1.37, mark 6 a +1.24, gli
+altri sei entro ±0.25. Vincenzo: «stampare un piatto perfetto è difficilissimo,
+per me e per chiunque provasse a utilizzare questa feature» — quindi la difficoltà
+si sposta dallo *stampare* al **misurare**, come per tutto il resto del canale.
+
+- `photogrammetry/plate-calib`: alterna triangolazione dei mark (pose ferme) e
+  PnP delle pose (mark fermi). Il **gauge** è il punto delicato: mark e pose
+  possono scivolare insieme senza cambiare un pixel (piatto ×s, camere ×s), quindi
+  a ogni giro i mark misurati vengono rimessi sul frame del modello — livellati,
+  centrati, ruotati e **scalati** al raggio nominale. Ne esce la FORMA, che le foto
+  sanno misurare; non la TAGLIA, che non sanno: quella resta `:d` e il calibro. Un
+  test lo pretende esplicitamente (un piatto del 5% più grande deve tornare della
+  taglia del MODELLO);
+- `C` in edit-acquire misura, riporta lo scostamento **diviso in fuori-piano e
+  radiale** (due difetti diversi), e **rifiuta** oltre il 3% del raggio: uno
+  scostamento così non è un piatto storto, è una registrazione sbagliata a monte, e
+  adottarlo riferirebbe ogni misura futura a un righello inventato per far quadrare
+  uno sbaglio;
+- **archiviato per PIATTO, non per sessione** (`~/.ridley/plates/`, per diametro e
+  numero di mark): un piatto si calibra una volta e vale per tutte le sessioni
+  future, che lo annunciano all'apertura. È ciò che rende la cosa utile a chi non
+  sia noi;
+- **difetto trovato per strada, vecchio e silenzioso**: `camera/rot-mat->rodrigues`
+  sbagliava ogni rotazione di **mezzo giro**. Ricavava i segni dell'asse da
+  `(m01 − m10)` e `(m02 − m20)`, che per una rotazione di π sono identicamente
+  ZERO perché quella matrice è simmetrica: i due test non potevano scattare. Chi ne
+  soffriva è `look-at-pose`, che costruisce `:t` dalla matrice e `:rvec` da qui —
+  cioè una camera che dichiarava un centro e fotografava da un altro. Una vista di
+  giradischi da +Y è esattamente un mezzo giro. Trovato perché la calibrazione di
+  un piatto PERFETTO tornava spostata di 7mm; era la vista 2 della scena
+  sintetica.
+
 Si dichiara un bordo dipingendolo su due foto e ne esce un segmento 3D misurato;
 da più bordi, il piano. Poi, dopo sei giri d'uso vero, Vincenzo ha chiesto di
 togliere stati alla UI e usare il codice — e ne è uscito un canale più piccolo:
@@ -116,7 +153,8 @@ dritti danno lo stesso piano senza appaiare niente. Manuale: nove schede nuove
 di una faccia — Vincenzo stesso dubita che paghi. **Non attaccato**: i punti
 2/4/5 della scala del brief, cioè i bordi come VINCOLI per le pose delle camere
 (oggi si misurano DA pose fisse e non le migliorano) — resta il pezzo grosso.
-Scoperto e non chiuso: manca la scheda di manuale di `edit-acquire`.
+Scoperto lì e poi chiuso: la scheda di manuale di `edit-acquire` (scritta
+2026-08-13, con la sezione sulla calibrazione del piatto).
 
 **Fronte (dal 2026-07): canale di acquisizione parametrica — SOSTANZIALMENTE
 CONSEGNATO.** Da foto su giradischi a geometria Ridley nativa, senza scanner.

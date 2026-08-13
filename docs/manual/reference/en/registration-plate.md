@@ -84,6 +84,33 @@ you glue them.
 it over the spindle, and the plate is centred and coaxial with the rotation — which
 is the one thing the turntable machinery assumes and otherwise has to discover.
 
+## The plate you printed is not the plate in the file
+
+It is close, and it is not the same. A ⌀300 disc warps as it cools; paper glued
+to a base lifts where the glue is thin; a printer lays its ink a hair off. On the
+first ⌀300 plate we measured, three of the twelve marks stood more than a
+millimetre out of the plane — worst 1.63mm — while the other nine were within a
+quarter.
+
+That error hides. A plate that sits crooked, off-centre or wobbling is absorbed
+entirely: it is just a different camera pose, and every photograph solves its
+own. But a plate whose *marks are not where the model says* is a ruler with the
+wrong numbers on it, and what it produces is a residual that changes as the plate
+turns — because a mark standing proud of the plane projects differently depending
+which way the camera looks across it.
+
+So the plate is **measured**, not assumed. In a registered session, `C` in
+`edit-acquire` triangulates every mark from every view that saw it and files the
+result under `~/.ridley/plates/`, keyed by diameter and crown count. From then on
+every session that says `(registration-plate :d 300)` measures against the plate
+you actually own. You calibrate once, per plate, not per session.
+
+The measurement takes the plate's **shape** and leaves its **size** alone, and
+that division is not a shortcut — it is what photographs can and cannot see. A
+plate 5% larger, photographed 5% further away, makes exactly the same image; no
+number of views separates them. Scale comes from `:d` and from a caliper. Only
+the shape comes from the pictures.
+
 ## Notes
 
 - The marked face's normal is `+Z`, and that is also the turntable axis after

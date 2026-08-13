@@ -61,6 +61,7 @@
             [ridley.photogrammetry.blob-detect :as blob-detect]
             [ridley.photogrammetry.match-plate :as match-plate]
             [ridley.photogrammetry.plate-focal :as plate-focal]
+            [ridley.photogrammetry.plate-calib :as plate-calib]
             [ridley.photogrammetry.match :as match]
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
@@ -2382,6 +2383,200 @@
                 (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px")))))
     (set-status-message! "Rifinitura: nessuna foto caricata.")))
 
+;; ============================================================
+;; Plate calibration — measuring the plate instead of trusting it
+;; ============================================================
+;;
+;; Every measurement in this channel is referred to the registration plate, and
+;; until now the plate was assumed perfect: the marks were wherever
+;; `registration-plate` computed them. A printed one is not. Measured on the
+;; ⌀300 plate on 2026-08-13, over twelve registered views: three marks stood
+;; more than a millimetre out of the plane (worst 1.63mm), the rest within a
+;; quarter. That is the residual nothing could explain — it changed with the
+;; plate's rotation, because a mark that stands proud of the plane projects
+;; differently depending which way the camera looks across it.
+;;
+;; Vincenzo's call, and the right one: 'stampare un piatto perfetto è
+;; difficilissimo, per me e per chiunque provasse a utilizzare questa feature'.
+;; So the plate stops being an assumption and becomes a measurement, like
+;; everything else here.
+;;
+;; WHERE IT IS KEPT. Not in the session and not in the source: in
+;; ~/.ridley/plates/, keyed by diameter and crown count. The calibration
+;; describes a physical object that outlives any one session — you print a
+;; plate, you calibrate it once, and every session that says
+;; `(registration-plate :d 300)` from then on is measuring against the plate you
+;; actually own. The session keeps its own copy in acquire-state.json so its
+;; numbers stay reproducible even if the store is later overwritten by a
+;; re-print.
+
+(defn- plate-store-path
+  "Where this plate's calibration is filed: ~/.ridley/plates/plate-300mm-12.json.
+   nil when the proxy is not a plate, or is one from before :plate-d existed."
+  []
+  (let [{:keys [plate-d plate-marks]} (:proxy-mesh @session)]
+    (when (and plate-d plate-marks)
+      (str (stl/expand-home "~/.ridley/plates/")
+           "plate-" (js/Math.round plate-d) "mm-" plate-marks ".json"))))
+
+(defn- crown-ids
+  "The proxy's crown marks in PICK ORDER — the same order bridge/pnp-target-points
+   uses, so index i here is pick index i everywhere else."
+  []
+  (vec (sort (keys (dissoc (:anchors (:proxy-mesh @session)) :zero)))))
+
+(defn- apply-plate-calibration!
+  "Move the proxy's crown anchors to `obj-positions` (object frame, pick order).
+
+   This is the ONLY place the calibration needs to touch, and that is the point:
+   every consumer — the PnP targets, the auto-detector's crown model, the drawn
+   dots, the joint refine — reads the marks off the proxy, so correcting the
+   proxy corrects all of them at once. The mesh's vertices are left alone; the
+   disc is still a disc, it is where the marks sit on it that was wrong."
+  [obj-positions]
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])]
+    ;; Whatever is about to be overwritten is the MODEL's crown — remember it
+    ;; once, the first time anything overwrites it. Every later run measures
+    ;; from the model rather than from the previous measurement, so a second
+    ;; calibration is a fresh reading of the plate and not a correction of a
+    ;; correction, and its report says how far the PLATE is from the drawing
+    ;; instead of how far this run drifted from the last one.
+    (when-not (:plate-nominal @session)
+      (swap! session assoc :plate-nominal
+             (mapv (fn [id] (bridge/world->local
+                             proxy-pose
+                             (get-in @session [:proxy-mesh :anchors id :position])))
+                   (crown-ids))))
+    (swap! session update-in [:proxy-mesh :anchors]
+           (fn [anchors]
+             (reduce (fn [a [id obj]]
+                       (assoc-in a [id :position] (bridge/local->world proxy-pose obj)))
+                     anchors
+                     (map vector (crown-ids) obj-positions))))))
+
+(defn- calibration-views
+  "The registered photos as plate-calib wants them, or nil if there aren't
+   enough. Same construction as the joint refine, including the exclusion of
+   picks the per-photo solve already rejected — a pick known to be wrong must not
+   get a vote on where a mark IS, of all things."
+  [iw ih]
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        k (session-intrinsics iw ih)]
+    (vec (keep (fn [idx]
+                 (let [dropped (set (get-in @session [:pnp-outliers idx] #{}))
+                       picks (remove (fn [[ci _]] (dropped ci))
+                                     (get-in @session [:pnp-picks idx] {}))
+                       cam (get-in @session [:camera-poses idx])]
+                   (when (and cam (>= (count picks) 6))
+                     {:idx idx
+                      :intrinsics k
+                      :pose (bridge/editor->solver-pose cam proxy-pose)
+                      :picks (into {} (for [[ci {:keys [px]}] picks] [ci px]))})))
+               (range (count (:photos @session)))))))
+
+(defn- save-plate-calibration!
+  "File the calibration under the plate it describes. Best-effort: the session's
+   own copy (acquire-state.json) is what makes this run reproducible, so a store
+   that cannot be written is worth a console line and nothing more."
+  [calib]
+  (if-let [path (plate-store-path)]
+    (-> (stl/desktop-write-file (js/JSON.stringify (clj->js calib)) path)
+        (.then (fn [_] (auto-log! (str "  archiviata in " path
+                                       " — vale anche per le prossime sessioni con questo piatto"))))
+        (.catch (fn [err] (js/console.warn "edit-acquire: couldn't save the plate calibration" err))))
+    ;; A proxy that cannot say which plate it is (an older `acquire` form, or a
+    ;; hand-built mesh with :anchors) still gets calibrated — the session keeps
+    ;; its own copy — but there is nowhere to file it, and saying so is better
+    ;; than letting the user believe the plate is now calibrated for good.
+    (auto-log! (str "  NON archiviata: questo proxy non dice quale piatto è. "
+                    "Vale per questa sessione; per renderla permanente riapri con "
+                    "(registration-plate :d <diametro>)."))))
+
+(defn- on-calibrate-plate!
+  "'C': measure where this plate's marks really are, and use them from now on.
+
+   Needs a session that is already registered and refined — the calibration reads
+   the poses, so it inherits whatever is wrong with them. Run it after 'R'."
+  []
+  (cond
+    (not (plate-proxy?))
+    (set-status-message! "La calibrazione (C) è solo per il piatto di registrazione.")
+
+    (nil? (backdrop/image-size))
+    (set-status-message! "Calibrazione: nessuna foto caricata.")
+
+    :else
+    (let [[iw ih] (backdrop/image-size)
+          views (calibration-views iw ih)
+          targets (pnp-targets)
+          ;; the marks as the MODEL has them, never as a previous run left them
+          ;; (see apply-plate-calibration!): each calibration is a fresh reading
+          ;; of the plate, measured from the drawing
+          nominal (or (:plate-nominal @session) (mapv :obj targets))
+          n-marks (count nominal)
+          ;; a mark nobody clicked has no rays; calibrate refuses on it, but the
+          ;; refusal is much more useful once it can name the mark
+          seen (frequencies (mapcat (comp keys :picks) views))
+          thin (filterv #(< (get seen % 0) 2) (range n-marks))]
+      (cond
+        (< (count views) 3)
+        (set-status-message!
+         (str "Calibrazione: servono almeno 3 foto registrate con ≥6 mark ciascuna "
+              "(ne ho " (count views) "). Registra ('a' o 'p') e rifinisci ('R') prima."))
+
+        (seq thin)
+        (set-status-message!
+         (str "Calibrazione: " (if (= 1 (count thin)) "il mark " "i mark ")
+              (str/join ", " (map #(:label (nth targets %)) thin))
+              (if (= 1 (count thin)) " è visto" " sono visti")
+              " da meno di due foto — senza due raggi non ha una posizione. "
+              "Gira il piatto e registra una foto in più."))
+
+        :else
+        (let [r (plate-calib/calibrate views nominal)]
+          (if (:error r)
+            (do (auto-log! "=== calibrazione del piatto: RIFIUTATA ===")
+                (auto-log! (str "  " (:error r)))
+                (set-status-message! (str "Calibrazione rifiutata: " (:error r))))
+            (let [{:keys [marks poses deviation-mm out-of-plane-mm radial-mm
+                          worst-mm rms-before rms-after]} r
+                  proxy-pose (get-in @session [:proxy-mesh :creation-pose])]
+              (apply-plate-calibration! marks)
+              ;; adopt the poses the calibration re-solved against the measured
+              ;; plate — leaving the old ones would show the corrected marks under
+              ;; cameras that were fitted to the wrong ones
+              (doseq [[view pose] (map vector views poses)]
+                (when pose
+                  (swap! session assoc-in [:camera-poses (:idx view)]
+                         (bridge/solver-pose->camera pose proxy-pose))))
+              (auto-log! (str "=== calibrazione del piatto: " (count views) " foto ==="))
+              (auto-log! (str "  riproiezione " (modal/fmt-number rms-before)
+                              " → " (modal/fmt-number rms-after) " px"))
+              (doseq [[i d op rad] (map vector (range) deviation-mm out-of-plane-mm radial-mm)]
+                (when (> d 0.2) ; below this it is click noise, not a plate
+                  (auto-log! (str "    " (:label (nth targets i)) ": "
+                                  (modal/fmt-number op) " mm fuori piano, "
+                                  (modal/fmt-number rad) " mm in raggio"))))
+              (auto-log! (str "  il piatto è ora MISURATO: scostamento massimo "
+                              (modal/fmt-number worst-mm) " mm"))
+              (save-plate-calibration!
+               {:d (:plate-d (:proxy-mesh @session))
+                :marks n-marks
+                :obj marks
+                :worst-mm worst-mm
+                :rms-before rms-before
+                :rms-after rms-after
+                :views (count views)
+                :measured-on (.toISOString (js/Date.))})
+              (swap! session assoc :plate-calib {:obj marks :worst-mm worst-mm
+                                                 :views (count views)})
+              (save-acquire-state!)
+              (enter-photo! (:current-idx @session))
+              (set-status-message!
+               (str "Piatto calibrato su " (count views) " foto: scostamento massimo "
+                    (modal/fmt-number worst-mm) " mm, riproiezione "
+                    (modal/fmt-number rms-before) " → " (modal/fmt-number rms-after) " px")))))))))
+
 (defn- on-auto-register!
   "Plate 'a': register every UNREGISTERED photo with zero clicks (fetta C), then fill
    any leftovers with the ring. First pass = detect+identify+PnP per photo,
@@ -3619,7 +3814,30 @@
                            "distingue una focale sbagliata da una distanza sbagliata; "
                            "tutte insieme sì."))
                 (.addEventListener r "click" (fn [_] (on-refine-session!)))
-                (.appendChild box r))))))
+                (.appendChild box r)))
+            ;; Calibration reads the poses, so it is only worth offering once
+            ;; there are enough of them to be worth reading — three is the
+            ;; minimum plate-calib will accept, and three is already thin.
+            (when (>= (count (filter #(>= (count (second %)) 6) (:pnp-picks @session))) 3)
+              (let [c (.createElement js/document "button")]
+                (set! (.-type c) "button")
+                (set! (.-textContent c)
+                      (if (:plate-calib @session)
+                        "Ricalibra il piatto (C)"
+                        "Calibra il piatto (C)"))
+                (set! (.-title c)
+                      (str "Misura dove stanno DAVVERO i dischetti di questo piatto, "
+                           "invece di fidarsi del modello. Un piatto stampato si imbarca: "
+                           "sul ⌀300 misurato tre mark stavano oltre un millimetro fuori "
+                           "dal piano. Da fare dopo la rifinitura (R), perché legge le pose. "
+                           "Il risultato resta legato al piatto, non alla sessione: vale "
+                           "anche per le prossime."
+                           (when-let [pc (:plate-calib @session)]
+                             (str "\n\nGià calibrato: scostamento massimo "
+                                  (modal/fmt-number (:worst-mm pc)) " mm su "
+                                  (:views pc) " foto."))))
+                (.addEventListener c "click" (fn [_] (on-calibrate-plate!)))
+                (.appendChild box c))))))
 
       (batch-mode?)
       (render-pnp-batch-panel! box)
@@ -4037,7 +4255,8 @@
 
     (plate-proxy?)
     (str "Piatto di registrazione: 'a' registra da sola tutte le foto (rilevamento della corona), "
-         "'p' per quelle che non ce la fanno, 'R' rifinisce focale e pose insieme. "
+         "'p' per quelle che non ce la fanno, 'R' rifinisce focale e pose insieme, "
+         "'C' misura il piatto stesso (una volta per piatto, vale anche per le prossime sessioni). "
          "Grab (o 'g') aggiunge una vista dal vivo, già registrata. "
          "'v' nasconde/mostra il proxy per leggere la foto sotto.")
 
@@ -4265,6 +4484,13 @@
           (do (.preventDefault e) (.stopPropagation e)
               (on-refine-session!))
 
+          ;; capital C for the same reason as R: calibrating the plate rewrites
+          ;; the reference every measurement in the session is against, so it is
+          ;; not something to trip into while reaching for a lowercase key
+          (and (not retrace?) (not mark?) (= key "C"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (on-calibrate-plate!))
+
           (and (pos? n) (= key "]"))
           (do (.preventDefault e) (.stopPropagation e)
               (enter-photo! (mod (inc idx) n))))))))
@@ -4362,7 +4588,14 @@
                                           ;; current mark face, so they survive
                                           ;; exit/re-entry like the retrace does.
                                           :marks (:marks @session)
-                                          :mark-plane (:mark-plane @session)}))
+                                          :mark-plane (:mark-plane @session)
+                                          ;; The measured plate ('C'). Also filed
+                                          ;; under ~/.ridley/plates/, which is the
+                                          ;; copy other sessions read — this one is
+                                          ;; here so THIS session's numbers stay
+                                          ;; reproducible even after the plate is
+                                          ;; re-printed and the store overwritten.
+                                          :plate-calib (:plate-calib @session)}))
         path (acquire-state-path)]
     (swap! save-chain
            (fn [prev]
@@ -4374,7 +4607,7 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane plate-calib]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
           int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
@@ -4448,6 +4681,15 @@
                           (:position old-pose) (:heading old-pose) (:up old-pose)
                           (:position proxy-pose) safe-heading safe-up)]
           (swap! session assoc :proxy-mesh new-mesh)))
+      ;; The measured plate ('C'), restored AFTER the proxy pose above: the
+      ;; calibration is stored in the OBJECT frame and lifted through the current
+      ;; pose, so applying it before the proxy has moved would put the marks where
+      ;; the plate used to be.
+      (when-let [obj (seq (:obj plate-calib))]
+        (swap! session assoc :plate-calib {:obj (mapv vec obj)
+                                           :worst-mm (:worst-mm plate-calib)
+                                           :views (:views plate-calib)})
+        (apply-plate-calibration! (mapv vec obj)))
       (doseq [[idx-kw {:keys [camera-pose matched rms-px manual?]}] photos]
         (let [idx (js/parseInt (name idx-kw))]
           (cond
@@ -4473,6 +4715,42 @@
   (-> (stl/desktop-read-file (acquire-state-path))
       (.then apply-loaded-state!)
       (.catch (fn [_] nil)))) ;; no file yet (first snap of a fresh session) — fine
+
+(defn- load-plate-calibration!
+  "Adopt the stored calibration for this plate, if there is one and this session
+   hasn't measured its own.
+
+   This is what makes calibrating worth doing: the plate is a physical object you
+   own, so measuring it once should improve every session you shoot on it, not
+   just the one where you pressed 'C'. The store is keyed by diameter and crown
+   count — which is also its limit, and why the adoption is ANNOUNCED rather than
+   silent: re-print a ⌀300 plate and the old plate's warp is still on file under
+   the new one's name. Saying so on entry is what lets you notice; deleting the
+   file under ~/.ridley/plates/ is how you discard it.
+
+   Always resolves — a session with no stored calibration is the normal case."
+  []
+  (let [path (plate-store-path)]
+    (if (or (:plate-calib @session) (not (plate-proxy?)) (nil? path))
+      (js/Promise.resolve nil)
+      (-> (stl/desktop-read-file path)
+          (.then (fn [text]
+                   (let [c (js->clj (js/JSON.parse text) :keywordize-keys true)
+                         obj (mapv vec (:obj c))]
+                     ;; a store written for a different crown cannot be applied to
+                     ;; this one mark-for-mark; ignore it rather than guess
+                     (when (= (count obj) (count (crown-ids)))
+                       (swap! session assoc :plate-calib
+                              {:obj obj :worst-mm (:worst-mm c) :views (:views c)})
+                       (apply-plate-calibration! obj)
+                       (auto-log! (str "piatto MISURATO da una sessione precedente: scostamento "
+                                       "massimo " (modal/fmt-number (:worst-mm c)) " mm su "
+                                       (:views c) " foto"
+                                       (when-let [d (:measured-on c)]
+                                         (str ", " (subs d 0 10)))
+                                       ". Se hai ristampato il piatto, cancella "
+                                       path))))))
+          (.catch (fn [_] nil))))))
 
 ;; ============================================================
 ;; `acquire` — the emitted directive (P4a-1). Reference-citizen shape of the
@@ -5680,6 +5958,9 @@
                  ;; fresh session.
                  (-> (load-exif-focal! (first photos))
                      (.then (fn [_] (load-acquire-state!)))
+                     ;; then the plate itself: a calibration this session already
+                     ;; carries wins, otherwise the one filed under the plate
+                     (.then (fn [_] (load-plate-calibration!)))
                      (.then (fn [_]
                               ;; Put the object in a standard, intuitive pose (upright,
                               ;; turntable axis → world +Z, at the build turtle) AFTER

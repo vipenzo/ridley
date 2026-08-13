@@ -68,6 +68,7 @@ If you printed the plate on paper, correct it for what the printer actually did:
 | `p` | register this photograph by clicking marks |
 | `f` | fill the remaining photographs from the ones already registered |
 | `R` | refine one focal and every pose **together** — do this once you have four |
+| `C` | measure the plate itself — once per plate, after `R` |
 | `g` | grab a frame from a live camera and register it on the spot |
 | `d` | trace an outline on a declared face |
 | `k` | place a named mark · `m` arm the physical marker |
@@ -89,6 +90,41 @@ building on — but read it knowing what it cannot tell you:
 - **A joint refine that changes nothing is accusing the measurements**, not the
   poses. If `R` moves the residual by a few percent, the picks themselves are
   wrong somewhere, and the per-photograph lines it prints will say which one.
+- **A residual that will not come down, and swings from photograph to
+  photograph, is usually the plate.** See below.
+
+## Measuring the plate — `C`
+
+Everything here is measured against the registration plate, and until you press
+`C` the plate is an assumption: the marks are wherever `registration-plate`
+computed them. A printed plate does not oblige. On the first ⌀300 we measured,
+three marks stood over a millimetre out of the plane and nine were within a
+quarter — and that is what a residual which changes as the plate turns looks
+like, since a mark standing proud projects differently depending which way the
+camera looks across it.
+
+`C` triangulates every mark from every view that saw it, re-solves the poses
+against what it found, and repeats. It reports each mark's deviation split two
+ways — out of the plane, and along the radius — because those mean different
+things: the first is a warped plate, the second a print that came out the wrong
+size or shape.
+
+Three things are worth knowing before you use it:
+
+- **Run it after `R`.** It reads the poses, so it inherits whatever is wrong with
+  them.
+- **It is filed under the plate, not the session** — `~/.ridley/plates/`, keyed by
+  diameter and crown count. Every later session that declares the same plate picks
+  it up and says so on entry. If you re-print that plate, delete the file: the
+  store cannot tell two ⌀300 plates apart, and it will announce the one it has.
+- **It measures shape, never size.** A plate 5% larger photographed 5% further
+  away makes the identical image, so no set of views can separate them. Scale
+  stays with `:d` and a caliper.
+
+If the result would move a mark more than 3% of the crown radius, `C` refuses
+instead of reporting. A deviation that large is not a plate that is out of true —
+it is a registration that went wrong upstream, and adopting it would refer every
+later measurement to a ruler invented to fit a mistake.
 
 ## Notes
 

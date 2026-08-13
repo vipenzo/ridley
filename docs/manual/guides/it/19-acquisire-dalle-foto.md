@@ -98,6 +98,24 @@ Si apre una sessione sul viewport: una pellicola di miniature mostra le foto, co
 
 Per le foto rimaste indietro ci sono due rifiniture. Il tasto `f` propaga la registrazione lungo l'anello del girevole: conoscendo gli angoli della sessione, predice la posa delle foto non registrate da quelle vicine già registrate. Il tasto `p` è la registrazione manuale per corrispondenze: armi un punto noto del proxy, clicchi dove sta nella foto, e con almeno sei corrispondenze il software risolve la posa in forma chiusa. Se una corrispondenza ha l'identità sbagliata, il fit la individua, la scarta e te la segnala in rosso perché tu la riclicchi.
 
+Quando quattro o cinque foto sono registrate, il tasto `R` rifinisce **insieme** una sola focale e tutte le pose, sui click che hai già fatto. Una foto da sola non sa distinguere una focale sbagliata da una distanza sbagliata: le assorbe l'una nell'altra e riporta un residuo pulito comunque. Tutte insieme sì, perché l'obiettivo è uno e le distanze sono tante.
+
+### Misurare il piatto — il tasto `C`
+
+Tutto quello che misuri in questo capitolo è misurato **rispetto al piatto**, e fino a qui il piatto è un'ipotesi: i dischetti stanno dove li ha calcolati `registration-plate`. Un piatto stampato non è d'accordo. Sul primo ⌀300 che abbiamo misurato, tre dischetti su dodici stavano più di un millimetro fuori dal piano — il peggiore 1.63 mm — e gli altri nove entro un quarto di millimetro. Un disco da 30 cm si imbarca raffreddandosi, la carta si solleva dove la colla è poca, la stampante posa l'inchiostro un capello più in là.
+
+Quell'errore non si vede come errore. Un piatto storto, scentrato o che balla viene assorbito del tutto: è solo una posa di camera diversa, e ogni foto risolve la sua. Ma un piatto i cui **dischetti non stanno dove dice il modello** è un righello con i numeri sbagliati sopra, e quello che produce è un residuo che *cambia mentre il piatto gira* — perché un dischetto che sporge dal piano si proietta in modo diverso a seconda da che parte lo guardi.
+
+Quindi il piatto si misura. Con la sessione registrata e rifinita, il tasto `C` (bottone **Calibra il piatto**) triangola ogni dischetto da tutte le foto che lo hanno visto, ririsolve le pose su quello che ha trovato, e ripete. Nel pannello REPL scrive quanto si è spostato ogni dischetto, diviso in due: *fuori piano* e *in raggio*. Sono due difetti diversi — il primo è un piatto imbarcato, il secondo una stampa venuta di forma o misura sbagliata.
+
+Tre cose da sapere:
+
+- **Fallo dopo `R`**, perché legge le pose: si porta dietro quello che c'è di sbagliato in loro.
+- **Il risultato resta legato al piatto, non alla sessione.** Finisce in `~/.ridley/plates/`, archiviato per diametro e numero di dischetti, e ogni sessione futura che dichiara lo stesso piatto se lo prende e te lo dice all'apertura. Un piatto si calibra **una volta sola**, non una volta per sessione. Se ristampi quel piatto, cancella quel file: l'archivio non sa distinguere due piatti da 300, e ti annuncerebbe quello vecchio.
+- **Misura la forma, mai la dimensione.** Un piatto più grande del 5%, fotografato da una distanza maggiore del 5%, produce esattamente la stessa immagine: nessun numero di foto può separarli. La dimensione resta affare di `:d` e del calibro (vedi 19.2).
+
+Se il risultato vorrebbe spostare un dischetto di più del 3% del raggio della corona, `C` si rifiuta invece di riportarlo. Uno spostamento così non è un piatto storto: è una registrazione andata male a monte, e adottarlo vorrebbe dire riferire tutte le misure successive a un righello inventato per far quadrare uno sbaglio.
+
 Il proxy non deve per forza essere il piatto. Se il piatto non c'è (una sessione vecchia, un oggetto troppo grande), l'ancora può essere una scatola di ingombro misurata col calibro:
 
 ```clojure

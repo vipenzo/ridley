@@ -15,6 +15,7 @@
    survives each one."
   (:require [cljs.test :refer [deftest is testing]]
             [ridley.photogrammetry.plate :as plate]
+            [ridley.photogrammetry.bridge :as bridge]
             [ridley.turtle.attachment :as attachment]
             [ridley.math :as m]))
 
@@ -86,3 +87,27 @@
                                    (:heading (:creation-pose m))
                                    (:up (:creation-pose m))
                                    [0 0 0] [0 0 1] [0 1 0])))))))))
+
+(deftest crown-ids-sort-into-pick-order
+  (testing "sorting the crown's keys reproduces the solver's pick order
+
+   edit-acquire's plate calibration writes measured positions back onto the
+   anchors by zipping `(sort (keys anchors))` against the calibration's vector,
+   whose index i means 'pick index i' — and pick index i is whatever
+   bridge/pnp-target-points put at position i. Those two orders are established
+   in different files by different means (a sort of keywords here, a sort-by key
+   over map entries there), so nothing but this test says they agree.
+
+   If they ever disagree the failure is silent and total: every mark gets another
+   mark's measured position, the plate stays plausible, and every measurement
+   afterwards is wrong by a rotation of the crown."
+    (doseq [d [130.0 300.0]]
+      (let [mesh (plate/registration-plate :d d)
+            by-sort (vec (sort (keys (dissoc (:anchors mesh) :zero))))
+            by-targets (mapv :id (bridge/pnp-target-points
+                                  mesh
+                                  {:position [0.0 0.0 400.0]
+                                   :heading [0.0 0.0 -1.0] :up [0.0 1.0 0.0]}))]
+        (is (= by-sort by-targets)
+            (str "⌀" d ": the crown's sorted keys are not the solver's pick order"))
+        (is (= :m00 (first by-sort)) "and pick 0 is the mark the zero-index names")))))
