@@ -470,3 +470,33 @@
       (is (some? (:error fit)))
       (is (re-find #"stesse zone" (:error fit))
           (str "expected the mis-pairing to be named, got: " (:error fit))))))
+
+(deftest an-edges-reported-residual-is-the-distance-between-the-LINES
+  (testing "not between the two origins, which are wherever the painting started
+
+   The report is what a user acts on, so measuring the wrong quantity there is
+   not cosmetic. Edges were first reported through the point branch, and a
+   perfectly matched pair came back at 12-20mm with an rms of 13mm — numbers that
+   described only where two people began their strokes, under a fit that was
+   sound (Vincenzo 2026-08-14). He read them as a bad fusion, which is exactly
+   what they looked like.
+
+   Here the two twins are the SAME line with their stored positions slid 40mm
+   apart along it. The residual must be zero."
+    (let [dir [0.6 0.8 0.0]
+          slid (mapv #(* 40.0 %) dir)
+          fit (fuse/fit-rigid
+               [(anchor :sopra [0 0 0] [0 0 1])
+                (anchor :fianco [45 3 2] [1 0 0])
+                ;; same physical line; the 'from' side starts 40mm further along
+                (let [e (edge-anchor :spigolo [10 -5 -6] dir)]
+                  (assoc e :from-pos (mapv + (:from-pos e) slid)))])
+          row (first (filter #(= :spigolo (:name %)) (:per-anchor fit)))]
+      (is (nil? (:error fit)) (:error fit))
+      (is (= :spigolo (:kind row)) "and it must be reported AS an edge")
+      (is (< (:residual-mm row) 1e-6)
+          (str "slid 40mm along its own line, the residual must stay 0, got "
+               (:residual-mm row)))
+      (is (< (:rms-mm fit) 1e-6)
+          (str "and the rms is built from those, so it must not inherit the slide: "
+               (:rms-mm fit))))))

@@ -179,15 +179,86 @@
             t (la/v-sub (centroid pt) (la/mat*vec R (centroid pf)))]
         {:R R :t t}))))
 
-(defn- seed-once
-  "The seed for ONE sign assignment: planes first, so that when the plane marks
-   alone determine the motion the origins are never consulted."
+(defn- directed?
+  "Does this anchor carry a DIRECTION that a rotation must carry onto its twin —
+   a plane's normal or an edge's own direction? Both are sign-free lines, and both
+   seed the rotation the same way. A point carries none."
+  [a]
+  (or (plane-anchor? a) (edge-anchor? a)))
+
+(defn- seed-from-directions
+  "Closed-form (R, t) from any two non-parallel DIRECTIONS — plane normals, edge
+   directions, or one of each — with the translation from whatever each anchor
+   constrains.
+
+   `seed-from-planes` covers the three-plane case and needs three; below that it
+   returns nil, and the fallback was `seed-from-points`, which compares ORIGINS.
+   For an edge the origin is where the painting began: slide it 40mm along its own
+   line, which changes nothing about the object, and the seed lands in a different
+   basin — measured, a fit that was exact came back 210mm away (2026-08-14). An
+   edge must seed from its direction, like the plane it is standing in for.
+
+   Translation rows: a plane pins `n · t`; an edge pins `t` along the two
+   directions ACROSS itself, and nothing along its length."
   [anchors]
-  (or (seed-from-planes anchors)
-      (when (>= (count anchors) 2) (seed-from-points anchors))))
+  (let [ds (filterv directed? anchors)]
+    (when (>= (count ds) 2)
+      (let [nf (mapv #(m/normalize (:from-dir %)) ds)
+            nt (mapv #(m/normalize (:to-dir %)) ds)
+            ;; the two most nearly perpendicular make the sturdiest triad
+            [i j] (first (sort-by (fn [[i j]] (js/Math.abs (m/dot (nth nt i) (nth nt j))))
+                                  (for [i (range (count ds)) j (range (inc i) (count ds))]
+                                    [i j])))
+            Ff (triad (nth nf i) (nth nf j))
+            Ft (triad (nth nt i) (nth nt j))]
+        (when (and Ff Ft)
+          (let [R (la/mat*mat Ft (la/transpose Ff))
+                ;; one row per constrained direction
+                cons- (mapcat (fn [a]
+                                (let [n (m/normalize (:to-dir a))
+                                      rhs-of (fn [u] [(vec u)
+                                                      (m/dot (la/v-sub (:to-pos a)
+                                                                       (la/mat*vec R (:from-pos a)))
+                                                             u)])]
+                                  (if (edge-anchor? a)
+                                    ;; across the line, both ways; never along it
+                                    (let [k (apply min-key #(js/Math.abs (nth n %)) [0 1 2])
+                                          u1 (m/normalize (m/cross n (assoc [0.0 0.0 0.0] k 1.0)))
+                                          u2 (m/cross n u1)]
+                                      [(rhs-of u1) (rhs-of u2)])
+                                    [(rhs-of n)])))
+                              ds)
+                rows (mapv first cons-)
+                rhs (mapv second cons-)
+                A (la/transpose rows)]
+            (when-let [t (la/solve (la/mat*mat A rows) (la/mat*vec A rhs))]
+              {:R R :t t})))))))
+
+(defn- seed-once
+  "The seed for ONE sign assignment: DIRECTIONS first — plane normals and edge
+   directions — so that when they determine the motion the origins are never
+   consulted. Origins are the last resort, and only over anchors whose origin is
+   actually a claim (see seed-from-directions)."
+  [anchors]
+  ;; Deliberately surgical. With no edges among the anchors this is exactly what
+  ;; it always was, down to which anchors seed-from-points sees — a broader
+  ;; reordering was tried and it moved cases that had been settled for months.
+  ;; What changes is only what an EDGE is allowed to contribute: never its
+  ;; origin, which is where the painting began.
+  (let [pts (if (some edge-anchor? anchors)
+              (filterv (complement edge-anchor?) anchors)
+              anchors)]
+    (or (seed-from-planes anchors)
+        (when (>= (count pts) 2) (seed-from-points pts))
+        (seed-from-directions anchors))))
 
 (defn- flip-planes
-  "The anchors with the plane normals selected by `mask` turned around."
+  "The anchors with the DIRECTIONS selected by `mask` turned around.
+
+   Edges are enumerated alongside planes: their direction is sign-free too (a
+   stroke painted from either end is the same line), so the residual does not
+   care — but the SEED does, because a triad built from the flipped direction
+   lands in a different basin. Enumerating is how the right basin is reached."
   [anchors mask]
   (let [idx (into {} (map-indexed (fn [i a] [(:name a) i]) (filterv plane-anchor? anchors)))]
     (mapv (fn [a] (if (and (plane-anchor? a) (bit-test mask (get idx (:name a) 0)))
@@ -294,11 +365,23 @@
 
    Without it the fusion picked a branch per session pair and the loop did not
    close — 33 mm around A→B→C→A on Vincenzo's own three sessions (2026-08-06),
-   with every pairwise report claiming a perfect fit."
+   with every pairwise report claiming a perfect fit.
+
+   An EDGE contributes only the part ACROSS its line. Its origin is where the
+   painting began and slides freely along it, so the along-line component is not
+   merely untrustworthy — it is arbitrary, and it can be as large as the branch
+   separation this is trying to read. Measured: an edge whose twin started 40mm
+   further along the same line moved the chosen branch and put 2.9mm into a fit
+   that should have been exact. Across the line the number is still trustworthy,
+   and still tells the branches apart."
   [rt anchors]
   (Math/sqrt (/ (reduce + 0.0
-                        (map (fn [{:keys [from-pos to-pos]}]
-                               (let [d (la/v-sub (transform-point rt from-pos) to-pos)]
+                        (map (fn [{:keys [from-pos to-pos to-dir] :as a}]
+                               (let [d (la/v-sub (transform-point rt from-pos) to-pos)
+                                     d (if (edge-anchor? a)
+                                         (let [t (m/normalize to-dir)]
+                                           (la/v-sub d (la/v-scale t (m/dot d t))))
+                                         d)]
                                  (m/dot d d)))
                              anchors))
                 (max 1 (count anchors)))))
@@ -309,7 +392,7 @@
    The residual no longer cares which way a plane's normal points, but the
    closed-form seed does: it composes triads out of those very vectors, and a
    normal pointing the other way is a different branch entirely. The signs are
-   few and discrete (2^k over the planes), so they are enumerated rather than
+   few and discrete (2^k over the directed anchors), so they are enumerated rather than
    guessed: build the seed for each assignment, keep those that fit the planes
    as well as the best one does, and among THOSE take the one that puts the
    object where the origins say it is."
@@ -379,28 +462,46 @@
                     :votes (outward-votes rt anchors)}))))))
 
 (defn- per-anchor
-  "What each anchor costs after the fit. For a plane: its distance from the twin
-   PLANE (mm) and how far the normal is turned (degrees) — deliberately NOT how
-   far the two origins ended up from each other, which is not an error. For a
-   point: the full distance between the origins.
+  "What each anchor costs after the fit — each measured against WHAT IT CLAIMS,
+   which is the whole point of the table.
 
-   This is the table that lets a wrong twin be found instead of averaged in."
+     plane    distance from the twin PLANE, and how far the normal is turned.
+              Deliberately NOT how far the two origins ended up from each other,
+              which is not an error.
+     edge     distance between the two LINES, and how far the directions are
+              turned. Also not the distance between the two origins: an edge's
+              origin is wherever the painting started and slides freely along it.
+     point    the full distance between the origins, because there the origin IS
+              the claim.
+
+   Getting this wrong is not cosmetic. Edges were reported as points at first,
+   and the numbers that came back — 12 to 20 mm on correctly matched edges, and
+   an rms of 13 mm computed from them — described nothing but where two people
+   happened to start painting (Vincenzo 2026-08-14). The fit underneath was
+   sound; only the report was measuring a quantity the geometry never claimed."
   [rt anchors]
   (mapv (fn [{:keys [name from-pos to-pos from-dir to-dir] :as a}]
           (let [moved (transform-point rt from-pos)
+                d0 (la/v-sub moved to-pos)
                 plane? (plane-anchor? a)
-                d (if plane?
-                    (js/Math.abs (m/dot (la/v-sub moved to-pos) (m/normalize to-dir)))
-                    (la/v-norm (la/v-sub moved to-pos)))
-                ;; only a plane has an orientation to be wrong about; a point's
-                ;; :heading is not part of what it claims
-                ang (when (and plane? from-dir to-dir)
-                      ;; between LINES, not rays: a plane has no side
+                edge? (edge-anchor? a)
+                d (cond
+                    plane? (js/Math.abs (m/dot d0 (m/normalize to-dir)))
+                    ;; across the line only; along it costs nothing
+                    edge? (let [t (m/normalize to-dir)]
+                            (la/v-norm (la/v-sub d0 (la/v-scale t (m/dot d0 t)))))
+                    :else (la/v-norm d0))
+                ;; a point's :heading is not part of what it claims; a plane's and
+                ;; an edge's are, and both are read between LINES, not rays —
+                ;; neither has a side
+                ang (when (and (or plane? edge?) from-dir to-dir)
                       (let [c (max -1.0 (min 1.0 (js/Math.abs
                                                   (m/dot (transform-dir rt from-dir)
                                                          (m/normalize to-dir)))))]
                         (* (/ 180.0 Math/PI) (Math/acos c))))]
-            {:name name :kind (if plane? :piano :punto) :residual-mm d :normal-deg ang}))
+            {:name name
+             :kind (cond plane? :piano edge? :spigolo :else :punto)
+             :residual-mm d :normal-deg ang}))
         anchors))
 
 (defn- angle-deg [a b]
@@ -628,7 +729,12 @@
                     ;; only the normals carry information (they are 2 constraints
                     ;; each against 3 rotational unknowns, so they are checked
                     ;; from the third plane on).
-                        :distances-testify? (> (+ (count planes) (* 3 (count points))) 3)
+                    ;; An edge pins the translation along TWO directions (across
+                    ;; itself), so it testifies more than a plane and less than a
+                    ;; point.
+                        :distances-testify? (> (+ (count planes) (* 2 (count edges))
+                                                  (* 3 (count points)))
+                                               3)
                         :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
                         :max-mm (reduce max 0.0 ds)
                         ;; LEAVE-ONE-OUT, the same move the PnP makes on a

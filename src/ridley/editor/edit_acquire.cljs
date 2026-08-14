@@ -5418,61 +5418,58 @@
   (mapv (fn [[l a]] [l (:marks a) (:edges a)]) sessions))
 
 (defn- report-union!
-  "Print the fit the way mesh-board prints fidelity: the numbers that decide
-   whether to trust it, per anchor, in millimetres. A fused frame that is
-   quietly 2 mm out looks exactly like a good one until an extrusion misses the
-   object — so the residual is not optional output."
+  "Print the fit: the numbers first, and a line of advice only where a number is
+   actually bad.
+
+   It used to print four paragraphs every time, prose and all, whether or not
+   anything was wrong — and the reasoning that belongs in a docstring was being
+   read out loud on every Run (Vincenzo 2026-08-14: «sarebbe meglio evitare
+   romanzi nell'output di una funzione, torniamo dati e eventualmente suggerimenti
+   su cosa fare se ci sono problemi»). He is right, and the failure mode is worse
+   than verbosity: a warning that prints unconditionally stops being read, and
+   the one time it matters it scrolls past with the rest.
+
+   So: a table, a summary line, and nothing else unless a threshold is crossed.
+   The explanations live in the manual card, which is where a long argument can
+   be read once instead of every time."
   [dir fit]
-  (state/capture-println
-   (str ";; acquire-union · " dir " → frame della prima sessione\n"
-        (str/join "\n"
-                  ;; `str`, NOT clj->js: clj->js on a keyword keeps only its name,
-                  ;; which would silently drop the :A/ label that says WHICH
-                  ;; session's mark this line is about.
-                  (map (fn [{:keys [name kind residual-mm normal-deg]}]
-                         (str ";;   " name " (" (clj->js kind) ")  "
-                              (modal/fmt-number residual-mm) " mm"
-                              (when (= kind :piano) " dal piano")
-                              (when normal-deg (str "  ·  normale " (modal/fmt-number normal-deg) "°"))))
-                       (:per-anchor fit)))
-        "\n;;   rms " (modal/fmt-number (:rms-mm fit)) " mm dai piani · normali "
-        ;; The distance rms alone is not a verdict: with three planes it can
-        ;; always be driven to zero (three constraints, six unknowns), so it once
-        ;; printed 'rms 0 mm' under a fit whose normals were 152° out (Vincenzo
-        ;; 2026-08-06). The angle travels next to it, always.
-        "fuori di " (modal/fmt-number (:max-normal-deg fit)) "° al massimo · "
-        (:planes fit) " piani"
-        (when (pos? (:points fit)) (str " + " (:points fit) " punti"))))
-  (when (> (:max-normal-deg fit) 3.0)
+  (let [{:keys [rms-mm max-normal-deg per-anchor planes points edges
+                distances-testify? suspect]} fit
+        n (fn [x] (modal/fmt-number x))]
     (state/capture-println
-     (str ";; acquire-union: normali fuori di " (modal/fmt-number (:max-normal-deg fit))
-          "° — le zone combaciano come posizione ma non come ORIENTAMENTO. "
-          "Sopra i pochi gradi non è imprecisione: è una zona marcata male, o due "
-          "zone che non sono la stessa.")))
-  (when-not (:distances-testify? fit)
-    (state/capture-println
-     (str ";; acquire-union: con tre soli piani gli scarti in mm tornano zero per "
-          "costruzione (tre equazioni, tre incognite) — non sono una prova, e qui "
-          "l'unica prova sono le NORMALI. Un quarto piano, o un mark su un punto "
-          "vero (:point? true), mette alla prova anche i millimetri.")))
-  (when-let [s (:suspect fit)]
-    (state/capture-println
-     (str ";; acquire-union: togliendo " (:name s) " lo scarto crolla da "
-          (modal/fmt-number (:rms-mm fit)) " a " (modal/fmt-number (:rms-without s))
-          " mm — è quell'aggancio a essere sbagliato, non gli altri. I minimi "
-          "quadrati spalmano il danno su tutti, per questo nessuno sembrava "
-          "colpevole. Rifallo, o togli quel mark dalla fusione.")))
-  (when-let [w (fuse/worst-anchor (:per-anchor fit))]
-    (state/capture-println
-     (str ";; acquire-union: " (:name w) " si discosta dagli altri ("
-          (modal/fmt-number (:residual-mm w)) " mm). "
-          "O è misurato male in una delle due sessioni, o i due mark che hai "
-          "dichiarato uguali non sono la stessa zona fisica.")))
-  (when (> (:rms-mm fit) 1.0)
-    (state/capture-println
-     (str ";; acquire-union: " (modal/fmt-number (:rms-mm fit))
-          " mm di scarto è molto per una fusione — quello che disegni su una "
-          "sessione cadrà storto sull'altra di altrettanto."))))
+     (str ";; acquire-union · " dir " → frame della prima sessione\n"
+          (str/join "\n"
+                    ;; `str`, NOT clj->js: clj->js on a keyword keeps only its
+                    ;; name, which would silently drop the :A/ label that says
+                    ;; WHICH session's mark this line is about.
+                    (map (fn [{:keys [name kind residual-mm normal-deg]}]
+                           (str ";;   " (clj->js kind) " " name "  " (n residual-mm) " mm"
+                                (when normal-deg (str " · " (n normal-deg) "°"))))
+                         per-anchor))
+          "\n;;   rms " (n rms-mm) " mm · normali max " (n max-normal-deg) "° · "
+          planes " piani"
+          (when (pos? (or edges 0)) (str " + " edges " spigoli"))
+          (when (pos? points) (str " + " points " punti"))))
+    ;; ---- and only now, what is WRONG ----
+    (when (> max-normal-deg 3.0)
+      (state/capture-println
+       (str ";; ⚠ normali fuori di " (n max-normal-deg)
+            "°: due zone dichiarate uguali non lo sono, o una è marcata male.")))
+    (when-let [s suspect]
+      (state/capture-println
+       (str ";; ⚠ togli " (:name s) " e lo scarto va da " (n rms-mm) " a "
+            (n (:rms-without s)) " mm: è quell'aggancio, non gli altri.")))
+    (when-let [w (fuse/worst-anchor per-anchor)]
+      (state/capture-println
+       (str ";; ⚠ " (:name w) " si discosta dagli altri (" (n (:residual-mm w))
+            " mm): rimisuralo, o non è la stessa zona nelle due sessioni.")))
+    (when (> rms-mm 1.0)
+      (state/capture-println
+       (str ";; ⚠ " (n rms-mm) " mm di scarto: quello che disegni su una sessione "
+            "cade storto sull'altra di altrettanto.")))
+    (when-not distances-testify?
+      (state/capture-println
+       ";; nota: pochi agganci — i mm tornano a zero per costruzione, guarda le normali."))))
 
 (defn- loop-closure!
   "With THREE or more sessions, the only real proof available.
@@ -5507,11 +5504,17 @@
                 (> mm 5.0) " — è tanto: due fusioni a due a due si contraddicono, quindi almeno una zona non è la stessa in tutte le sessioni"
                 (> mm 1.5) " — accettabile ma non ottimo"
                 :else " — le sessioni si accordano fra loro")))))
-    (when (< (count others) 2)
+    ;; Printed only when the fit has nothing else warning about it. With two
+    ;; sessions this is ALWAYS true, so unconditionally it was a line that
+    ;; appeared on every single run and therefore stopped being read — which is
+    ;; the opposite of what a caveat is for.
+    (when (and (< (count others) 2)
+               (every? #(and (nil? (:error (:fit %)))
+                             (<= (:rms-mm (:fit %) 0.0) 1.0)
+                             (<= (:max-normal-deg (:fit %) 0.0) 3.0))
+                       fits))
       (state/capture-println
-       (str ";; acquire-union: con due sole sessioni non c'è nessun anello da chiudere, "
-            "quindi niente che possa smentire il fit. Una terza posa dello stesso "
-            "oggetto lo metterebbe alla prova.")))))
+       ";; nota: due sessioni sole — nessun anello da chiudere, quindi niente che possa smentire il fit."))))
 
 (defn- transform-edge
   "Carry a measured edge through the fusion motion. Its pose moves like any mark
