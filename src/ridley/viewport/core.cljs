@@ -2885,13 +2885,70 @@
 (defn scale-screen-dots!
   "Set the scale of every preview dot marker (tagged screenScaleDot by
    create-dot-meshes) to `factor` about its own centre. edit-acquire's in-pose
-   zoom calls this with 1/zoom each frame so node handles keep a constant SCREEN
-   size while the camera view offset magnifies everything else."
+   zoom calls this each frame so node handles keep a constant SCREEN size while
+   the camera view offset magnifies everything else."
   [factor]
   (doseq [^js obj @preview-objects]
     (.traverse obj (fn [^js o]
                      (when (.. o -userData -screenScaleDot)
                        (.set (.-scale o) factor factor factor))))))
+
+(defn world-per-pixel
+  "How many world units one screen pixel spans at world point `at`.
+
+   The perspective camera's vertical FOV and the canvas height fix this: the view
+   is 2·d·tan(fov/2) tall in world units at depth d, spread over `clientHeight`
+   pixels. Returns nil without a camera or canvas.
+
+   Editors need it whenever an overlay has to be a legible SIZE ON SCREEN rather
+   than a size in the model — node handles, grab targets, anything a finger or a
+   cursor has to hit. A marker authored in model units is fine on a path a few
+   units across and invisible on one traced at photogrammetric scale, where the
+   same number is a fraction of a millimetre."
+  [at]
+  (when-let [^js camera (:camera @state)]
+    (when-let [^js canvas (:canvas @state)]
+      (let [h (max 1 (.-clientHeight canvas))
+            cp (.-position camera)
+            d (Math/sqrt (+ (* (- (nth at 0) (.-x cp)) (- (nth at 0) (.-x cp)))
+                            (* (- (nth at 1) (.-y cp)) (- (nth at 1) (.-y cp)))
+                            (* (- (nth at 2) (.-z cp)) (- (nth at 2) (.-z cp)))))
+            vfov (* (/ (.-fov camera) 180.0) Math/PI)]
+        (/ (* 2.0 d (Math/tan (/ vfov 2.0))) h)))))
+
+(def dot-screen-px
+  "How many pixels across a marker of radius `dot-reference-radius` should read
+   when an editor pins its dots to the screen.
+
+   14px is a grab target you can actually hit with a mouse — the smallest thing
+   Fitts's law forgives at speed, and roughly what every other handle in this app
+   ends up being. It replaces an accident: the in-pose zoom used to pin dots to
+   whatever size they happened to be at zoom 1, which on an object photographed
+   from half a metre made a bezier handle about two pixels across and pinned it
+   there, so zooming in — the obvious remedy — could not help by construction
+   (Vincenzo 2026-08-14: 'anche con lo zoom al massimo non si riesce quasi a
+   vederli/afferrarli')."
+  14.0)
+
+(def dot-reference-radius
+  "The authored marker radius that `dot-screen-px` is quoted against — edit-path's
+   `node-radius`. Handles and selected nodes are authored relative to it, and
+   scaling every dot by one factor keeps those relative sizes intact."
+  0.625)
+
+(defn pin-dots-to-screen!
+  "Scale every preview dot so a marker of `dot-reference-radius` model units reads
+   `dot-screen-px` pixels across at world point `at`, allowing for an extra
+   magnification of `zoom` (a camera view offset, which the projection does not
+   know about).
+
+   Never shrinks below 1×: on a small model the authored sizes are already right,
+   and the point of this is to rescue markers that are too small, not to shave
+   ones that are comfortable."
+  [at zoom]
+  (when-let [wpp (world-per-pixel at)]
+    (let [want (* 0.5 dot-screen-px (/ wpp (max 1e-6 zoom)))]
+      (scale-screen-dots! (max 1.0 (/ want dot-reference-radius))))))
 
 ;; ------------------------------------------------------------
 ;; Dedicated frustum overlay layer (frustum-objects), independent of the preview

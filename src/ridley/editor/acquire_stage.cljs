@@ -369,16 +369,29 @@
    after that, dragging a node ALSO orbits the camera and the photo↔proxy alignment
    drifts (Vincenzo 2026-07-25: 'grabbo un nodo e il wireframe si sposta'). Forcing
    controls off per-frame keeps the pose glued no matter who re-enables them. In the
-   same callback, keep edit-path-2d's node handles a constant SCREEN size: the in-pose
-   zoom is a camera view offset that magnifies the dots too, so counteract it by
-   scaling them 1/zoom. Re-applied every frame so it survives edit-path re-rendering
-   its dots and every photo change during navigation."
+   same callback, keep edit-path-2d's node handles a legible SIZE ON SCREEN.
+
+   That last part used to be `scale-screen-dots! (/ 1.0 zoom)`, which pinned the
+   dots to whatever size they happened to be at zoom 1 — correct as compensation
+   for the view offset, and a trap: edit-path authors its markers in MODEL units
+   (a bezier handle is 0.45 of them), and on an object photographed from half a
+   metre 0.45mm is about two pixels. Pinned there, so zooming in — the obvious
+   remedy — could not help by construction (Vincenzo 2026-08-14: 'anche con lo
+   zoom al massimo non si riesce quasi a vederli/afferrarli').
+
+   `pin-dots-to-screen!` asks for the size that was actually wanted: a fixed
+   number of PIXELS, worked out from the camera and the canvas, at the plane
+   being traced. Same constancy under zoom, at a size a cursor can hit.
+
+   Re-applied every frame so it survives edit-path re-rendering its dots and every
+   photo change during navigation."
   []
   (viewport/register-frame-callback! :acquire-stage
                                      (fn [_camera]
                                        (viewport/set-controls-enabled! false)
-                                       (viewport/scale-screen-dots!
-                                        (/ 1.0 (get-in @stage [:view :zoom] 1.0))))))
+                                       (viewport/pin-dots-to-screen!
+                                        (stage-pivot)
+                                        (get-in @stage [:view :zoom] 1.0)))))
 
 (defn- load-photo-backdrop!
   "Ensure the backdrop plane exists, show photo `idx` full-screen (sets FOV), and
@@ -2441,11 +2454,11 @@
       ;; and the bordo in hand, once it is measured
       (when (and fit (:plausible? fit))
         (do (do (add! {:type :lines :data [{:from (:a fit) :to (:b fit)
-                                          :color edge-measured-color}]})
-              (add! {:type :dots :data [{:pos (:a fit) :radius 0.9
-                                         :color edge-measured-color :opacity 0.95}
-                                        {:pos (:b fit) :radius 0.9
-                                         :color edge-measured-color :opacity 0.95}]}))))
+                                            :color edge-measured-color}]})
+                (add! {:type :dots :data [{:pos (:a fit) :radius 0.9
+                                           :color edge-measured-color :opacity 0.95}
+                                          {:pos (:b fit) :radius 0.9
+                                           :color edge-measured-color :opacity 0.95}]}))))
       @items)))
 
 (defn- edge-anchor
@@ -2560,7 +2573,7 @@
   (if (< (pedge/segment-length-px [p1 p2]) pedge/min-segment-px)
     (do (swap! stage update :edge dissoc :pending)
         (deny! "TOO SHORT" (str "i due click distano meno di " pedge/min-segment-px
-                                   " px · un tratto così non dice la direzione"))
+                                " px · un tratto così non dice la direzione"))
         (redraw-overlay!))
     (let [;; With the snap OFF the two clicks stand exactly as made. The snap is
           ;; what turns two rough clicks into a measurement — but only where the
@@ -3104,27 +3117,27 @@
                                         " · " (:text oc)))))
     (row! "writes" (if (:name target) (str ":" (:name target)) "—") nil)
     (row! "photo" (if-not (:in-pose? @stage)
-                   "free view"
-                   (str (nav-rank here) "/" (count (nav-order))
-                        (when-let [r (registration-label here)] (str " · " r))))
+                    "free view"
+                    (str (nav-rank here) "/" (count (nav-order))
+                         (when-let [r (registration-label here)] (str " · " r))))
           (when (:in-pose? @stage)
             (case (registration-trouble here)
               (:flipped :loose) "eaq-hud-bad" :grazing "eaq-hud-warn" nil)))
     (row! "strokes" (str n "/2" (when (contains? (edge-obs) here) " · this one taken")) nil)
     (when f
       (row! "measure" (str "straight · " (src/fmt-number (:length-mm f)) " mm · residual "
-                          (src/fmt-number (:rms-px f)) " px · turn "
-                          (src/fmt-number (:angle-deg f)) "°")
+                           (src/fmt-number (:rms-px f)) " px · turn "
+                           (src/fmt-number (:angle-deg f)) "°")
             (cond (not (:plausible? f)) "eaq-hud-bad"
                   (< (:angle-deg f) pedge/min-plane-angle-deg) "eaq-hud-warn"
                   (> (:rms-px f) max-write-rms-px) "eaq-hud-warn"
                   :else "eaq-hud-good")))
     (row! "next" (cond
-                  (not (:in-pose? @stage)) "go back into a photo (Photo button)"
-                  (get-in @stage [:edge :pending]) "click the other end"
-                  (edge-usable?) "Enter writes it"
-                  (contains? (edge-obs) here) "] next photo, same edge"
-                  :else "paint the edge")
+                   (not (:in-pose? @stage)) "go back into a photo (Photo button)"
+                   (get-in @stage [:edge :pending]) "click the other end"
+                   (edge-usable?) "Enter writes it"
+                   (contains? (edge-obs) here) "] next photo, same edge"
+                   :else "paint the edge")
           "eaq-hud-hint")
     (when-let [es (seq (:source-edges @stage))]
       (add! nil (str "edges (" (count es) ")"))

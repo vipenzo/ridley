@@ -2410,6 +2410,22 @@
 ;; numbers stay reproducible even if the store is later overwritten by a
 ;; re-print.
 
+(def ^:private small-deviation-mm
+  "Below this, a calibration that fails to generalise means the plate is FINE.
+
+   The held-out test refuses two very different things with one verdict, and they
+   have opposite remedies. A large deviation that does not generalise is bad picks
+   — go and re-click. A small one that does not generalise is a plate already flat
+   to within what the session can see, and the only right response is to carry on.
+   Telling the second case to go re-click sends someone hunting for an error that
+   is not there.
+
+   0.5mm, because a clean twelve-view session on a 1920px frame measures a mark to
+   a couple of tenths: Vincenzo's ⌀300, once its blown picks were being dropped,
+   came back at 0.24mm and refused — and a hand check agreed, one rise under a
+   millimetre."
+  0.5)
+
 (defn- plate-store-path
   "Where this plate's calibration is filed: ~/.ridley/plates/plate-300mm-12.json.
    nil when the proxy is not a plate, or is one from before :plate-d existed."
@@ -2571,13 +2587,30 @@
                 (auto-log! (str "    foto " (inc idx) ": " (modal/fmt-number nominal-px)
                                 " → " (modal/fmt-number measured-px) " px"
                                 (when (>= measured-px nominal-px) "   ← peggio"))))
-              (auto-log! (str "  Quindi il piatto NON è storto: quello che si misurerebbe "
-                              "è l'errore di qualche click. Guarda i mark con il residuo "
-                              "più alto sulle foto peggiori, riclicca ('p'), e riprova."))
-              (set-status-message!
-               (str "Calibrazione NON adottata: sulle foto tenute fuori peggiora "
-                    (:worse cv) " foto su " (+ (:better cv) (:worse cv))
-                    ". Il piatto non è storto — sono i click. Dettagli nel pannello.")))
+              ;; Two different refusals wear the same verdict, and sending the
+              ;; user to re-click on the wrong one wastes an afternoon. A big
+              ;; deviation that fails to generalise IS bad picks. A SMALL one
+              ;; that fails to generalise is a plate that is already flat to
+              ;; within what the session can measure — nothing to fix, and the
+              ;; right answer is to carry on (Vincenzo's ⌀300, once its six blown
+              ;; picks were being dropped: 0.24mm, refused, and correctly so).
+              (if (< (:worst-mm r) small-deviation-mm)
+                (do (auto-log! (str "  Lo scostamento più grande sarebbe "
+                                    (modal/fmt-number (:worst-mm r))
+                                    " mm, sotto quello che questa sessione sa misurare: "
+                                    "il piatto è piano quanto serve. Non c'è niente da "
+                                    "correggere — vai avanti."))
+                    (set-status-message!
+                     (str "Piatto già piano entro " (modal/fmt-number (:worst-mm r))
+                          " mm: niente da calibrare. Vai avanti.")))
+                (do (auto-log! (str "  Quindi il piatto NON è storto: quello che si "
+                                    "misurerebbe è l'errore di qualche click. Guarda i "
+                                    "mark con il residuo più alto sulle foto peggiori, "
+                                    "riclicca ('p'), e riprova."))
+                    (set-status-message!
+                     (str "Calibrazione NON adottata: sulle foto tenute fuori peggiora "
+                          (:worse cv) " foto su " (+ (:better cv) (:worse cv))
+                          ". Il piatto non è storto — sono i click. Dettagli nel pannello.")))))
 
             :else
             (let [{:keys [marks poses deviation-mm out-of-plane-mm radial-mm
