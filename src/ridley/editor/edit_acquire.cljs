@@ -5411,10 +5411,11 @@
        (every? #(and (vector? %) (= 2 (count %)) (keyword? (first %)) (acq? (second %))) x)))
 
 (defn- marks-by-label
-  "[[label acquire] …] → [[label marks] …], which is all fuse/declared-anchors
-   needs to know about a session."
+  "[[label acquire] …] → [[label marks edges] …], which is all
+   fuse/declared-anchors needs to know about a session. Edges ride along because
+   a declared correspondence may name one: `[[:A/spigolo :B/spigolo]]`."
   [sessions]
-  (mapv (fn [[l a]] [l (:marks a)]) sessions))
+  (mapv (fn [[l a]] [l (:marks a) (:edges a)]) sessions))
 
 (defn- report-union!
   "Print the fit the way mesh-board prints fidelity: the numbers that decide
@@ -5703,9 +5704,19 @@
 
       ;; without one: the shared names ARE the declaration
       :else
-      (let [marks-of (into {} (map (fn [[l a]] [l (:marks a)]) x))]
+      ;; Edges join marks as anchors here. They were measured all along and read
+      ;; by nothing: an edge pins four degrees of freedom to a plane's three, is
+      ;; measured along its whole length, and — the part that decides it — needs
+      ;; no point paired with any other point. On an object whose only flat zones
+      ;; are parallel (Vincenzo's grinder, 2026-08-14) they are the only anchors
+      ;; there are.
+      (let [marks-of (into {} (map (fn [[l a]] [l (:marks a)]) x))
+            edges-of (into {} (map (fn [[l a]] [l (:edges a)]) x))]
         (fuse-sessions x
-                       (fn [to-lbl _lbl b] [(fuse/shared-name-anchors (get marks-of to-lbl) (:marks b)) nil])
+                       (fn [to-lbl _lbl b]
+                         [(fuse/shared-name-anchors (get marks-of to-lbl) (:marks b)
+                                                    (get edges-of to-lbl) (:edges b))
+                          nil])
                        false)))))
 
 ;; ============================================================

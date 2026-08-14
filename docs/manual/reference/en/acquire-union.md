@@ -34,12 +34,31 @@ centroid of wherever you happened to click. So the fit uses each mark's plane
 (its normal, and how far it sits along that normal) and lets the origin slide
 freely within it. Moving the orange dot changes nothing.
 
+**Measured edges are anchors too**, and usually the best ones. An edge in
+`:edges`, named the same in both sessions, joins the fit exactly like a mark:
+
+```clojure
+:edges {:spigolo-becco (edge-mark {…})}
+```
+
+An edge pins **four** degrees of freedom where a plane pins three, it is measured
+along its whole length instead of at one spot, and — the part that decides it —
+declaring one needs no point paired with any other point. On an object whose only
+flat zones are *parallel*, edges are the only anchors there are.
+
+Like a plane, an edge has **no side and no origin**: painting it from either end,
+and starting anywhere along it, describes the same line and gives the same fit.
+
 When a mark's origin really is a physical feature — a corner, a printed dot —
 say so and its full position is used:
 
 ```clojure
 :marks {:spigolo (plane-mark {:position [...] :heading [...] :up [...] :point? true})}
 ```
+
+Note that **no gesture produces such a mark**: the plane gesture's origin is a
+centroid, not a feature, so `:point? true` is a claim only you can make, by
+writing the coordinates yourself. Reach for an edge first.
 
 The motion is **recomputed at every eval** and never written into the source:
 improve a mark, press Run, and the fusion improves with it. The price, stated
@@ -151,9 +170,25 @@ direction of the normal and the distance along it — so:
   checked.
 - **Three point-like marks**, not collinear, also work.
 
+An **edge** constrains four: its direction (two) and where the line runs across
+itself (two). Sliding along it is free, exactly as a plane mark's origin is free
+within its plane. So:
+
+- **Two edges that are not parallel** determine the motion on their own.
+- **Two parallel edges** leave the roll about their common direction free.
+  Refused.
+- **Two parallel planes plus one edge** is *not* enough, and the reason is worth
+  seeing: the planes fix the normal and one distance, the edge fixes the spin and
+  the two translations across itself — but nothing fixes sliding *along* the
+  edge. Add a second edge that crosses the first.
+- **Two parallel planes plus two crossing edges** work. This is the case for an
+  object whose only flat zones are parallel.
+
 Point anchors closer together than 5 mm are refused: the rotation such a short
-baseline determines is click noise magnified. Planes are exempt — what matters
-there is that the normals differ, not that the marks are far apart.
+baseline determines is click noise magnified. Planes and edges are exempt — what
+matters there is that the directions differ, not that the marks are far apart
+(an edge's stored position is wherever you started painting, so the distance
+between two of them means nothing at all).
 
 ## What it prints
 
