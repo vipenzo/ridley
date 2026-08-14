@@ -88,15 +88,29 @@ Cosa ha cambiato la fetta rispetto a come era stata proposta:
   l'immagine e le due spie (rms per il danno sparso, `gross-outlier?` per quello
   isolato) valgono in `or`.
 
-**Il piatto smette di essere un'ipotesi (2026-08-13).** Con la sessione live che
-convergeva a 1.97px su 12 viste ma con residui per foto sparsi fra 0.36 e 3.42,
-tre spiegazioni sono state confutate con misure (colla — piatto sbagliato;
-distorsione — correlazione −0.065; nitidezza — nessuna spiegazione intra-lotto), e
-la quarta trovata triangolando i mark alla scala giusta: **il piatto ⌀300 stampato
-è imbarcato** — mark 0 a −1.63mm fuori piano, mark 10 a +1.37, mark 6 a +1.24, gli
-altri sei entro ±0.25. Vincenzo: «stampare un piatto perfetto è difficilissimo,
-per me e per chiunque provasse a utilizzare questa feature» — quindi la difficoltà
-si sposta dallo *stampare* al **misurare**, come per tutto il resto del canale.
+**Il piatto si può misurare — e la prima volta che l'abbiamo misurato non era
+storto (2026-08-13/14).** Vincenzo: «stampare un piatto perfetto è
+difficilissimo, per me e per chiunque provasse a utilizzare questa feature» —
+quindi la difficoltà si sposta dallo *stampare* al **misurare**, come per tutto il
+resto del canale. Costruito; e poi la verifica ha ribaltato la diagnosi che lo
+aveva motivato.
+
+**Come è andata, perché è la lezione.** Il residuo sparso fra 0.36 e 3.42px su 12
+viste sembrava spiegato: triangolando i mark si vedeva il ⌀300 imbarcato (mark 0
+a −1.63mm fuori piano). La calibrazione, costruita, confermava: 1.97mm sul mark
+peggiore, residuo da 2.18 a 1.78px. Due conti indipendenti d'accordo — e non
+provavano niente, **perché usavano gli stessi click**. La verifica vera è tenere
+fuori una foto alla volta e chiedere a chi non ha votato: così il piatto
+"misurato" peggiorava **otto foto su dodici**. Togliendo il solo mark 0, quattro
+foto crollano da 3.4/2.3/3.0/2.4px a 1.5/0.4/0.3/0.3 **sul piatto del modello**.
+Non era un piatto imbarcato: era un click sbagliato su un mark in quattro
+fotogrammi, sotto la soglia di `gross-outlier?`, e la calibrazione stava piegando
+il piatto attorno a quello.
+
+Quindi `C` adesso **si rifiuta di adottare** ciò che non supera la prova delle
+foto tenute fuori, e sulla sessione che l'ha motivato si rifiuta. Aperto: perché
+il mark 0 sia mal rilevato proprio in quelle quattro foto (è l'unico con un
+vicino, lo zero-indice) e perché `gross-outlier?` non lo prenda.
 
 - `photogrammetry/plate-calib`: alterna triangolazione dei mark (pose ferme) e
   PnP delle pose (mark fermi). Il **gauge** è il punto delicato: mark e pose
@@ -106,11 +120,21 @@ si sposta dallo *stampare* al **misurare**, come per tutto il resto del canale.
   sanno misurare; non la TAGLIA, che non sanno: quella resta `:d` e il calibro. Un
   test lo pretende esplicitamente (un piatto del 5% più grande deve tornare della
   taglia del MODELLO);
-- `C` in edit-acquire misura, riporta lo scostamento **diviso in fuori-piano e
-  radiale** (due difetti diversi), e **rifiuta** oltre il 3% del raggio: uno
-  scostamento così non è un piatto storto, è una registrazione sbagliata a monte, e
-  adottarlo riferirebbe ogni misura futura a un righello inventato per far quadrare
-  uno sbaglio;
+- `plate-calib/cross-validate`: tiene fuori una vista alla volta, calibra sulle
+  altre, e chiede alla foto esclusa — con la posa risolta da capo su entrambi i
+  piatti, così a confronto c'è il PIATTO e non la registrazione — se il piatto
+  misurato le vada meglio del modello. È l'unico numero che distingua un piatto
+  imbarcato da un calcolo che si è mangiato il rumore;
+- il modo di default è `:out-of-plane`: un mark può spostarsi solo in
+  perpendicolare. La storia fisica (una stampante posa l'inchiostro a un decimo di
+  percento — 0.13mm su 133 di raggio — mentre la superficie si imbarca di
+  millimetri) l'avevo scritta come default PRIMA di misurarla, ed è stata smentita
+  sui dati veri (non salvava niente). Decisa poi per esperimento: su un piatto
+  sinteticamente imbarcato con 1.5px di rumore, tenute fuori, il vincolato dà
+  1.91px contro 2.06 del libero;
+- `C` riporta lo scostamento **diviso in tre** (fuori-piano, radiale,
+  tangenziale — tre difetti diversi) e **rifiuta** sia oltre il 3% del raggio sia
+  quando la prova delle foto tenute fuori non conferma;
 - **archiviato per PIATTO, non per sessione** (`~/.ridley/plates/`, per diametro e
   numero di mark): un piatto si calibra una volta e vale per tutte le sessioni
   future, che lo annunciano all'apertura. È ciò che rende la cosa utile a chi non

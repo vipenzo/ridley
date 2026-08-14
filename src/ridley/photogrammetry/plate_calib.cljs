@@ -163,6 +163,63 @@
         n (count sq)]
     (when (pos? n) (Math/sqrt (/ (reduce + 0.0 sq) n)))))
 
+(def default-mode
+  "What the plate is allowed to be wrong about. `:out-of-plane` — the default —
+   lets a mark move only PERPENDICULAR to the plate; `:free` lets it move
+   anywhere.
+
+   This is a physical claim before it is a numerical one. A crown is printed, and
+   a printer places ink to about a tenth of a percent: 0.13mm on a 133mm radius.
+   Nothing in the making of a plate moves a mark a millimetre sideways. What does
+   move by millimetres is the surface — a 300mm disc warps as it cools, paper
+   lifts where the glue is thin — and that displacement is perpendicular.
+
+   Measured on Vincenzo's twelve-view ⌀300 session, 2026-08-14, and this is why
+   the default is not `:free`. Turned loose, the fit reported 1.97mm at the worst
+   mark, of which 1.60 out of plane and 1.11 radial, and its own residual fell
+   from 2.18 to 1.78px — convincing, and wrong. Held out, one photograph at a
+   time, the free plate made EIGHT of twelve photographs worse and the pooled
+   held-out residual barely moved (2.12 → 2.05). The split said what had
+   happened: every grazing view improved and every face-on view degraded two to
+   four times. A face-on camera cannot see an out-of-plane error at all — the
+   displacement is along its line of sight — but it sees an in-plane one at full
+   strength. So the in-plane millimetre was not on the plate; it was the fit
+   spending freedom it should not have had, and paying for it in the views that
+   could see the difference.
+
+   Constrained to the perpendicular, the same data holds up under the same test.
+   `:free` is kept because a plate can be genuinely mis-printed, but it should be
+   asked for, and its result should be cross-validated before it is believed."
+  :out-of-plane)
+
+(defn- flatten-in-plane
+  "Keep only each mark's PERPENDICULAR deviation, then take the piston and tilt
+   out of what remains.
+
+   The de-trending is not tidiness: a uniform lift of the whole crown, or a
+   uniform tilt of it, is exactly what a camera pose absorbs — move the camera
+   and the picture is the same. Left in, those three degrees of freedom would
+   wander between the plate and the poses from one round to the next instead of
+   settling, and would be reported as a warp the plate does not have."
+  [measured nominal]
+  (let [{:keys [n o u v]} (pnp/plane-frame nominal)]
+    (if-not n
+      measured
+      (let [uv (mapv (fn [p] (let [d (la/v-sub p o)] [(la/v-dot d u) (la/v-dot d v)])) nominal)
+            dz (mapv (fn [m nm] (la/v-dot (la/v-sub m nm) n)) measured nominal)
+            ;; least squares dz ≈ a + b·u + c·v, by the 3×3 normal equations
+            rows (mapv (fn [[uu vv]] [1.0 uu vv]) uv)
+            ata (vec (for [i (range 3)]
+                       (vec (for [j (range 3)]
+                              (reduce + 0.0 (map (fn [r] (* (r i) (r j))) rows))))))
+            atb (vec (for [i (range 3)]
+                       (reduce + 0.0 (map (fn [r d] (* (r i) d)) rows dz))))
+            coef (or (la/solve ata atb) [0.0 0.0 0.0])
+            detrended (mapv (fn [[uu vv] d]
+                              (- d (+ (coef 0) (* (coef 1) uu) (* (coef 2) vv))))
+                            uv dz)]
+        (mapv (fn [nm d] (la/v-add nm (la/v-scale n d))) nominal detrended)))))
+
 (defn- reproject-rms
   "Reprojection rms (px) of `marks` over EVERY view's picks pooled — not the mean
    of the per-view numbers, which would weight a view with four picks like one
@@ -176,6 +233,80 @@
                 (* (- (p 1) (px 1)) (- (p 1) (px 1)))))
         n (count sq)]
     (when (pos? n) (Math/sqrt (/ (reduce + 0.0 sq) n)))))
+
+(defn- fit-view-rms
+  "Solve `view`'s pose freshly against `marks` and report the rms it achieves.
+
+   The pose must be re-solved, not reused: a pose fitted against the model plate
+   is not a fair thing to judge a measured plate with, and vice versa. What is
+   being asked is 'how well can this photograph be explained by this plate, at
+   its best', which means letting the camera go where the plate says it should."
+  [{:keys [pose intrinsics picks]} marks]
+  (let [corr (vec (for [[ci px] picks] {:world (nth marks ci) :px px}))
+        sol (pnp/solve-pnp corr intrinsics {:seed pose :method :seeded :max-outliers 0})]
+    (when sol (view-rms {:pose (:pose sol) :intrinsics intrinsics :picks picks} marks))))
+
+(declare calibrate)
+
+(defn cross-validate
+  "Does the measured plate explain photographs it has never seen?
+
+   The residual a calibration reports about ITSELF always falls — it was chosen
+   to make it fall. That number cannot distinguish a plate that is really warped
+   from a fit that has quietly absorbed the noise of the views it was given, and
+   the two have opposite consequences: the first makes every future session
+   better, the second makes every future session worse in a way nothing will
+   report.
+
+   So: hold each view out, calibrate on the rest, and ask the held-out
+   photograph — which had no say in the answer — whether the measured plate
+   suits it better than the model does. Both sides get a freshly solved pose, so
+   what is compared is the PLATE and not the registration.
+
+   Returns {:per-view [{:idx :nominal-px :measured-px}…]
+            :nominal-px :measured-px   pooled over the held-out views
+            :better n :worse n
+            :verdict :confirmed | :noise | :mixed}
+   or {:error …} when there are too few views for a hold-out to leave anything.
+
+   Expensive on purpose: N calibrations of N−1 views. It is the difference
+   between believing a measurement and having checked it."
+  ([views nominal] (cross-validate views nominal {}))
+  ([views nominal opts]
+   (if (< (count views) 4)
+     {:error (str "per la verifica servono almeno 4 viste (ne ho " (count views)
+                  "): togliendone una devono restarne tre, che è il minimo per "
+                  "misurare il piatto")}
+     (let [per (vec (keep-indexed
+                     (fn [i held]
+                       (let [rest-views (vec (concat (subvec (vec views) 0 i)
+                                                     (subvec (vec views) (inc i))))
+                             r (calibrate rest-views nominal opts)]
+                         (when-not (:error r)
+                           (let [a (fit-view-rms held nominal)
+                                 b (fit-view-rms held (:marks r))]
+                             (when (and a b)
+                               {:idx (:idx held) :nominal-px a :measured-px b})))))
+                     views))]
+       (if (empty? per)
+         {:error "nessuna vista ha potuto essere tenuta fuori e rimisurata"}
+         (let [pool (fn [k] (Math/sqrt (/ (reduce + 0.0 (map #(let [x (k %)] (* x x)) per))
+                                          (count per))))
+               nom (pool :nominal-px)
+               mea (pool :measured-px)
+               better (count (filter #(< (:measured-px %) (:nominal-px %)) per))
+               worse (- (count per) better)]
+           {:per-view per
+            :nominal-px nom
+            :measured-px mea
+            :better better
+            :worse worse
+            :verdict (cond
+                       ;; a real plate defect helps a photograph that had no hand
+                       ;; in measuring it, and helps most of them
+                       (and (< mea (* 0.9 nom)) (> better worse)) :confirmed
+                       (> mea nom) :noise
+                       :else :mixed)}))))))
 
 (defn calibrate
   "Measure where this plate's marks actually are.
@@ -197,7 +328,8 @@
    have nothing to disagree about — or when what comes out is too far from a
    plate to be one (see `max-deviation-frac`)."
   ([views nominal] (calibrate views nominal {}))
-  ([views nominal {:keys [iterations] :or {iterations default-iterations}}]
+  ([views nominal {:keys [iterations mode]
+                   :or {iterations default-iterations mode default-mode}}]
    (cond
      (< (count views) 3)
      {:error (str "la calibrazione del piatto ha bisogno di almeno TRE viste "
@@ -286,8 +418,13 @@
                                                    vs))]
                                (or (meet rays) (nth marks j))))
                            (range (count nominal)))
-                 ;; 2. back onto the model's frame — see regauge
-                 fixed (or (regauge tri nominal) tri)
+                 ;; 2. back onto the model's frame — see regauge — and then, by
+                 ;; default, back onto the perpendicular: see default-mode for
+                 ;; why a plate is allowed to be warped but not mis-printed
+                 regauged (or (regauge tri nominal) tri)
+                 fixed (if (= mode :free)
+                         regauged
+                         (flatten-in-plane regauged nominal))
                  ;; 3. every pose again, now against the measured plate
                  vs' (mapv (fn [{:keys [pose intrinsics picks] :as v}]
                              (let [corr (vec (for [[ci px] picks]

@@ -97,19 +97,32 @@ building on — but read it knowing what it cannot tell you:
 
 Everything here is measured against the registration plate, and until you press
 `C` the plate is an assumption: the marks are wherever `registration-plate`
-computed them. A printed plate does not oblige. On the first ⌀300 we measured,
-three marks stood over a millimetre out of the plane and nine were within a
-quarter — and that is what a residual which changes as the plate turns looks
-like, since a mark standing proud projects differently depending which way the
-camera looks across it.
+computed them. A printed plate need not oblige — a 300mm disc warps as it cools,
+and a mark standing proud of the plane projects differently depending which way
+the camera looks across it, which is what a residual that changes as the plate
+turns looks like.
 
 `C` triangulates every mark from every view that saw it, re-solves the poses
-against what it found, and repeats. It reports each mark's deviation split two
-ways — out of the plane, and along the radius — because those mean different
-things: the first is a warped plate, the second a print that came out the wrong
-size or shape.
+against what it found, and repeats. It reports each mark's deviation split three
+ways — out of the plane, along the radius, and around the crown — because those
+mean different things: a warp, a print that came out the wrong size, and one that
+placed a mark at the wrong angle.
 
-Three things are worth knowing before you use it:
+**Then it tries the result on photographs that had no part in producing it, and
+throws it away unless they agree.** This is the important half. A calibration's
+own residual always falls — it was chosen to make it fall — so it cannot
+distinguish a plate that is really warped from a fit that has quietly swallowed
+the noise of the views it was handed. Only a held-out photograph can, and the
+difference matters: adopting a bad plate makes every future session worse in a
+way nothing else will report.
+
+Expect refusals. The first real ⌀300 produced a convincing 1.97mm warp with its
+residual falling from 2.18 to 1.78px, and held out it made **eight of twelve
+photographs worse**. The whole effect was one mark whose pick was wrong in four
+frames. When `C` refuses it prints the held-out numbers per photograph and sends
+you back to the clicks, which is where the error was.
+
+Three more things are worth knowing:
 
 - **Run it after `R`.** It reads the poses, so it inherits whatever is wrong with
   them.
@@ -121,10 +134,18 @@ Three things are worth knowing before you use it:
   away makes the identical image, so no set of views can separate them. Scale
   stays with `:d` and a caliper.
 
-If the result would move a mark more than 3% of the crown radius, `C` refuses
-instead of reporting. A deviation that large is not a plate that is out of true —
-it is a registration that went wrong upstream, and adopting it would refer every
-later measurement to a ruler invented to fit a mistake.
+There is a second, cruder refusal underneath the held-out one: if the result
+would move a mark more than 3% of the crown radius, `C` stops before it even
+tests. A deviation that large is not a plate that is out of true — it is a
+registration that went wrong upstream.
+
+By default a mark may only move **perpendicular** to the plate. That is a
+physical claim: a printer places ink to about a tenth of a percent (0.13mm on a
+133mm radius), so nothing in the making of a plate shifts a mark a millimetre
+sideways, while the surface itself warps by millimetres. Constraining the fit
+that way also leaves it less freedom to absorb noise, which the held-out test
+confirms — on a synthetically warped plate under 1.5px of click noise, the
+constrained fit comes back at 1.91px held out against the free fit's 2.06px.
 
 ## Notes
 

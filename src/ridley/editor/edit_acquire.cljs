@@ -2533,11 +2533,53 @@
               "Gira il piatto e registra una foto in più."))
 
         :else
-        (let [r (plate-calib/calibrate views nominal)]
-          (if (:error r)
+        (let [r (plate-calib/calibrate views nominal)
+              ;; The verdict, before anything is adopted. A calibration's own
+              ;; residual ALWAYS falls — it was chosen to make it fall — so it
+              ;; cannot tell a warped plate from a fit that has swallowed the
+              ;; noise of the very photographs it was given. Only a photograph
+              ;; held out of the measurement can.
+              ;;
+              ;; This is not a hypothetical guard. On the first real session
+              ;; (2026-08-14, twelve views on a ⌀300) the fitted residual fell
+              ;; from 2.18 to 1.78px and reported a 1.97mm warp — and held out,
+              ;; the same plate made EIGHT of twelve photographs worse. The whole
+              ;; effect traced to one mark whose pick was wrong in four frames:
+              ;; drop m00 and those four fall from 3.4/2.3/3.0/2.4px to
+              ;; 1.5/0.4/0.3/0.3 on the UNTOUCHED model plate. The calibration
+              ;; had been bending the plate around a bad click.
+              cv (when-not (:error r) (plate-calib/cross-validate views nominal))]
+          (cond
+            (:error r)
             (do (auto-log! "=== calibrazione del piatto: RIFIUTATA ===")
                 (auto-log! (str "  " (:error r)))
                 (set-status-message! (str "Calibrazione rifiutata: " (:error r))))
+
+            (and cv (not (:error cv)) (not= :confirmed (:verdict cv)))
+            (do
+              (auto-log! "=== calibrazione del piatto: NON CONFERMATA, non adottata ===")
+              (auto-log! (str "  misurando, il residuo scenderebbe da "
+                              (modal/fmt-number (:rms-before r)) " a "
+                              (modal/fmt-number (:rms-after r)) " px — ma quel numero "
+                              "non vale: è lo stesso che la misura è stata scelta per "
+                              "abbassare."))
+              (auto-log! (str "  provato su foto tenute FUORI dalla misura: modello "
+                              (modal/fmt-number (:nominal-px cv)) " px → piatto misurato "
+                              (modal/fmt-number (:measured-px cv)) " px · "
+                              (:better cv) " migliorate, " (:worse cv) " peggiorate"))
+              (doseq [{:keys [idx nominal-px measured-px]} (sort-by :idx (:per-view cv))]
+                (auto-log! (str "    foto " (inc idx) ": " (modal/fmt-number nominal-px)
+                                " → " (modal/fmt-number measured-px) " px"
+                                (when (>= measured-px nominal-px) "   ← peggio"))))
+              (auto-log! (str "  Quindi il piatto NON è storto: quello che si misurerebbe "
+                              "è l'errore di qualche click. Guarda i mark con il residuo "
+                              "più alto sulle foto peggiori, riclicca ('p'), e riprova."))
+              (set-status-message!
+               (str "Calibrazione NON adottata: sulle foto tenute fuori peggiora "
+                    (:worse cv) " foto su " (+ (:better cv) (:worse cv))
+                    ". Il piatto non è storto — sono i click. Dettagli nel pannello.")))
+
+            :else
             (let [{:keys [marks poses deviation-mm out-of-plane-mm radial-mm
                           tangential-mm worst-mm rms-before rms-after
                           per-view-before per-view view-idx]} r
@@ -2553,6 +2595,13 @@
               (auto-log! (str "=== calibrazione del piatto: " (count views) " foto ==="))
               (auto-log! (str "  riproiezione " (modal/fmt-number rms-before)
                               " → " (modal/fmt-number rms-after) " px"))
+              ;; the number that earns the adoption, said before the details
+              (when (and cv (not (:error cv)))
+                (auto-log! (str "  CONFERMATA su foto tenute fuori dalla misura: "
+                                (modal/fmt-number (:nominal-px cv)) " → "
+                                (modal/fmt-number (:measured-px cv)) " px, "
+                                (:better cv) " migliorate su "
+                                (+ (:better cv) (:worse cv)))))
               ;; Per photograph, like the joint refine: an aggregate that moves
               ;; from 2.13 to 1.79 says something happened and refuses to say to
               ;; whom — and on a plate the answer matters, because a warp presents
@@ -4702,15 +4751,19 @@
                           (:position old-pose) (:heading old-pose) (:up old-pose)
                           (:position proxy-pose) safe-heading safe-up)]
           (swap! session assoc :proxy-mesh new-mesh)))
-      ;; The measured plate ('C'), restored AFTER the proxy pose above: the
-      ;; calibration is stored in the OBJECT frame and lifted through the current
-      ;; pose, so applying it before the proxy has moved would put the marks where
-      ;; the plate used to be.
+      ;; The measured plate ('C') is only STASHED here, not applied. Two sources
+      ;; can supply one — this file and the plate store under ~/.ridley/plates/ —
+      ;; and when both did, whichever ran first won silently: the session's copy
+      ;; short-circuited the store's path, which was the only one that announced,
+      ;; so a reopened session came up calibrated and said nothing (Vincenzo,
+      ;; 2026-08-14: "non è comparso il messaggio"). Deciding in one place and
+      ;; speaking in one place is load-plate-calibration!'s job now; here we only
+      ;; carry the file's contents to it.
       (when-let [obj (seq (:obj plate-calib))]
-        (swap! session assoc :plate-calib {:obj (mapv vec obj)
-                                           :worst-mm (:worst-mm plate-calib)
-                                           :views (:views plate-calib)})
-        (apply-plate-calibration! (mapv vec obj)))
+        (swap! session assoc :plate-calib-from-session
+               {:obj (mapv vec obj)
+                :worst-mm (:worst-mm plate-calib)
+                :views (:views plate-calib)}))
       (doseq [[idx-kw {:keys [camera-pose matched rms-px manual?]}] photos]
         (let [idx (js/parseInt (name idx-kw))]
           (cond
@@ -4737,40 +4790,63 @@
       (.then apply-loaded-state!)
       (.catch (fn [_] nil)))) ;; no file yet (first snap of a fresh session) — fine
 
+(defn- announce-plate-calibration!
+  "Apply `c` to the proxy and SAY SO. Every entry into a calibrated session goes
+   through here, whichever file the calibration came from.
+
+   The saying is not a courtesy. A calibration silently changes the reference
+   every measurement in the session is taken against, and it can outlive the
+   plate that justified it: the store is keyed by diameter and crown count, so a
+   re-printed ⌀300 inherits the old one's warp under the new one's name. The line
+   on entry is what lets that be noticed."
+  [c source path]
+  (let [obj (mapv vec (:obj c))]
+    (when (= (count obj) (count (crown-ids)))
+      (swap! session assoc :plate-calib
+             {:obj obj :worst-mm (:worst-mm c) :views (:views c)})
+      (apply-plate-calibration! obj)
+      (auto-log! (str "piatto MISURATO"
+                      (case source
+                        :store " (calibrato in una sessione precedente)"
+                        :session " in questa sessione"
+                        "")
+                      ": scostamento massimo "
+                      (modal/fmt-number (:worst-mm c)) " mm su " (:views c) " foto"
+                      (when-let [d (:measured-on c)] (str ", " (subs d 0 10)))
+                      ". Le misure sono riferite a questo piatto."
+                      (when (= source :store)
+                        (str " Se lo hai ristampato, cancella " path))))
+      true)))
+
 (defn- load-plate-calibration!
-  "Adopt the stored calibration for this plate, if there is one and this session
-   hasn't measured its own.
+  "Put the measured plate back, from whichever source has one, and announce it.
 
    This is what makes calibrating worth doing: the plate is a physical object you
    own, so measuring it once should improve every session you shoot on it, not
-   just the one where you pressed 'C'. The store is keyed by diameter and crown
-   count — which is also its limit, and why the adoption is ANNOUNCED rather than
-   silent: re-print a ⌀300 plate and the old plate's warp is still on file under
-   the new one's name. Saying so on entry is what lets you notice; deleting the
-   file under ~/.ridley/plates/ is how you discard it.
+   just the one where you pressed 'C'.
 
-   Always resolves — a session with no stored calibration is the normal case."
+   The session's own copy wins over the store — it is what makes THIS session's
+   numbers reproducible after the plate has been re-measured — but both arrive
+   here, because the previous arrangement applied the session's copy elsewhere
+   and only the store's path spoke. A reopened session therefore came up
+   calibrated in silence.
+
+   Always resolves — a session with no calibration at all is the normal case."
   []
-  (let [path (plate-store-path)]
-    (if (or (:plate-calib @session) (not (plate-proxy?)) (nil? path))
-      (js/Promise.resolve nil)
+  (let [path (plate-store-path)
+        mine (:plate-calib-from-session @session)]
+    (cond
+      (not (plate-proxy?)) (js/Promise.resolve nil)
+      mine (do (announce-plate-calibration! mine :session path)
+               (js/Promise.resolve nil))
+      (nil? path) (js/Promise.resolve nil)
+      :else
       (-> (stl/desktop-read-file path)
           (.then (fn [text]
-                   (let [c (js->clj (js/JSON.parse text) :keywordize-keys true)
-                         obj (mapv vec (:obj c))]
-                     ;; a store written for a different crown cannot be applied to
-                     ;; this one mark-for-mark; ignore it rather than guess
-                     (when (= (count obj) (count (crown-ids)))
-                       (swap! session assoc :plate-calib
-                              {:obj obj :worst-mm (:worst-mm c) :views (:views c)})
-                       (apply-plate-calibration! obj)
-                       (auto-log! (str "piatto MISURATO da una sessione precedente: scostamento "
-                                       "massimo " (modal/fmt-number (:worst-mm c)) " mm su "
-                                       (:views c) " foto"
-                                       (when-let [d (:measured-on c)]
-                                         (str ", " (subs d 0 10)))
-                                       ". Se hai ristampato il piatto, cancella "
-                                       path))))))
+                   ;; a store written for a different crown cannot be applied to
+                   ;; this one mark-for-mark; ignore it rather than guess
+                   (announce-plate-calibration!
+                    (js->clj (js/JSON.parse text) :keywordize-keys true) :store path)))
           (.catch (fn [_] nil))))))
 
 ;; ============================================================

@@ -84,26 +84,32 @@ you glue them.
 it over the spindle, and the plate is centred and coaxial with the rotation — which
 is the one thing the turntable machinery assumes and otherwise has to discover.
 
-## The plate you printed is not the plate in the file
+## The plate you printed may not be the plate in the file
 
-It is close, and it is not the same. A ⌀300 disc warps as it cools; paper glued
-to a base lifts where the glue is thin; a printer lays its ink a hair off. On the
-first ⌀300 plate we measured, three of the twelve marks stood more than a
-millimetre out of the plane — worst 1.63mm — while the other nine were within a
-quarter.
+It should be close and it need not be exact. A ⌀300 disc warps as it cools; paper
+glued to a base lifts where the glue is thin; a printer lays its ink a hair off.
 
-That error hides. A plate that sits crooked, off-centre or wobbling is absorbed
-entirely: it is just a different camera pose, and every photograph solves its
-own. But a plate whose *marks are not where the model says* is a ruler with the
-wrong numbers on it, and what it produces is a residual that changes as the plate
-turns — because a mark standing proud of the plane projects differently depending
-which way the camera looks across it.
+That kind of error hides. A plate that sits crooked, off-centre or wobbling is
+absorbed entirely: it is just a different camera pose, and every photograph
+solves its own. But a plate whose *marks are not where the model says* is a ruler
+with the wrong numbers on it, and what it produces is a residual that changes as
+the plate turns — because a mark standing proud of the plane projects differently
+depending which way the camera looks across it.
 
-So the plate is **measured**, not assumed. In a registered session, `C` in
-`edit-acquire` triangulates every mark from every view that saw it and files the
-result under `~/.ridley/plates/`, keyed by diameter and crown count. From then on
-every session that says `(registration-plate :d 300)` measures against the plate
-you actually own. You calibrate once, per plate, not per session.
+So the plate can be **measured** rather than assumed. In a registered session,
+`C` in `edit-acquire` triangulates every mark from every view that saw it and,
+*if the result survives being tested on photographs that did not help produce
+it*, files it under `~/.ridley/plates/`, keyed by diameter and crown count. From
+then on every session that says `(registration-plate :d 300)` measures against
+the plate you actually own. You calibrate once, per plate, not per session.
+
+**Expect it to refuse, and take the refusal seriously.** The first real ⌀300 we
+tried it on looked convincingly warped — 1.97mm at the worst mark, its own
+residual falling from 2.18 to 1.78px — and was not warped at all. One mark's pick
+was wrong in four frames out of twelve; drop that mark and those four frames fall
+from 3.4/2.3/3.0/2.4px to 1.5/0.4/0.3/0.3 against the *untouched model*. The
+calibration had been bending the plate around a bad click, and only the held-out
+test could tell. A plate that fails the test is usually a plate that is fine.
 
 The measurement takes the plate's **shape** and leaves its **size** alone, and
 that division is not a shortcut — it is what photographs can and cannot see. A

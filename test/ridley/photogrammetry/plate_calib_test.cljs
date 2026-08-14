@@ -9,7 +9,8 @@
             [ridley.photogrammetry.linalg :as la]
             [ridley.photogrammetry.plate :as plate]
             [ridley.photogrammetry.plate-calib :as pc]
-            [ridley.photogrammetry.pnp :as pnp]))
+            [ridley.photogrammetry.pnp :as pnp]
+            [ridley.photogrammetry.synth :as synth]))
 
 ;; ---------------------------------------------------------------------------
 ;; A plate, flat and warped
@@ -74,6 +75,15 @@
                                  (range (count marks))))})
         poses))
 
+(defn- noisy
+  "The same views with `sigma` pixels of click noise on every pick."
+  [views sigma rng]
+  (mapv (fn [v] (update v :picks
+                        (fn [ps] (into {} (for [[ci [u vv]] ps]
+                                            [ci [(+ u (* sigma (synth/gauss rng)))
+                                                 (+ vv (* sigma (synth/gauss rng)))]])))))
+        views))
+
 (defn- as-session
   "What the app would have: the true picks, but every pose SOLVED against the
    nominal plate — the wrong model, which is the whole point."
@@ -134,11 +144,16 @@
    tell the two apart. The calibration measures SHAPE and hands scale back to
    `:d`. If this test ever fails the other way — if the marks come back 5% out —
    the calibration has started inventing a size it cannot see, and every
-   measurement downstream inherits it."
+   measurement downstream inherits it.
+
+   Pinned to :free deliberately. Under :out-of-plane a mark cannot move radially
+   at all, so the crown radius comes back unchanged by construction and the test
+   would pass while proving nothing — it is the GAUGE that has to do this work,
+   and only :free gives it the freedom to fail."
     (let [nom (nominal-marks)
           big (mapv #(la/v-scale % 1.05) nom)
           session (as-session (shoot (ring-poses 8 35.0 600.0) big) nom)
-          r (pc/calibrate session nom)
+          r (pc/calibrate session nom {:mode :free})
           radius (fn [ms] (/ (reduce + 0.0 (map (fn [[x y _]] (Math/hypot x y)) (take 12 ms))) 12.0))]
       (is (< (Math/abs (- (radius (:marks r)) (radius nom))) 0.05)
           (str "crown radius came back " (radius (:marks r))
@@ -187,6 +202,81 @@
       (doseq [[got want] (map vector (:poses r) poses)]
         (is (< (la/v-norm (la/v-sub (cam/camera-center got) (cam/camera-center want))) 1.0)
             "a re-solved camera should sit within a millimetre of where it stood")))))
+
+(deftest which-mode-survives-click-noise
+  (testing "with realistic click noise, does a real warp still confirm — and in which mode?
+
+   The reason this test exists is that I picked a default from an argument and
+   the argument was wrong. `:out-of-plane` has a good physical story (a printer
+   places ink to a tenth of a percent, 0.13mm on a 133mm radius; what moves by
+   millimetres is the surface warping, which is perpendicular) — but a story is
+   not evidence, and on the real session that mode rescued nothing. So the choice
+   is made here instead, on a plate that IS warped, seen through 1.5px of hand
+   noise, and judged by the only test that counts: does a held-out photograph
+   agree?"
+    (let [nom (nominal-marks)
+          truth (true-marks)
+          rng (synth/rng 31)
+          session (as-session (noisy (shoot (ring-poses 8 35.0 600.0) truth) 1.5 rng) nom)
+          free (pc/cross-validate session nom {:mode :free})
+          oop (pc/cross-validate session nom {:mode :out-of-plane})]
+      (println "\n=== Piatto imbarcato + 1.5px di rumore: quale modo regge? ===")
+      (doseq [[label cv] [[":free        " free] [":out-of-plane" oop]]]
+        (println (str "  " label " → tenute fuori " (.toFixed (:nominal-px cv) 3)
+                      " → " (.toFixed (:measured-px cv) 3) " px · "
+                      (:better cv) " meglio / " (:worse cv) " peggio · " (:verdict cv))))
+      (is (= :confirmed (:verdict oop))
+          "the constrained fit must survive noise on a genuinely warped plate")
+      (is (<= (:measured-px oop) (:measured-px free))
+          (str "and be at least as good held out as the free one: "
+               (:measured-px oop) " vs " (:measured-px free))))))
+
+(deftest a-real-warp-survives-being-held-out
+  (testing "a plate that is genuinely warped helps photographs that did not measure it"
+    (let [nom (nominal-marks)
+          session (as-session (shoot (ring-poses 8 35.0 600.0) (true-marks)) nom)
+          cv (pc/cross-validate session nom)]
+      (is (= :confirmed (:verdict cv)))
+      (is (< (:measured-px cv) (* 0.5 (:nominal-px cv)))
+          (str "held out: " (:nominal-px cv) " → " (:measured-px cv) " px"))
+      (is (= 8 (:better cv)) "every held-out view must improve"))))
+
+(deftest a-bad-pick-does-not-become-a-warped-plate
+  (testing "one mark clicked wrong in some photographs must NOT be adopted as plate shape
+
+   This is the trap the whole cross-validation exists for, and it is not
+   hypothetical — it is what the first real session did (2026-08-14, twelve views
+   on a ⌀300). The fitted residual fell convincingly, 2.18 to 1.78px, and
+   reported a 1.97mm warp at one mark. Held out, that plate made eight of twelve
+   photographs WORSE, and the whole effect traced to a single mark whose pick was
+   wrong in four frames: dropping it put those four at 0.3-1.5px on the untouched
+   model plate.
+
+   Reproduced here: a PERFECTLY FLAT plate, with one mark mis-clicked by 8px in
+   half the views. `calibrate` will happily find a millimetre of 'warp' in it,
+   because bending the plate is the only freedom it has to explain the clicks.
+   The hold-out is what refuses."
+    (let [nom (nominal-marks)
+          clean (as-session (shoot (ring-poses 8 35.0 600.0) nom) nom)
+          ;; mark 3 clicked 8px off in four of the eight views — under any
+          ;; gross-outlier floor, and consistent enough to look like geometry
+          bad (vec (map-indexed
+                    (fn [i v]
+                      (if (even? i)
+                        (update-in v [:picks 3] (fn [[u vv]] [(+ u 8.0) (- vv 5.0)]))
+                        v))
+                    clean))
+          r (pc/calibrate bad nom)
+          cv (pc/cross-validate bad nom)]
+      ;; the fit is fooled — it must be, or the test proves nothing
+      (is (> (:worst-mm r) 0.3)
+          (str "the fit should invent a warp of " (:worst-mm r) "mm from a flat plate"))
+      (is (< (:rms-after r) (:rms-before r))
+          "and its own residual should fall, which is exactly why it convinces")
+      ;; and the hold-out is not
+      (is (not= :confirmed (:verdict cv))
+          (str "held out: " (:nominal-px cv) " → " (:measured-px cv) " px, "
+               (:better cv) " better / " (:worse cv) " worse — this must not be adopted")))))
 
 (deftest two-views-are-refused
   (testing "with two views the marks and the poses agree on anything"
