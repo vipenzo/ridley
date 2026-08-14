@@ -108,9 +108,31 @@ fotogrammi, sotto la soglia di `gross-outlier?`, e la calibrazione stava piegand
 il piatto attorno a quello.
 
 Quindi `C` adesso **si rifiuta di adottare** ciò che non supera la prova delle
-foto tenute fuori, e sulla sessione che l'ha motivato si rifiuta. Aperto: perché
-il mark 0 sia mal rilevato proprio in quelle quattro foto (è l'unico con un
-vicino, lo zero-indice) e perché `gross-outlier?` non lo prenda.
+foto tenute fuori, e sulla sessione che l'ha motivato si rifiuta.
+
+**E poi si è trovata la causa vera, che valeva molto più della calibrazione.**
+Guardando il residuo PER MARK invece che per foto: ogni foto cattiva aveva
+esattamente UN pick sballato fra 6.1 e 9.4px, con tutti gli altri undici sotto il
+pixel. Non geometria: click sbagliati. `gross-outlier?` non li prendeva perché la
+sua metà assoluta valeva 0.75% della larghezza — 14.4px su 1920 — tarata sui
+CLICK A MANO, dove qualche pixel è la mano. Il rilevamento automatico dei
+dischetti centra a mezzo pixel, quindi lì un punto a 9px è venti volte gli altri
+ed è ovviamente sbagliato, e restava. Portata a 0.15% (2.9px su 1920, 6px su
+4032; sui click a mano comanda ancora la metà RELATIVA, quindi quel percorso non
+cambia), la stessa sessione passa da **2.1px a 0.6px**:
+
+    foto 1  2.24 → 1.05    foto 3  3.03 → 0.57    foto 4  3.42 → 1.14
+    foto 5  2.31 → 0.43    foto 11 2.74 → 0.31    foto 12 2.40 → 0.31
+
+E ricalibrando DOPO la pulizia, il piatto risulta piano entro **0.24mm**, che la
+verifica a foto tenute fuori non conferma neanche. Confermato dalla mano: Vincenzo
+ha fatto girare il piatto guardando un punto fisso — si alza in un punto solo del
+cerchio, meno di un millimetro. Il piatto è a posto; erano sei click.
+
+Confutate lungo la strada, con misure: la distorsione della lente (scansione di
+k1: minimo a −0.02 per uno 0.1% di guadagno) e il decentramento dei mark
+nell'immagine (le foto 9-12 hanno raggio medio identico, 248px, e residui da 0.36
+a 2.74).
 
 - `photogrammetry/plate-calib`: alterna triangolazione dei mark (pose ferme) e
   PnP delle pose (mark fermi). Il **gauge** è il punto delicato: mark e pose

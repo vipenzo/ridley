@@ -105,11 +105,14 @@ the plate you actually own. You calibrate once, per plate, not per session.
 
 **Expect it to refuse, and take the refusal seriously.** The first real ⌀300 we
 tried it on looked convincingly warped — 1.97mm at the worst mark, its own
-residual falling from 2.18 to 1.78px — and was not warped at all. One mark's pick
-was wrong in four frames out of twelve; drop that mark and those four frames fall
-from 3.4/2.3/3.0/2.4px to 1.5/0.4/0.3/0.3 against the *untouched model*. The
-calibration had been bending the plate around a bad click, and only the held-out
-test could tell. A plate that fails the test is usually a plate that is fine.
+residual falling from 2.18 to 1.78px — and was not warped at all. Six of its
+twelve photographs carried exactly one blown pick each, 6 to 9px against eleven
+sub-pixel marks; with those dropped the session sits at 0.6px instead of 2.1, and
+the plate measures flat to a quarter of a millimetre. Its owner confirmed it by
+hand, spinning it against a fixed point: one rise, under a millimetre.
+
+A plate that fails the test is usually a plate that is fine, and the failure is
+usually pointing at the clicks.
 
 The measurement takes the plate's **shape** and leaves its **size** alone, and
 that division is not a shortcut — it is what photographs can and cannot see. A

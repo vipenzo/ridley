@@ -116,11 +116,16 @@ the noise of the views it was handed. Only a held-out photograph can, and the
 difference matters: adopting a bad plate makes every future session worse in a
 way nothing else will report.
 
-Expect refusals. The first real ⌀300 produced a convincing 1.97mm warp with its
-residual falling from 2.18 to 1.78px, and held out it made **eight of twelve
-photographs worse**. The whole effect was one mark whose pick was wrong in four
-frames. When `C` refuses it prints the held-out numbers per photograph and sends
-you back to the clicks, which is where the error was.
+Expect refusals, and read them as being about the clicks. The first real ⌀300
+produced a convincing 1.97mm warp with its residual falling from 2.18 to 1.78px,
+and held out it made **eight of twelve photographs worse**. Looked at per mark
+rather than per photograph, every bad frame turned out to carry exactly one blown
+pick — 6 to 9px, with the other eleven marks sub-pixel. With those dropped the
+session sits at 0.6px instead of 2.1, and the same plate then measures flat to a
+quarter of a millimetre. It was six wrong clicks wearing the shape of a warp.
+
+When `C` refuses it prints the held-out numbers per photograph, which is where to
+look next.
 
 Three more things are worth knowing:
 

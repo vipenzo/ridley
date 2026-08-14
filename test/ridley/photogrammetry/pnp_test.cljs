@@ -171,9 +171,54 @@
     (is (< (:rms-px sol) 1.5)
         (str "tolto quello, il resto è pulito (" (fmt (:rms-px sol) 2) "px)")))
 
-  (testing "e su un fotogramma da 4032px la soglia resta quella di prima (~30px)"
-    (is (< (Math/abs (- 30.0 (* pnp/outlier-floor-frac 4032.0))) 1.0)
-        "il percorso delle foto da telefono non deve cambiare"))
+  (testing "un punto sbagliato di 9px fra undici sotto il pixel va tolto lo stesso
+
+   È il caso che il rilevamento automatico dei dischetti produce, e che la soglia
+   assoluta lasciava passare: undici mark a 0.4px e uno a 9px, cioè venti volte
+   gli altri, sotto un pavimento di 14.4px tarato sui click a mano. Misurato su
+   una sessione vera da 12 viste (2026-08-14): SEI foto portavano esattamente un
+   pick sballato fra 6.1 e 9.4px, nessuno veniva scartato, e tenevano la sessione
+   a 2.1px — abbastanza convincenti, tutti insieme, da essere scambiati per un
+   piatto imbarcato. Con la soglia giusta la stessa sessione sta a 0.6px."
+    (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+          pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+          marks (ring-marks 12 58.0 1.5)
+          rng (synth/rng 17)
+          clean (vec (map-indexed
+                      (fn [i w] {:ci i :world w
+                                 :px (let [[u v] (cam/project kk pose w)]
+                                       [(+ u (* 0.4 (synth/gauss rng)))
+                                        (+ v (* 0.4 (synth/gauss rng)))])})
+                      marks))
+          bad (update-in clean [3 :px] (fn [[u v]] [(+ u 7.0) (- v 6.0)]))
+          sol (pnp/solve-pnp bad kk {})]
+      (is (some #(= 3 (:ci %)) (:outliers sol))
+          "un pick a ~9px fra dieci sotto il pixel è sbagliato, non rumore")
+      (is (< (:rms-px sol) 0.8)
+          (str "e tolto quello il resto è pulito (" (fmt (:rms-px sol) 2) "px)"))))
+
+  (testing "ma un click a mano non viene punito per essere un click a mano
+
+   La soglia assoluta è scesa da 0.75% a 0.15% della larghezza — 6px invece di 30
+   su una foto da 4032. Quello che protegge il percorso a mano non è più il
+   pavimento ma la metà RELATIVA del test: con click a 3px di rumore la mediana è
+   dell'ordine del pixel e `outlier-factor × mediana` supera il pavimento, quindi
+   lì comanda ancora quella. Questo è ciò che va verificato — il comportamento,
+   non la costante, che era quello che il test diceva prima e che ha impedito di
+   cambiarla per il caso giusto."
+    (let [kk {:fx 3000.0 :fy 3000.0 :cx 2016.0 :cy 1512.0 :k1 0.0 :k2 0.0}
+          pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+          rng (synth/rng 23)
+          corr (vec (map-indexed
+                     (fn [i w] {:ci i :world w
+                                ;; 3px di rumore: la mano, su una foto da telefono
+                                :px (let [[u v] (cam/project kk pose w)]
+                                      [(+ u (* 3.0 (synth/gauss rng)))
+                                       (+ v (* 3.0 (synth/gauss rng)))])})
+                     (ring-marks 12 58.0 1.5)))
+          sol (pnp/solve-pnp corr kk {})]
+      (is (empty? (:outliers sol))
+          (str "nessun click onesto va scartato (scartati " (mapv :ci (:outliers sol)) ")"))))
 
   (testing "dati puliti: non si scarta niente"
     (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}

@@ -285,13 +285,28 @@
 
 (def outlier-floor-frac
   "The absolute half of the gross-outlier test, as a fraction of the image WIDTH.
-   It used to be a flat 30px, which is 0.75% of a 4032px phone photo — right for
-   the regime it was chosen in, and far too permissive on a 1920px live frame,
-   where the same physical error images at half the pixels. A misidentified mark
-   26px off a 1920px frame is exactly as gross as one 55px off a 4032px photo, and
-   the test now says so. At 4032px this reproduces the old 30px almost exactly, so
-   the photo path is unchanged."
-  0.0075)
+
+   It has been lowered twice, each time because it was carrying an assumption
+   about how the points were produced. It began as a flat 30px — 0.75% of a
+   4032px phone photo, right for HAND-CLICKED corners, where a few pixels of
+   error is just the hand. Scaling it to the image width fixed the 1920px live
+   frame, but kept the assumption.
+
+   Automatic blob detection broke it. A detected disc centre lands within half a
+   pixel, so eleven good marks sit at 0.4px and a wrong one at 9px is TWENTY
+   times the rest — obviously wrong by any reading, and still under a 14.4px
+   floor. Measured on a twelve-view ⌀300 session (2026-08-14): six photographs
+   carried exactly one blown pick each, at 6.1 to 9.4px, with every other mark
+   sub-pixel. None was dropped. They held the session at 2.1px, and they were
+   convincing enough as a group to be mistaken for a warped plate.
+
+   0.15% is 2.9px on a 1920px frame and 6px on a 4032px photo. On hand-clicked
+   work the RELATIVE half of the test (`outlier-factor` × the median of the
+   others) is larger than this and still governs, so that path keeps the
+   behaviour it was tuned for; on sub-pixel detections the floor is what has to
+   move, because there the median is small and the relative test alone would flag
+   ordinary noise."
+  0.0015)
 
 (defn- outlier-floor-px
   "The gross-outlier floor in px for this image, read off the intrinsics — the
