@@ -514,9 +514,26 @@
              (if (underdetermined? rfn (:params res))
                {:error (str "questi agganci non fissano tutto il movimento: "
                             (if (and (>= (count planes) 2) (empty? points))
+                              ;; Naming the point-mark first was writing a cheque the
+                              ;; app cannot cash: nothing in the UI produces a mark
+                              ;; whose ORIGIN is a physical feature. The plane gesture's
+                              ;; origin is the centroid of wherever you clicked, so
+                              ;; declaring `:point? true` on one would be declaring
+                              ;; something untrue (Vincenzo 2026-08-14: «come faccio a
+                              ;; inserirlo?» — he could not, and there was no way to
+                              ;; know that from here). So the reachable remedy goes
+                              ;; first, and the point is named as what it is: something
+                              ;; you can only write by hand, if you have the numbers.
                               (str "due piani lasciano libero lo scorrimento lungo la loro "
-                                   "intersezione. Aggiungi un TERZO piano con la normale in "
-                                   "un'altra direzione, oppure un mark su un punto vero")
+                                   "intersezione. Serve un TERZO piano con la normale in "
+                                   "un'altra direzione. Se su quella faccia non riesci a "
+                                   "cliccare tre punti, misurane due SPIGOLI e ricavane il "
+                                   "piano: `(plane-from-edges :spigolo-1 :spigolo-2)` fra i "
+                                   ":marks vale come un piano qualunque. In alternativa, se "
+                                   "hai le coordinate di un punto FISICO ripetibile in "
+                                   "entrambe le sessioni (uno spigolo, una tacca), scrivilo "
+                                   "a mano come `(plane-mark {… :point? true})` — non c'è "
+                                   "un gesto che lo produca")
                               (str "gli agganci sono allineati o le normali sono tutte "
                                    "parallele fra loro. Serve un aggancio fuori da quella "
                                    "direzione")))}
