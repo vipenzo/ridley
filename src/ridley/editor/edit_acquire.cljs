@@ -5651,8 +5651,32 @@
    Not fused in v1: `:shapes` stay the reference session's (a traced outline is
    geometry, not a pose; transporting it is a separate move)."
   [& args]
-  (let [[x y] args]
+  (let [[x y] args
+        ;; `(acquire-union :A A :B B)` — the labels and the sessions written as
+        ;; keyword ARGUMENTS instead of as pairs. It is the natural mistake:
+        ;; everything else that takes a name and a value in this language reads
+        ;; that way, and the shape is one bracket away from correct. Worth
+        ;; recognising by name, because the generic refusal below sends you to
+        ;; read the signature when you already know it (Vincenzo 2026-08-14).
+        kwargs? (and (>= (count args) 4)
+                     (even? (count args))
+                     (every? keyword? (take-nth 2 args))
+                     (every? acq? (take-nth 2 (rest args))))]
     (cond
+      kwargs?
+      (do (state/capture-println
+           (str ";; acquire-union: le sessioni vanno a COPPIE dentro un vettore, non "
+                "come argomenti a chiave.\n"
+                ";;   hai scritto:  (acquire-union "
+                (str/join " " (map (fn [a] (if (keyword? a) (str a) "…")) args)) ")\n"
+                ";;   va scritto:   (acquire-union [["
+                (str/join "] [" (map (fn [[k _]] (str k " …"))
+                                     (partition 2 args)))
+                "]])\n"
+                ";; Il vettore serve perché l'ORDINE conta: la prima sessione è quella "
+                "di riferimento, e la fusione va nel suo frame."))
+          nil)
+
       (not (labelled-sessions? x))
       (do (state/capture-println
            (str ";; acquire-union: le sessioni vanno etichettate, così ogni mark resta "
