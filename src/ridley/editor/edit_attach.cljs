@@ -425,6 +425,7 @@
   [mesh-name]
   (let [panel (.createElement js/document "div")]
     (set! (.-id panel) "edit-attach-panel")
+    (.setAttribute panel "data-manual" "edit-attach")
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>edit-attach " mesh-name "</div>"
                "<div class='pilot-controls'>"

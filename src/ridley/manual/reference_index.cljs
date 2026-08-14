@@ -498,6 +498,15 @@
     :description "Opens the **registration session** for a folder of photographs: the modal room where you tell Ridley where each camera was standing. It is the form you write first, and the only one you write by hand — everything else in the acquisition family is written back into your source when you confirm."
     :path "docs/manual/reference/en/edit-acquire.md"}
 
+   "edit-attach"
+   {:name "edit-attach"
+    :category "live-interactive"
+    :status "stable"
+    :since ""
+    :signature "(edit-attach mesh)\n(edit-attach mesh cmd …)"
+    :description "Place a mesh **by hand**, and keep the placing as code. The session opens a gizmo on the object — translation arrows, rotation rings, stretch handles — and every drag or arrow key becomes a turtle command. On confirm, the form you ran is rewritten into a plain `(attach …)` carrying the commands you made."
+    :path "docs/manual/reference/en/edit-attach.md"}
+
    "edit-attach-request!"
    {:name "edit-attach-request!"
     :category "live-interactive"

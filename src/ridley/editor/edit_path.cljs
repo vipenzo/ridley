@@ -1501,6 +1501,9 @@
   (let [panel (.createElement js/document "div")
         td? (three-d? @session)]
     (set! (.-id panel) "edit-path-panel")
+    ;; the header "?" opens this editor's manual card (modal/mount-panel!).
+    ;; 3D and 2D are two different gestures with two different pages.
+    (.setAttribute panel "data-manual" (if td? "edit-path" "edit-path-2d"))
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>" (if td? "edit-path" "edit-path-2d")
                "<span class='pilot-mode-badge'>" (if td? "3D rail" "polyline") "</span></div>"

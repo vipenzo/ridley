@@ -24,6 +24,7 @@
             [ridley.editor.state :as state]
             [ridley.editor.codemirror :as cm]
             [ridley.editor.source-edit :as source-edit]
+            [ridley.manual.reference-browser :as refbrowser]
             [ridley.scene.registry :as registry]))
 
 ;; ============================================================
@@ -122,23 +123,46 @@
    element."
   [panel-el]
   (.add (.-classList panel-el) "modal-panel")
-  ;; Declutter: any element tagged `.modal-help` (the keyboard-shortcut cheatsheet) is
-  ;; collapsed by default and revealed by a small "?" toggle dropped into the header.
-  ;; Editors opt in just by adding the class — the toggle is wired here, once.
-  (when-let [^js help (.querySelector panel-el ".modal-help")]
-    (set! (.. help -style -display) "none")
-    (when-let [^js header (.querySelector panel-el ".pilot-header")]
+  ;; The header "?" — one affordance, wired here once, for every modal editor.
+  ;;
+  ;; It used to toggle an inline cheatsheet tagged `.modal-help`. That put the
+  ;; keys in two places at once (the panel and the editor's manual card) and kept
+  ;; the explanation of what the gesture DOES nowhere you could reach it without
+  ;; abandoning the gesture. edit-edge-mark went the other way first — terse rows
+  ;; on the panel, "?" to the manual — and it is the better arrangement, so it
+  ;; becomes the shared one (Vincenzo 2026-08-14: «il punto interrogativo apre una
+  ;; pagina del manuale che spiega bene cosa succede lì»).
+  ;;
+  ;; An editor opts in with data-manual="<card name>" on its panel. Without one,
+  ;; the old inline toggle still works, so a panel that has not been given a card
+  ;; degrades to what it did before instead of losing its help.
+  (let [card (.getAttribute panel-el "data-manual")
+        ^js help (.querySelector panel-el ".modal-help")
+        ^js header (.querySelector panel-el ".pilot-header")]
+    (when (and header (or card help))
+      (when help (set! (.. help -style -display) "none"))
       (let [^js btn (.createElement js/document "button")]
         (set! (.-type btn) "button")
         (set! (.-className btn) "modal-help-toggle")
         (set! (.-textContent btn) "?")
-        (set! (.-title btn) "Keyboard shortcuts")
+        (set! (.-title btn) (if card
+                              (str "Open the manual on " card)
+                              "Keyboard shortcuts"))
         (.addEventListener btn "click"
                            (fn [^js e]
                              (.preventDefault e)
-                             (let [hidden? (= "none" (.. help -style -display))]
-                               (set! (.. help -style -display) (if hidden? "block" "none"))
-                               (.toggle (.-classList btn) "active" hidden?))))
+                             (if card
+                               ;; a card that cannot be resolved must not swallow
+                               ;; the click: fall back to whatever is inline
+                               (when-not (refbrowser/open-card! card)
+                                 (when help
+                                   (let [hidden? (= "none" (.. help -style -display))]
+                                     (set! (.. help -style -display)
+                                           (if hidden? "block" "none")))))
+                               (when help
+                                 (let [hidden? (= "none" (.. help -style -display))]
+                                   (set! (.. help -style -display) (if hidden? "block" "none"))
+                                   (.toggle (.-classList btn) "active" hidden?))))))
         (.appendChild header btn))))
   (when-let [terminal (.getElementById js/document "repl-terminal")]
     (when-let [input-line (.getElementById js/document "repl-input-line")]

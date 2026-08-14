@@ -1608,6 +1608,7 @@
   [mesh-name]
   (let [panel (.createElement js/document "div")]
     (set! (.-id panel) "edit-mesh-split-panel")
+    (.setAttribute panel "data-manual" "edit-mesh-split")
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>edit-mesh-split " mesh-name "</div>"
                "<div class='pilot-controls'>"
