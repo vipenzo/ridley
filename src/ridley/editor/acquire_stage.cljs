@@ -238,9 +238,15 @@
 ;;           true/-     il segno: disco+origine per un piano, il segmento per
 ;;                      uno spigolo (il default)
 ;;           :prove     anche i punti da cui è stato ricavato
-;;   :label  false      nessuna scritta
+;;   :label  false/-    nessuna scritta sul palcoscenico ordinario
+;;           true       il suo nome
 ;;           "testo"    quella scritta
-;;           true/-     il suo nome (il default)
+;;
+;; :label si legge diversamente DENTRO il gesto Spigolo, dove tutto porta il suo
+;; nome perché stai lavorando su un elenco: lì l'assenza vale "il suo nome" e
+;; solo `false` tace. Fuori, l'assenza tace — altrimenti ogni mark e ogni spigolo
+;; di ogni sessione fusa scriverebbe sopra la foto, che è la confusione che
+;; queste chiavi esistono per togliere.
 ;;
 ;; The default DROPPED the fitted points on purpose: three or more dots per
 ;; plane were the bulk of what made the viewport unreadable, and they are
@@ -327,7 +333,7 @@
 
 (declare plane-preview-items edge-preview-items)
 
-(declare edge-labels edge-mode?)
+(declare edge-labels edge-mode? declared-labels)
 
 (defn- show-frustums!
   "Repaint the stage's OWN overlay layer: the ghost frustums (free orbit) plus
@@ -345,11 +351,30 @@
                                     (into (source-edge-items))
                                     (into (plane-preview-items))
                                     (into (edge-preview-items))))
-  ;; ONLY while the gesture is on. set-labels! is global and replaces whatever is
-  ;; there, so calling it on every repaint would wipe the labels an open
-  ;; edit-path-2d ricalco has put up — and the stage repaints on every photo
-  ;; change, which is exactly when a ricalco is being navigated.
-  (when (edge-mode?) (viewport/set-labels! (vec (edge-labels)))))
+  ;; set-labels! is GLOBAL and replaces whatever is there, so calling it on every
+  ;; repaint would wipe the labels an open edit-path-2d ricalco has put up — and
+  ;; the stage repaints on every photo change, which is exactly when a ricalco is
+  ;; being navigated. Hence the gate; what changed is who is allowed through it.
+  ;;
+  ;; The gesture labels everything, as before. The ORDINARY stage now labels what
+  ;; the source explicitly asked to be labelled — `:label true` or `:label
+  ;; "testo"` on a mark or an edge — because that key is a property of the thing
+  ;; and not of the gesture, and reading it only inside the gesture made it a
+  ;; promise the stage did not keep (Vincenzo 2026-08-14: «non riesco più a
+  ;; vedere le labels di :e1», with `:show true` written and nothing appearing).
+  ;;
+  ;; It matters most for the job that raised it: pairing edges across two
+  ;; sessions for acquire-union means RENAMING them to match, and you cannot
+  ;; rename what you cannot see the name of.
+  ;;
+  ;; Absent `:label` still shows nothing out here. That is the quiet default the
+  ;; display keys exist to protect — «troppi puntini e lineette» — so the stage
+  ;; stays legible until something is asked for by name.
+  (let [asked (vec (declared-labels))]
+    (cond
+      (edge-mode?) (viewport/set-labels! (vec (edge-labels)))
+      ;; never clobber a modal editor's own labels
+      (and (seq asked) (not (modal/active?))) (viewport/set-labels! asked))))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -2519,6 +2544,35 @@
                         (when-let [txt (label-of nm mark)]
                           {:text txt :position (vec (:position mark))
                            :color fresh-plane-color})))
+                    (:source-marks @stage))))))
+
+(defn- declared-labels
+  "The labels the SOURCE asked for by name, drawn on the ordinary stage.
+
+   Stricter than `label-of` on purpose. `label-of` treats an absent `:label` as
+   'use its name', which is the right default INSIDE the edge gesture, where
+   everything is named because you are working through a list of them. Out here
+   that same default would put a name on every mark and every edge of every
+   session — the crowding the display keys were introduced to stop.
+
+   So: only an explicit `:label` counts. `:label true` asks for the thing's own
+   name, `:label \"testo\"` for that text, `:label false` (or absent) for
+   nothing. `:show false` still wins over all of it — a name floating over
+   something that isn't drawn is worse than no name."
+  []
+  (let [asked? (fn [m] (and (map? m) (contains? m :label) (not (false? (:label m)))
+                            (shown? m)))
+        text (fn [nm m] (if (string? (:label m)) (:label m) (name nm)))]
+    (-> []
+        (into (keep (fn [[nm e]]
+                      (when (asked? e)
+                        (when-let [p (edge-anchor e)]
+                          {:text (text nm e) :position p :color source-edge-color})))
+                    (:source-edges @stage)))
+        (into (keep (fn [[nm mark]]
+                      (when (and (asked? mark) (:position mark))
+                        {:text (text nm mark) :position (vec (:position mark))
+                         :color fresh-plane-color}))
                     (:source-marks @stage))))))
 
 ;; ---- the gesture ----

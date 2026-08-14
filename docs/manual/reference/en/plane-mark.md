@@ -66,7 +66,13 @@ asking for and not worth carrying always.
   `:from [[x y z] …]`, the triangulated points the plane was fitted through
   (see `edit-plane-mark`), and the display keys `:show` (`true` by default,
   `false` to hide it, `:prove` to add its fitted points) and `:label` (`true`
-  by default, `false` to hide the name, or a string to replace it).
+  to write its name, a string to write that instead, `false` or absent for
+  none).
+
+  `:label` has two defaults, by context. Inside a mark gesture everything is
+  named unless it says otherwise, because you are working through a list. On the
+  ordinary stage nothing is named unless it asks — a fused acquisition can hold
+  every mark of every session, and naming them all buries the photograph.
 
 ## Examples
 
