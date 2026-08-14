@@ -370,11 +370,14 @@
   ;; Absent `:label` still shows nothing out here. That is the quiet default the
   ;; display keys exist to protect — «troppi puntini e lineette» — so the stage
   ;; stays legible until something is asked for by name.
-  (let [asked (vec (declared-labels))]
-    (cond
-      (edge-mode?) (viewport/set-labels! (vec (edge-labels)))
-      ;; never clobber a modal editor's own labels
-      (and (seq asked) (not (modal/active?))) (viewport/set-labels! asked))))
+  (cond
+    (edge-mode?) (viewport/set-labels! (vec (edge-labels)))
+    ;; Unconditional when nobody else owns the labels, INCLUDING when the answer
+    ;; is none: set-labels! is what clears them, so skipping the call on an empty
+    ;; list would leave the last ones hanging in the air — after the Marks button
+    ;; is switched off, or after the edge gesture closes.
+    ;; And never clobber a modal editor's own labels.
+    (not (modal/active?)) (viewport/set-labels! (vec (declared-labels)))))
 
 ;; ------------------------------------------------------------
 ;; In-pose / free-orbit transitions. In pose the camera is locked (set-camera-pose!
@@ -2558,22 +2561,25 @@
    So: only an explicit `:label` counts. `:label true` asks for the thing's own
    name, `:label \"testo\"` for that text, `:label false` (or absent) for
    nothing. `:show false` still wins over all of it — a name floating over
-   something that isn't drawn is worse than no name."
+   something that isn't drawn is worse than no name, and that holds for the
+   toolbar's **Marks** switch too: it hides every mark and edge the source holds,
+   so it hides their names with them. A label is a thing's name, not a thing."
   []
-  (let [asked? (fn [m] (and (map? m) (contains? m :label) (not (false? (:label m)))
-                            (shown? m)))
-        text (fn [nm m] (if (string? (:label m)) (:label m) (name nm)))]
-    (-> []
-        (into (keep (fn [[nm e]]
-                      (when (asked? e)
-                        (when-let [p (edge-anchor e)]
-                          {:text (text nm e) :position p :color source-edge-color})))
-                    (:source-edges @stage)))
-        (into (keep (fn [[nm mark]]
-                      (when (and (asked? mark) (:position mark))
-                        {:text (text nm mark) :position (vec (:position mark))
-                         :color fresh-plane-color}))
-                    (:source-marks @stage))))))
+  (when (:show-source-marks? @stage true)
+    (let [asked? (fn [m] (and (map? m) (contains? m :label) (not (false? (:label m)))
+                              (shown? m)))
+          text (fn [nm m] (if (string? (:label m)) (:label m) (name nm)))]
+      (-> []
+          (into (keep (fn [[nm e]]
+                        (when (asked? e)
+                          (when-let [p (edge-anchor e)]
+                            {:text (text nm e) :position p :color source-edge-color})))
+                      (:source-edges @stage)))
+          (into (keep (fn [[nm mark]]
+                        (when (and (asked? mark) (:position mark))
+                          {:text (text nm mark) :position (vec (:position mark))
+                           :color fresh-plane-color}))
+                      (:source-marks @stage)))))))
 
 ;; ---- the gesture ----
 
@@ -3437,8 +3443,9 @@
                                           "Next photo (turntable order) — key ]"
                                           #(nav-photo! 1)))
         (.appendChild wrap (make-tool-btn "eaq-stage-marks" "Marks"
-                                          (str "Show/hide ALL the marks and edges the source holds. "
-                                               "To hide just one, put :show false on it.")
+                                          (str "Show/hide ALL the marks and edges the source holds, "
+                                               "names included. To hide just one, put :show false "
+                                               "on it; for its name only, :label false.")
                                           toggle-source-marks!))
         (.appendChild wrap (make-tool-btn "eaq-stage-plane" "Plane"
                                           (str "Working plane from POINTS: click the same point on 2+ "
