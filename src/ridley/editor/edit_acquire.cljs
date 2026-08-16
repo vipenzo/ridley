@@ -5446,7 +5446,15 @@
                            (str ";;   " (clj->js kind) " " name "  " (n residual-mm) " mm"
                                 (when normal-deg (str " · " (n normal-deg) "°"))))
                          per-anchor))
-          "\n;;   rms " (n rms-mm) " mm · normali max " (n max-normal-deg) "° · "
+          ;; The degrees are converted into millimetres per 10mm of distance,
+          ;; because that is the only way they can be compared with the rms next
+          ;; to them — and they usually WIN. A residual in mm is a rigid offset,
+          ;; the same everywhere; an angle is a lever that grows with distance
+          ;; from the anchor, which is exactly why geometry built far from a mark
+          ;; stops covering the object while the numbers look small.
+          "\n;;   rms " (n rms-mm) " mm · normali max " (n max-normal-deg) "° ("
+          (n (* 10.0 (Math/tan (* max-normal-deg (/ Math/PI 180.0)))))
+          " mm ogni 10 mm dal mark) · "
           planes " piani"
           (when (pos? (or edges 0)) (str " + " edges " spigoli"))
           (when (pos? points) (str " + " points " punti"))))
