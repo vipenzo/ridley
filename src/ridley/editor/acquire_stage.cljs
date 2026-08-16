@@ -1836,7 +1836,9 @@
                ";;   per correggerlo, correggi un bordo: (edit-edge-mark) al posto "
                "di quello sbagliato."))
          mark)
-     (do (swap! stage (fn [s] (update (or s {}) :pending-edits (fnil conj []) {:mark mark})))
+     (do (swap! stage (fn [s] (-> (or s {})
+                                  (update :pending-edits (fnil conj []) {:mark mark})
+                                  (assoc :edit-claim-open? true))))
          mark))))
 
 (defn- edit-mark-bounds
@@ -3289,8 +3291,10 @@
    decision, not a detail of this one."
   ([kind] (request-edge-edit! kind nil))
   ([kind e]
-   (swap! stage (fn [s] (update (or s {}) :pending-edge-edits (fnil conj [])
-                                {:kind kind :mark e})))
+   (swap! stage (fn [s] (-> (or s {})
+                            (update :pending-edge-edits (fnil conj [])
+                                    {:kind kind :mark e})
+                            (assoc :edit-claim-open? true))))
    e))
 
 (defn- start-edge!
@@ -3574,22 +3578,56 @@
   (let [emit (or pose (:creation-pose proxy))]
     (swap! stage
            (fn [s]
-             (assoc (or s {})
-                    :pending {:dir dir
-                              :emit-pose emit
-                              :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))
-                              :marks marks
-                              :edges edges
-                              ;; every session whose photos belong on the film. One
-                              ;; entry for a lone (acquire …); one per fused session
-                              ;; for an (acquire-union …), each with the rigid motion
-                              ;; that carries its cameras into this frame.
-                              :sessions (or sessions [{:dir dir :emit-pose emit}])
-                              ;; a registration PLATE (it carries named marks)
-                              ;; — its axis is a usable 'the object rests on
-                              ;; this' normal, which unlocks the one-click
-                              ;; plane-mark case. A box's heading is not.
-                              :plate? (boolean (seq (:anchors proxy)))})))))
+             (let [s (or s {})
+                   ;; WHO OWNS THE STAGE when several acquires are evaluated.
+                   ;;
+                   ;; Plain rule: the last one wins. With an acquire-union that is
+                   ;; the union, which is right — the fused film is the point of
+                   ;; fusing. But it is wrong the moment a mark or an edge is being
+                   ;; EDITED, and wrong in two ways at once (Vincenzo 2026-08-16):
+                   ;;
+                   ;; - the fused film offers the OTHER session's photos, whose
+                   ;;   cameras were carried here BY the fitted motion. Re-measuring
+                   ;;   an anchor on those feeds the fusion's own error back into
+                   ;;   the anchors that determine it. The residuals fall and mean
+                   ;;   nothing;
+                   ;; - a mark of the non-reference session is drawn in the
+                   ;;   reference's frame, so its candidate disc sits wherever the
+                   ;;   motion put it, not where the literal says.
+                   ;;
+                   ;; The workaround was to comment out the union AND the other
+                   ;; session, since only the last one evaluated counted — «è un po'
+                   ;; macchinoso». So: an edit request opens a CLAIM, and the next
+                   ;; acquire to evaluate takes it. That is always the one whose
+                   ;; source holds the form, because the `:marks`/`:edges` map is
+                   ;; evaluated as an argument, before its own acquire runs. Later
+                   ;; notes in the same eval — the other session, the union — leave
+                   ;; it alone.
+                   claim? (:edit-claim-open? s)
+                   held? (:edit-claimed? s)]
+               (if (and held? (not claim?))
+                 s
+                 (assoc s
+                        ;; the claim is consumed here and held for the rest of the
+                        ;; eval; after-eval! clears both
+                        :edit-claim-open? false
+                        :edit-claimed? (or claim? held?)
+                        :pending
+                        {:dir dir
+                         :emit-pose emit
+                         :dims (bridge/dims-from-mesh proxy (:creation-pose proxy))
+                         :marks marks
+                         :edges edges
+                         ;; every session whose photos belong on the film. One
+                         ;; entry for a lone (acquire …); one per fused session
+                         ;; for an (acquire-union …), each with the rigid motion
+                         ;; that carries its cameras into this frame.
+                         :sessions (or sessions [{:dir dir :emit-pose emit}])
+                         ;; a registration PLATE (it carries named marks)
+                         ;; — its axis is a usable 'the object rests on
+                         ;; this' normal, which unlocks the one-click
+                         ;; plane-mark case. A box's heading is not.
+                         :plate? (boolean (seq (:anchors proxy)))})))))))
 
 (defn after-eval!
   "Post-eval hook (mirrors modal/requested?→enter!): run AFTER refresh-viewport!.
@@ -3662,6 +3700,11 @@
     ;; plane editor on it — but only once the stage has its cameras, so on a
     ;; FRESH acquire (which loads them asynchronously) the request waits for the
     ;; load to resolve rather than being dropped.
+    ;; The stage-ownership claim lives for ONE eval. Left set it would hand the
+    ;; next Run's stage to whichever acquire happened to be first, long after the
+    ;; edit that justified it — so it is cleared here, on every path, whether or
+    ;; not an edit was actually opened.
+    (swap! stage dissoc :edit-claim-open? :edit-claimed?)
     (when (pending-edits?)
       (if (loaded?)
         (open-pending-edit!)
