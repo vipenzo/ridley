@@ -1819,8 +1819,25 @@
    the empty creation form)."
   ([] (request-mark-edit! nil))
   ([mark]
-   (swap! stage (fn [s] (update (or s {}) :pending-edits (fnil conj []) {:mark mark})))
-   mark))
+   ;; A `plane-from-edges` SPEC is not a measured plane and must not be opened as
+   ;; one. It is a formula, recomputed from the edges it names at every Run, and
+   ;; the gesture's confirm writes a `(plane-mark {…})` literal over whatever it
+   ;; was editing — so opening one would silently trade the formula for a frozen
+   ;; copy of today's answer, and correcting an edge afterwards would stop moving
+   ;; the plane. The lever for a formula is its edges (Vincenzo 2026-08-16, about
+   ;; to try exactly this).
+   (if (:plane-from mark)
+     (do (state/capture-println
+          (str ";; edit-plane-mark: "
+               (str/join " e " (map str (:plane-from mark)))
+               " è un piano-FORMULA, non un piano misurato: si rifà a ogni Run dai "
+               "bordi che nomina, quindi non c'è niente da ritoccare qui — e "
+               "aprirlo lo congelerebbe, perdendo il legame con i bordi.\n"
+               ";;   per correggerlo, correggi un bordo: (edit-edge-mark) al posto "
+               "di quello sbagliato."))
+         mark)
+     (do (swap! stage (fn [s] (update (or s {}) :pending-edits (fnil conj []) {:mark mark})))
+         mark))))
 
 (defn- edit-mark-bounds
   "[from to) of the `(edit-plane-mark …)` form in the buffer, or nil."
