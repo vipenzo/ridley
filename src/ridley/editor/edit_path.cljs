@@ -22,6 +22,7 @@
   (:require [ridley.editor.state :as state]
             [ridley.editor.codemirror :as cm]
             [ridley.editor.modal-evaluator :as modal]
+            [ridley.geometry.outline :as outline]
             [ridley.math :as m]
             [ridley.turtle.bezier :as bezier]
             [ridley.turtle.core :as turtle]
@@ -62,6 +63,7 @@
 (def ^:private handle-color 0x33ddff) ; FREE bezier handle (sets the tangent) — bright cyan
 (def ^:private handle-len-color 0x2b8a99) ; length-only handle (direction locked by smoothness) — muted teal
 (def ^:private cusp-color   0xff44cc) ; freed (cusp) outgoing handle — magenta
+(def ^:private cross-color  0xff0000) ; the outline crosses ITSELF here — red ring
 (def ^:private handle-radius   0.45)  ; bezier handle square half-size
 (def ^:private start-arrow-len 6)     ; 3D rail: affordance arrow length at node 0 (+X, the fixed start heading)
 (def ^:private node-radius     0.625) ; filled dot radius (plane units)
@@ -1382,6 +1384,28 @@
                                          c1col (if (false? (:smooth? (peek nodes))) cusp-color handle-len-color)]
                                      [{:from (peek pts) :to (->w c1) :color c1col}
                                       {:from (first pts) :to (->w c2) :color handle-color}]))
+            ;; DOES THE OUTLINE CROSS ITSELF? Asked here, on the tessellated
+            ;; curve, because a crossing is invisible in the node positions — a
+            ;; bezier can loop over a neighbour with every node in its place —
+            ;; and because THIS is where it can be fixed. Left to be discovered
+            ;; downstream it arrives as a mesh with a hole in each cap, three
+            ;; steps from the curve that caused it (Vincenzo 2026-08-17: «ho messo
+            ;; a posto LowPath, ma senza capire dov'era il problema»).
+            ;;
+            ;; Closed outlines only: an open path that crosses itself is a
+            ;; legitimate rail, and warning about it would be noise.
+            ring (when cl (vec (concat seg-lines closing)))
+            crossings (when (seq ring)
+                        (let [{:keys [px py origin]} basis
+                              to2 (fn [p] [(m/dot (m/v- p origin) px)
+                                           (m/dot (m/v- p origin) py)])]
+                          (outline/self-intersections (mapv (comp to2 :from) ring) true)))
+            cross-dots (mapv (fn [[x y]]
+                               (let [{:keys [px py origin]} basis]
+                                 {:pos (m/v+ origin (m/v+ (m/v* px x) (m/v* py y)))
+                                  :radius (* 1.6 node-radius-sel) :ring true
+                                  :normal normal :color cross-color}))
+                             crossings)
             segs (vec (concat seg-lines closing handle-lines closing-handle-lines))
             node-dots (mapv (fn [i pw]
                               (let [marked? (seq (:tail (nth nodes i)))
@@ -1412,7 +1436,8 @@
                                         c1col (if (false? (:smooth? (peek nodes))) cusp-color handle-len-color)]
                                     [{:pos (->w c1) :radius handle-radius :color c1col :square true :normal normal}
                                      {:pos (->w c2) :radius handle-radius :color handle-color :square true :normal normal}]))
-            dots (vec (concat node-dots handle-dots closing-handle-dots))]
+            dots (vec (concat node-dots handle-dots closing-handle-dots cross-dots))]
+        (swap! session assoc :crossings (count crossings))
         (viewport/show-preview! [{:type :lines :data segs :on-top true}
                                  {:type :dots :data dots}])
         (update-mark-labels! nodes pts)))))
@@ -1461,7 +1486,12 @@
                      (let [p (some-> (:nodes s) (nth (:selected s) nil) :pos)
                            r1 #(/ (js/Math.round (* % 10)) 10)]
                        (when (and p (vector? p))
-                         (str " · [" (r1 (nth p 0)) " " (r1 (nth p 1)) " " (r1 (nth p 2)) "]")))))))
+                         (str " · [" (r1 (nth p 0)) " " (r1 (nth p 1)) " " (r1 (nth p 2)) "]"))))
+                   ;; the one thing on this line that is not a fact but a problem
+                   (when (pos? (:crossings s 0))
+                     (str "  ⚠ il contorno si incrocia in " (:crossings s)
+                          (if (= 1 (:crossings s)) " punto" " punti")
+                          " (cerchi rossi) — l'estrusione ne uscirà bucata")))))
       ;; plane radios reflect the active plane
       (when (three-d? s)
         (doseq [[cls pl] [[".ep-plane-f" :f] [".ep-plane-r" :r] [".ep-plane-u" :u]]]
