@@ -70,11 +70,66 @@
     (transient {})
     faces)))
 
+(defn- boundary-loops
+  "The open edges chained into LOOPS, each described by where it is.
+
+   `open-edges 6` is a count, and a count cannot be looked at. Six open edges is
+   one hexagonal hole or two triangular ones, and those are different diseases:
+   two identical holes at the same place on two parallel caps say the OUTLINE is
+   at fault (the same polygon triangulated twice, failing twice), while one hole
+   somewhere on a side wall says something else entirely. The Euler
+   characteristic already carries that information — χ drops by one per hole —
+   but only if you know to read it that way, which is asking a lot of a number
+   printed next to five others (Vincenzo 2026-08-17: «non riesco a capire qual è
+   il problema»).
+
+   Each loop: {:edges n :centre [x y z] :size-mm d}, `size` being the largest
+   distance between two of its vertices — enough to tell a sliver from a gap."
+  [verts edge-counts]
+  (let [open (mapv first (filter (fn [[_ c]] (= 1 c)) edge-counts))
+        ;; adjacency over the boundary vertices only
+        adj (reduce (fn [m [a b]]
+                      (-> m (update a (fnil conj #{}) b)
+                          (update b (fnil conj #{}) a)))
+                    {} open)]
+    (loop [remaining (set open) loops []]
+      (if (empty? remaining)
+        loops
+        ;; walk one connected component of the boundary graph
+        (let [seed (first remaining)
+              comp- (loop [stack [(first seed)] seen #{} es #{}]
+                      (if-let [v (peek stack)]
+                        (let [stack (pop stack)]
+                          (if (seen v)
+                            (recur stack seen es)
+                            (let [nbrs (get adj v #{})]
+                              (recur (into stack nbrs)
+                                     (conj seen v)
+                                     (into es (map #(edge-key v %) nbrs))))))
+                        {:verts seen :edges es}))
+              vs (mapv #(nth verts %) (:verts comp-))
+              n (count vs)
+              centre (mapv (fn [i] (/ (reduce + 0.0 (map #(nth % i) vs)) (max 1 n)))
+                           [0 1 2])
+              size (reduce max 0.0
+                           (for [i (range n) j (range (inc i) n)]
+                             (let [a (nth vs i) b (nth vs j)]
+                               (Math/sqrt (reduce + 0.0 (map #(let [d (- (nth a %) (nth b %))]
+                                                                (* d d))
+                                                             [0 1 2]))))))]
+          (recur (reduce disj remaining (:edges comp-))
+                 (conj loops {:edges (count (:edges comp-))
+                              :centre centre
+                              :size-mm size})))))))
+
 (defn mesh-diagnose
   "Compute topological invariants of a mesh. Returns a map; never mutates.
    Keys: :n-verts :n-faces :n-edges :edge-incidence-distribution
          :open-edges :non-manifold-edges :degenerate-faces
-         :euler-characteristic :is-watertight?"
+         :euler-characteristic :is-watertight?
+         :boundaries — one entry per HOLE, with :edges :centre :size-mm, so a
+         non-watertight mesh says where to look instead of only how much is
+         missing (absent when the mesh is closed)."
   [mesh]
   (let [verts (:vertices mesh)
         faces (:faces mesh)
@@ -90,15 +145,17 @@
                                 (reduce + 0))
         degenerate (count (filter #(< (triangle-area verts %) 1e-10) faces))
         euler (+ n-verts (- n-edges) n-faces)]
-    {:n-verts n-verts
-     :n-faces n-faces
-     :n-edges n-edges
-     :edge-incidence-distribution edge-distribution
-     :open-edges open-edges
-     :non-manifold-edges non-manifold-edges
-     :degenerate-faces degenerate
-     :euler-characteristic euler
-     :is-watertight? (and (zero? open-edges) (zero? non-manifold-edges))}))
+    (cond-> {:n-verts n-verts
+             :n-faces n-faces
+             :n-edges n-edges
+             :edge-incidence-distribution edge-distribution
+             :open-edges open-edges
+             :non-manifold-edges non-manifold-edges
+             :degenerate-faces degenerate
+             :euler-characteristic euler
+             :is-watertight? (and (zero? open-edges) (zero? non-manifold-edges))}
+      (pos? open-edges)
+      (assoc :boundaries (boundary-loops verts edge-counts)))))
 
 ;; ── Mesh simplification (edge-collapse decimation) ──────────────
 

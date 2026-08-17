@@ -28,6 +28,25 @@ Returns a map with the following keys:
 | `:degenerate-faces`            | Triangles with area below `1e-10`.                                                   |
 | `:euler-characteristic`        | `V - E + F`. Closed manifold: 2 (sphere), 0 (torus). Each handle subtracts 2.         |
 | `:is-watertight?`              | `true` iff `:open-edges` and `:non-manifold-edges` are both zero.                    |
+| `:boundaries`                  | One entry per HOLE — `{:edges n :centre [x y z] :size-mm d}`. Absent when closed.     |
+
+## Where the hole is, not just how big
+
+`:open-edges 6` cannot be looked at, and it does not say what it looks like: six
+open edges is one hexagonal gap, or two triangles, or three slits. Those have
+different causes. `:boundaries` chains the open edges into loops and places each
+one, which usually identifies the fault on sight:
+
+- **two holes of the same size, facing each other on parallel caps** — the fault
+  is the OUTLINE, not the extrusion. The same polygon was triangulated twice and
+  failed twice, in the same spot. Look for the outline crossing itself there.
+- **one hole on a side wall** — a sweep or a loft that lost a ring.
+- **a long thin boundary** (`:size-mm` large, few edges) — usually a seam that did
+  not close, rather than a missing face.
+
+The Euler characteristic already carries some of this — χ drops by one per hole,
+so `χ = 0` on a closed-solid shape means *two* — but only if you know to read it
+that way, which is a lot to ask of one number among six.
 
 `mesh-diagnose` is pure ClojureScript — no Manifold WASM, no Rust
 server. Cheap enough to call inline during development to verify
