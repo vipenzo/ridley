@@ -1487,6 +1487,25 @@
                            r1 #(/ (js/Math.round (* % 10)) 10)]
                        (when (and p (vector? p))
                          (str " · [" (r1 (nth p 0)) " " (r1 (nth p 1)) " " (r1 (nth p 2)) "]"))))
+                   ;; How many segments are CURVED, and whether the seam is one of
+                   ;; them. Both were readable only by counting handles around a
+                   ;; node and knowing which colour means what — and the seam is
+                   ;; the worst case, because a straight one leaves the last node
+                   ;; showing a single handle that cannot even be dragged (it is
+                   ;; the seam's length-only c1). Vincenzo spent two rounds on
+                   ;; that shape of evidence (2026-08-17); the state itself is one
+                   ;; short phrase.
+                   (when-not (three-d? s)
+                     (let [nds (:nodes s)
+                           n (count nds)
+                           cl (closed? s)
+                           ;; a node's :bez is its INCOMING segment; on a closed
+                           ;; path node 0's is the seam
+                           curved (count (filter :bez (if cl nds (rest nds))))
+                           total (if cl n (dec n))]
+                       (str " · curve " curved "/" total
+                            (when cl
+                              (if (:bez (first nds)) " · cucitura curva" " · cucitura DIRITTA")))))
                    ;; the one thing on this line that is not a fact but a problem
                    (when (pos? (:crossings s 0))
                      (str "  ⚠ il contorno si incrocia in " (:crossings s)
