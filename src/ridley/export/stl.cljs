@@ -167,15 +167,82 @@
       (mesh->stl-binary {:vertices (:vertices merged)
                          :faces (:faces merged)}))))
 
+(def ^:private revoke-delay-ms
+  "How long an object URL is kept alive after the click that downloads it.
+
+   NOT zero, which is what revoking on the same tick amounts to: the click only
+   ASKS for a download, and on a multi-megabyte export the browser is still
+   opening the stream when the next statement runs. Sixty seconds costs one blob
+   of memory and removes a race whose failure mode is a truncated file."
+  60000)
+
 (defn- download-blob-fallback
-  "Download a blob using the traditional createElement('a') method."
+  "Download a blob using the traditional createElement('a') method.
+
+   The anchor is put IN the document before the click and taken out after, and
+   the object URL is revoked on a timer rather than on the spot. Both look like
+   ceremony and neither is: a detached anchor is the form browsers are least
+   consistent about honouring `download` on, and when they decline, the download
+   still succeeds — it just arrives named after the blob URL's UUID, with no
+   extension, which is how it was found (Vincenzo, 2026-08-18: a 388kB 3MF
+   downloaded correctly as `be831e7a-9785-…`, unopenable because nothing could
+   tell what it was). The failure is invisible from here: the file is whole, the
+   status line says it was saved, and only the Downloads folder disagrees."
   [blob filename]
   (let [url (js/URL.createObjectURL blob)
         link (js/document.createElement "a")]
     (set! (.-href link) url)
     (set! (.-download link) filename)
+    (set! (.. link -style -display) "none")
+    (.appendChild js/document.body link)
     (.click link)
-    (js/URL.revokeObjectURL url)))
+    (.removeChild js/document.body link)
+    (js/setTimeout (fn [] (js/URL.revokeObjectURL url)) revoke-delay-ms)))
+
+(defn- save-in-browser!
+  "Put a blob on the user's disk from the web build, and SAY where it went.
+
+   `build-blob` is a thunk returning Promise<Blob>, deliberately not a blob:
+   `showSaveFilePicker` needs the click that started all this to still be the
+   browser's current user activation, so the dialog has to open BEFORE the
+   seconds of CSG and zipping, not after.
+
+   Why a dialog at all, when `save-*-at` was written as the no-picker path: on
+   the desktop the destination really is part of what the user wrote, and honouring
+   it silently is right. In a browser there is no filesystem to honour it with,
+   and the silent alternative failed in the only way that matters — the download
+   arrived named after the blob's UUID, unopenable, and then (Vincenzo,
+   2026-08-18) did not arrive in the Downloads folder at all, with Chrome
+   declining to ask even with 'ask where to save' switched on. A file that the
+   status line calls saved and that nobody can find is worse than a dialog.
+
+   The download is kept as the fallback for browsers without the picker, and for
+   a picker that refuses (no user activation left)."
+  [build-blob filename]
+  (let [downloaded (fn []
+                     (-> (build-blob)
+                         (.then (fn [blob]
+                                  (download-blob-fallback blob filename)
+                                  (str "Nel browser non c'è un filesystem: " filename
+                                       " è stato SCARICATO nella cartella dei download "
+                                       "(la cartella che hai scritto è stata ignorata)."))))) ]
+    (if (exists? js/window.showSaveFilePicker)
+      (-> (js/window.showSaveFilePicker #js {:suggestedName filename})
+          (.then (fn [handle]
+                   (-> (build-blob)
+                       (.then (fn [blob]
+                                (-> (.createWritable handle)
+                                    (.then (fn [w]
+                                             (-> (.write w blob)
+                                                 (.then (fn [_] (.close w)))
+                                                 (.then (fn [_] (str "Salvato come "
+                                                                     (.-name handle)))))))))))))
+          (.catch (fn [err]
+                    (if (and err (= "AbortError" (.-name err)))
+                      (js/Promise.resolve "Salvataggio annullato.")
+                      (do (js/console.warn "save picker unavailable:" err)
+                          (downloaded))))))
+      (downloaded))))
 
 (defn- normalize-meshes
   "Coerce a mesh or seq of meshes into a vector of meshes."
@@ -387,16 +454,21 @@
       (env/desktop?)
       (-> (desktop-pick-save-path suggested)
           (.then (fn [chosen-path]
-                   (when chosen-path
+                   (if chosen-path
                      (-> (build-blob chosen-path)
                          (.then (fn [blob]
                                   (-> (desktop-write-file blob chosen-path)
                                       (.then (fn [_]
                                                (str "Exported " (count meshes)
-                                                    " mesh(es) to " chosen-path))))))))))
+                                                    " mesh(es) to " chosen-path)))))))
+                     ;; no path chosen. Say so — the same silence that made the
+                     ;; web branch print a Promise and leave nothing behind.
+                     "Esportazione annullata: nessun percorso scelto.")))
           (.catch (fn [err]
                     (js/console.warn "native save error:" err)
-                    nil)))
+                    (str "Esportazione FALLITA: il salvataggio nativo ha risposto «"
+                         (or (some-> err .-message) err)
+                         "». Nessun file scritto."))))
 
       ;; Chrome/Edge: File System Access API
       (exists? js/window.showSaveFilePicker)
@@ -417,9 +489,28 @@
                                                                  " mesh(es) to "
                                                                  filename)))))))))))))
           (.catch (fn [err]
-                    (when-not (and err (= "AbortError" (.-name err)))
-                      (js/console.warn "save picker error:" err))
-                    nil)))
+                    (if (and err (= "AbortError" (.-name err)))
+                      ;; the user closed the dialog: a decision, not a failure
+                      (js/Promise.resolve "Esportazione annullata.")
+                      ;; ANYTHING else and the export must still produce a file.
+                      ;; This used to return nil, and nil is how an export comes
+                      ;; to print a Promise and leave nothing on disk (Vincenzo,
+                      ;; 2026-08-18). The usual cause is not a broken picker but
+                      ;; a spent one: showSaveFilePicker may only open while the
+                      ;; click that started the evaluation is still the browser's
+                      ;; current user activation, and a few seconds of CSG is
+                      ;; enough to lose it. Falling back to the anchor download
+                      ;; needs no activation at all, so the file lands either way
+                      ;; — and the message says which happened rather than
+                      ;; leaving the Downloads folder to be searched.
+                      (do (js/console.warn "save picker unavailable:" err)
+                          (-> (build-blob suggested)
+                              (.then (fn [blob]
+                                       (download-blob-fallback blob suggested)
+                                       (str "Il browser non ha aperto la finestra "
+                                            "di salvataggio: " suggested
+                                            " è stato SCARICATO nella cartella dei "
+                                            "download.")))))))))
 
       ;; Fallback: anchor download with the suggested filename and preferred fmt
       :else
@@ -534,24 +625,85 @@
     (if (env/desktop?)
       (-> (desktop-write-file (js/Blob. #js [text]) full)
           (.then (fn [_] (str "Salvato in " full))))
-      (do (download-blob-fallback (js/Blob. #js [text] #js {:type "image/svg+xml"}) filename)
-          (js/Promise.resolve
-           (str "Nel browser non c'è un filesystem: " filename " è stato SCARICATO "
-                "(la cartella richiesta è stata ignorata)."))))))
+      (save-in-browser! (fn [] (js/Promise.resolve
+                                (js/Blob. #js [text] #js {:type "image/svg+xml"})))
+                        filename))))
+
+(defn save-3mf-set-at
+  "Write SEVERAL 3MFs into the directory `dir` — `named` is a seq of
+   [filename meshes] pairs. Returns Promise<string>.
+
+   One call, one destination question. Saving N files by calling the single-file
+   writer N times looks equivalent and is not: in a browser each save opens a
+   dialog, and a dialog may only be opened while the click that started the
+   evaluation is still the current user activation — which the FIRST dialog
+   consumes. Files two and three would silently fall back to blind downloads,
+   which is the failure this whole path exists to remove. So the browser is asked
+   for the FOLDER once, and the files are written into it.
+
+   Why several files at all, when one 3MF can hold everything: a ring and its
+   discs are separate objects, and a slicer lets you drag one without the other.
+   Six loose objects on a plate is six chances to move a ring off its own marks
+   (Vincenzo, 2026-08-18) — and a ring whose discs stayed behind still slices,
+   still prints, and is scrap."
+  [named dir]
+  (let [named (vec named)
+        build (fn [meshes] (threemf/meshes->3mf-blob meshes))
+        summary (fn [where] (str (count named) " file salvati in " where))]
+    (if (env/desktop?)
+      (let [full (expand-home dir)]
+        (-> (js/Promise.all
+             (into-array
+              (for [[filename meshes] named]
+                (-> (build meshes)
+                    (.then (fn [blob] (desktop-write-file blob (str full "/" filename))))))))
+            (.then (fn [_] (summary full)))))
+      (let [downloads (fn []
+                        (-> (js/Promise.all
+                             (into-array
+                              (for [[filename meshes] named]
+                                (-> (build meshes)
+                                    (.then (fn [blob]
+                                             (download-blob-fallback blob filename)))))))
+                            (.then (fn [_]
+                                     (str "Nel browser non c'è un filesystem: i "
+                                          (count named) " file sono stati SCARICATI "
+                                          "nella cartella dei download.")))))]
+        (if (exists? js/window.showDirectoryPicker)
+          (-> (js/window.showDirectoryPicker #js {:mode "readwrite"})
+              (.then (fn [dir-handle]
+                       (-> (js/Promise.all
+                            (into-array
+                             (for [[filename meshes] named]
+                               (-> (build meshes)
+                                   (.then (fn [blob]
+                                            (-> (.getFileHandle dir-handle filename
+                                                                #js {:create true})
+                                                (.then (fn [fh] (.createWritable fh)))
+                                                (.then (fn [w]
+                                                         (-> (.write w blob)
+                                                             (.then (fn [_] (.close w))))))))))))) 
+                           (.then (fn [_] (summary (.-name dir-handle)))))))
+              (.catch (fn [err]
+                        (if (and err (= "AbortError" (.-name err)))
+                          (js/Promise.resolve "Salvataggio annullato.")
+                          (do (js/console.warn "directory picker unavailable:" err)
+                              (downloads))))))
+          (downloads))))))
 
 (defn save-3mf-at
   "Write mesh(es) as a 3MF to `path` — no picker, same reasoning as save-text-at.
    Returns Promise<string>."
   [mesh-or-meshes path]
-  (let [meshes (if (map? mesh-or-meshes) [mesh-or-meshes] (vec mesh-or-meshes))]
-    ;; meshes->3mf-blob is a PROMISE (the zip is generated asynchronously)
-    (-> (threemf/meshes->3mf-blob meshes)
-        (.then (fn [blob]
-                 (if (env/desktop?)
-                   (let [full (expand-home path)]
+  (let [meshes (if (map? mesh-or-meshes) [mesh-or-meshes] (vec mesh-or-meshes))
+        ;; meshes->3mf-blob is a PROMISE (the zip is generated asynchronously),
+        ;; and on the web it must NOT be started before the destination dialog —
+        ;; see save-in-browser!
+        build (fn [] (threemf/meshes->3mf-blob meshes))]
+    (if (env/desktop?)
+      (let [full (expand-home path)]
+        (-> (build)
+            (.then (fn [blob]
                      (-> (desktop-write-file blob full)
-                         (.then (fn [_] (str "Salvato in " full)))))
-                   (let [filename (last (str/split path #"/"))]
-                     (download-blob-fallback blob filename)
-                     (str "Nel browser non c'è un filesystem: " filename
-                          " è stato SCARICATO (la cartella richiesta è stata ignorata)."))))))))
+                         (.then (fn [_] (str "Salvato in " full))))))))
+      (save-in-browser! build (last (str/split path #"/"))))))

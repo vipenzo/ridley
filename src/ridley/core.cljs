@@ -861,9 +861,11 @@
 (defn- export-mesh [fmt]
   (let [meshes (viewport/get-current-meshes)]
     (if (seq meshes)
-      (let [fname (or (first (registry/registered-names)) "model")
-            ext (name fmt)]
-        (stl/download-mesh meshes (str (name fname) "." ext) fmt))
+      ;; the GROUP name, not the part's: `(register Gabbia […])` registers
+      ;; `Gabbia/0`, whose name is "0" — and "0.3mf" tells nobody anything
+      (let [k (first (registry/registered-names))
+            fname (if k (or (namespace k) (name k)) "model")]
+        (stl/download-mesh meshes (str fname "." (name fmt)) fmt))
       (js/alert "No meshes to export. Run some code first!"))))
 
 (defn- setup-save-load []

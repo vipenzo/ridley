@@ -491,6 +491,9 @@
    ;; written. `~` is expanded.
    'save-text-at        stl/save-text-at
    'save-3mf-at         stl/save-3mf-at
+   ;; save-3mf-set-at: più file 3MF in UNA cartella, con una sola domanda su dove
+   ;; metterli — vedi la sua docstring per perché non è N chiamate a save-3mf-at.
+   'save-3mf-set-at     stl/save-3mf-set-at
    'export              (fn export-smart
                           ([] (let [meshes (viewport/get-current-meshes)
                                     fname  (or (first (registry/registered-names)) "model")]
