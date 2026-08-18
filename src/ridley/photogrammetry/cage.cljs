@@ -277,13 +277,24 @@
         (let [shared (first (remove #{p-axis q-axis} [:x :y :z]))
               p-outer (:outer (get rings p-axis))
               q-outer (:outer (get rings q-axis))
-              len (+ (- p-outer q-outer) root)
+              stopped? (= q-axis smallest)
+              ;; Where the tab ENDS. Flush with the partner's rim when there is
+              ;; no lip; under the whole lip when there is one — because a lip
+              ;; that merely sits NEXT to the tab is not part of the tab. The
+              ;; first version put the lip 0.3mm beyond a tab that stopped at
+              ;; the rim, and 0.3mm of air is a separate object: all four
+              ;; printed loose and fell off the plate when the ring was lifted
+              ;; (Vincenzo, 2026-08-18). The clearance the ring needs is between
+              ;; the ring and the LIP, and it does not have to be air between
+              ;; the lip and what carries it.
+              tip (if stopped? (+ p-outer stop-gap stop-thickness) p-outer)
+              len (+ (- tip q-outer) root)
               ;; the tab grows off ONE face of its own ring, so the part still
               ;; prints flat: the ring lies on the bed and this rises from it
               rise [(/ (- tab-height h) 2.0) tab-height]
               lap (fn [axis]
                     (condp = axis
-                      shared [(* sign (/ (+ (- q-outer root) p-outer) 2.0)) len]
+                      shared [(* sign (/ (+ (- q-outer root) tip) 2.0)) len]
                       p-axis [(+ (/ h 2.0) tab-clearance (/ tab-width 2.0)) tab-width]
                       q-axis rise))
               ;; the lip reaches from beyond the tab back ACROSS the partner's
@@ -304,7 +315,7 @@
                        :center (mapv first parts)
                        :size (mapv second parts)}))]
           (cond-> [(box :lap lap)]
-            (= q-axis smallest) (conj (box :stop stop)))))
+            stopped? (conj (box :stop stop)))))
       (for [pr pairs sign [1 -1]] [pr sign])))))
 
 ;; --- anchors ----------------------------------------------------------------

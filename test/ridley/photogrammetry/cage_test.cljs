@@ -84,8 +84,22 @@
                         " lungo " (if (pos? sign) "+" "-") (name along)
                         ": da R" (.toFixed root 1) " a R" (.toFixed reach 1)
                         ", incollata su " (.toFixed contact 0) " mm²"))
-          (is (< (Math/abs (- reach (:outer p))) 1e-9)
-              "the far end stops FLUSH with the partner's rim")
+          ;; la punta: a filo col bordo del partner quando non c'è battuta;
+          ;; sotto TUTTA la battuta quando c'è, perché una battuta che sta
+          ;; soltanto ACCANTO alla linguetta è un pezzo separato
+          (let [stop (first (filter #(and (= :stop (:kind %))
+                                          (= owner (:owner %))
+                                          (= along (:along %))
+                                          (= sign (:sign %)))
+                                    boxes))
+                atteso (if stop
+                         (let [[lo hi] (span stop (axis-i along))]
+                           (if (pos? sign) hi (- lo)))
+                         (:outer p))]
+            (is (< (Math/abs (- reach atteso)) 1e-9)
+                (if stop
+                  "la linguetta deve arrivare sotto tutta la battuta"
+                  "la punta si ferma a filo col bordo del partner")))
           (is (and (< root (:outer q)) (> root (:inner q)))
               "the near end is rooted inside its own ring's band, not past it")
           (is (> contact 80.0)
@@ -378,3 +392,38 @@
                 "la linguetta deve sporgere sopra la faccia")
             (is (> (apply min tab-z) (- (+ (/ (:h p) 2.0) 1e-9)))
                 "e non sotto: un anello appoggiato sulle linguette non è piano")))))))
+
+(deftest every-piece-is-attached-to-its-ring
+  (testing "il pezzo stampato dev'essere UN solido. Il primo test controllava che
+            le linguette non SBATTESSERO contro niente, e non è la stessa cosa:
+            le quattro battute stavano 0.3mm oltre la punta della linguetta,
+            cioè staccate, e sono uscite dalla stampante come quattro pezzi
+            sciolti che si sono persi togliendo l'anello dal piatto
+            (Vincenzo, 2026-08-18). Un pezzo che non tocca niente non si vede
+            nel modello: si vede sul piano di stampa."
+    (println "\n=== gabbia: ogni pezzo attaccato ===")
+    (let [d 176.0 h 3.0
+          boxes (cage/joint-tabs d h)
+          axis-i {:x 0 :y 1 :z 2}
+          touch? (fn [a b] (every? #(overlap? (span a %) (span b %)) [0 1 2]))
+          ;; il corpo dell'anello, come scatola nel suo piano — basta per dire
+          ;; se una linguetta ci affonda dentro
+          ring-box (fn [ax]
+                     (let [{:keys [outer]} (cage/ring-radii d (axis-i ax))]
+                       {:center [0 0 0]
+                        :size (mapv #(if (= % ax) h (* 2 outer)) [:x :y :z])}))]
+      (doseq [{:keys [owner kind] :as bx} boxes]
+        (let [attached-to-ring? (touch? bx (ring-box owner))
+              carrier (first (filter (fn [o] (and (= :lap (:kind o))
+                                                  (= owner (:owner o))
+                                                  (= (:along bx) (:along o))
+                                                  (= (:sign bx) (:sign o))
+                                                  (touch? bx o)))
+                                     boxes))]
+          (println (str "  " (name kind) " " (name owner) "→" (name (:partner bx))
+                        " " (if (pos? (:sign bx)) "+" "-") (name (:along bx))
+                        ": " (cond attached-to-ring? "affonda nell'anello"
+                                   carrier "saldata alla sua linguetta"
+                                   :else "STACCATA")))
+          (is (or attached-to-ring? (some? carrier))
+              (str (name kind) " deve toccare l'anello o la linguetta che la porta")))))))
