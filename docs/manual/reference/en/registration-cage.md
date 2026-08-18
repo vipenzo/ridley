@@ -109,9 +109,21 @@ The `acquire-cage` library prints from **this function's own** `:anchors` and
 copy of them.
 
 ```clojure
-(register Big  (acquire-cage/make-cage-ring 176 :big))     ; :big :medium :small
-(register Cage (acquire-cage/make-cage-ring 176))          ; :all, the default
+(register Big  (acquire-cage/make-print-ring 176 :big))    ; flat, ready to print
+(register Cage (acquire-cage/make-cage-ring 176))          ; assembled, to look at
 ```
+
+`make-print-ring` hands you the ring **lying down**, tabs upward — the pose it
+prints in. `make-cage-ring` hands you the same ring where it sits in the cage,
+which is what you want to look at the thing assembled but is standing on edge
+for two rings out of three. Both return a **vector of meshes** — the light ring
+and its dark discs, two meshes because two colours — which `register` takes as
+it is.
+
+The distinction is not cosmetic. In a slicer a ring and its discs are two
+objects, so rotating one and not the other leaves the discs behind, and the part
+prints perfectly — with no marks on it. A file that arrives already flat has
+nothing to rotate and nothing to forget.
 
 `make-cage-ring` returns a **vector of meshes** — the light ring and its dark
 discs, two meshes because two colours — which `register` takes as it is. Register
@@ -130,8 +142,9 @@ To skip the scene and write all three files at once:
 separate objects in a slicer, and separate means draggable apart; a ring moved off
 its own marks still slices, still prints, and is scrap.
 
-Put all three rings on one plate — moving each ring *together with its discs* —
-and the colour changes then happen by **height** rather than per part — two of them, with a minimal purge tower. Print with a
+The three files arrive **flat and ready**; nothing needs rotating. Put all three
+rings on one plate — moving each ring *together with its discs* — and the colour
+changes then happen by **height** rather than per part — two of them, with a minimal purge tower. Print with a
 **brim** (a thin wide ring curls as it cools, and a warped ring is no longer
 flat) and in **matte** filament (the detector looks for a dark round patch; a
 specular highlight is exactly the opposite, and gloss supplies them by the

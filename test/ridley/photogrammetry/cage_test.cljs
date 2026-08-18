@@ -337,3 +337,44 @@
       (is (not (bridge/camera-sees-marks? ts (conj front (first back)) truth))
           "one disc claimed from behind is enough to refuse the pose")
       (is (bridge/camera-sees-marks? ts [] truth) "no picks, nothing to veto"))))
+
+(deftest printable-rings-arrive-lying-down
+  (testing "ogni anello esce nel suo frame: piatto in XY, mark sulle facce ±Z,
+            linguette verso l'ALTO. Due anelli su tre stanno di taglio nelle
+            coordinate della gabbia, e un 3MF scritto così chiede all'utente di
+            ruotarlo nello slicer: anello e dischetti sono due oggetti, e
+            ruotarne uno solo lascia indietro l'altro. È già successo — un
+            anello stampato senza pallini (2026-08-18)."
+    (println "\n=== gabbia: anelli in posizione di stampa ===")
+    (let [c (cage/registration-cage :d 176)]
+      (doseq [k (range cage/ring-count)]
+        (let [p (cage/printable-ring c k)
+              zs (map #(nth (:position %) 2) (:marks p))
+              rs (map #(let [[x y _] (:position %)] (Math/hypot x y)) (:marks p))
+              tab-z (mapcat #(let [cz (nth (:center %) 2) sz (nth (:size %) 2)]
+                               [(- cz (/ sz 2)) (+ cz (/ sz 2))])
+                            (:tabs p))]
+          (println (str "  anello " (name (:axis p)) ": " (count (:marks p))
+                        " mark su z=±" (.toFixed (apply max (map Math/abs zs)) 2)
+                        ", raggi " (.toFixed (apply min rs) 1) "…" (.toFixed (apply max rs) 1)
+                        ", " (count (:tabs p)) " linguette"
+                        (when (seq tab-z)
+                          (str " che salgono a z " (.toFixed (apply min tab-z) 1)
+                               "…" (.toFixed (apply max tab-z) 1)))))
+          ;; i mark stanno SOLO sulle due facce, cioè a ±h/2
+          (is (every? #(< (Math/abs (- (Math/abs %) (/ (:h p) 2.0))) 1e-9) zs)
+              "i mark stanno sulle facce, non sparsi nello spessore")
+          ;; …e le loro normali puntano lungo ±Z
+          (is (every? (fn [m] (< (Math/abs (- (Math/abs (nth (:heading m) 2)) 1.0)) 1e-9))
+                      (:marks p))
+              "le normali dei mark guardano fuori dalle facce")
+          ;; i raggi in XY sono quelli della corona e dello zero-indice
+          (is (< (Math/abs (- (apply max rs) (:crown p))) 1e-9))
+          (is (< (Math/abs (- (apply min rs) (:index p))) 1e-9))
+          ;; le linguette salgono, non scendono: se scendessero l'anello si
+          ;; poserebbe SU DI LORO invece che sulla propria faccia
+          (when (seq tab-z)
+            (is (> (apply max tab-z) (/ (:h p) 2.0))
+                "la linguetta deve sporgere sopra la faccia")
+            (is (> (apply min tab-z) (- (+ (/ (:h p) 2.0) 1e-9)))
+                "e non sotto: un anello appoggiato sulle linguette non è piano")))))))

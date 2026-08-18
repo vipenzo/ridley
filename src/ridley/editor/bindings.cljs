@@ -677,6 +677,9 @@
    ;; reference, so every photograph self-registers, the sphere of views is
    ;; reachable in one session, and the marks sit at the part's own depth.
    'registration-cage   cage/registration-cage
+   ;; cage-printable-ring: un anello nel SUO frame (piatto in XY, linguette in
+   ;; su) — quel che serve per stampare, senza ruotare niente nello slicer.
+   'cage-printable-ring cage/printable-ring
    ;; edit-plane-mark (dev-docs/brief-plane-marks.md §Seguito): wrap a plane mark
    ;; INSIDE the emitted (acquire …)'s :marks to re-open it on the stage —
    ;;   :marks {:piano-1 (edit-plane-mark {…})}

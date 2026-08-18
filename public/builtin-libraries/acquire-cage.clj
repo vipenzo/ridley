@@ -79,46 +79,63 @@
   [c axis]
   (filter (fn [[id _]] (= (name axis) (ring-letter id))) (:anchors c)))
 
-(defn ring-part
-  "L'anello `axis` della gabbia `c` pronto da stampare, come [base dischetti]:
-   l'anello chiaro con le tasche su tutte e due le facce e le sue linguette, e i
-   dischetti scuri che riempiono le tasche a filo."
-  [c axis]
-  (let [h (:cage-h c)
+(defn- build-ring
+  "L'anello `axis` di `c` come [base dischetti]. Con `flat?` vero l'anello esce
+   nel SUO frame — piatto in XY, mark sulle facce ±Z, linguette verso l'alto —
+   che è la posa in cui si stampa; con `flat?` falso esce dov'è nella gabbia."
+  [c axis flat?]
+  (let [p (cage-printable-ring c axis)
+        h (:h p)
         disc-r (:mark-disc-r c)
         r (first (filter (fn [x] (= axis (:axis x))) (:rings c)))
-        marks (ring-anchors c axis)
+        ax (if flat? :z axis)
+        ;; nella posa piatta le coordinate sono già quelle giuste; in quella
+        ;; della gabbia si leggono dagli anchor, che sono la stessa cosa vista
+        ;; dall'altra parte di `unplace`
+        marks (if flat?
+                (:marks p)
+                (map (fn [[_ a]] {:position (:position a) :heading (:heading a)})
+                     (ring-anchors c axis)))
+        tabs-boxes (if flat?
+                     (:tabs p)
+                     (filter (fn [t] (= axis (:owner t))) (:tabs c)))
         ;; il taglierino sporge 2 mm sopra la faccia: taglia netto, senza facce
         ;; complanari (la ricetta nota degli artefatti CSG)
         over 2.0
-        pocket (fn [[_ a]]
-                 (let [n (:heading a)]
+        pocket (fn [m]
+                 (let [n (:heading m)]
                    (mesh-translate (ax-cyl (axis-of n) disc-r (+ inlay over))
-                                   (v+ (:position a) (v* n (/ (- over inlay) 2.0))))))
-        disc (fn [[_ a]]
-               (let [n (:heading a)]
+                                   (v+ (:position m) (v* n (/ (- over inlay) 2.0))))))
+        disc (fn [m]
+               (let [n (:heading m)]
                  (mesh-translate (ax-cyl (axis-of n) disc-r inlay)
-                                 (v+ (:position a) (v* n (- (/ inlay 2.0)))))))
-        annulus (mesh-difference (ax-cyl axis (:outer r) h)
-                                 (ax-cyl axis (:inner r) (+ h 2)))
+                                 (v+ (:position m) (v* n (- (/ inlay 2.0)))))))
+        annulus (mesh-difference (ax-cyl ax (:outer r) h)
+                                 (ax-cyl ax (:inner r) (+ h 2)))
         ;; `box` prende (destra, su, avanti) — la convenzione della tartaruga —
         ;; e alla posa di partenza quelle sono (y, z, x). Le linguette arrivano
-        ;; qui come ingombri di mondo [dx dy dz], quindi vanno rimesse in
-        ;; quest'ordine. Passarle così com'erano dava linguette girate di 90°,
-        ;; e la prova non è stata leggere il codice: è stato misurare
-        ;; l'ingombro del pezzo uscito.
+        ;; come ingombri di mondo [dx dy dz], quindi vanno rimesse in
+        ;; quest'ordine. Passarle così com'erano dava linguette girate di 90°, e
+        ;; la prova non è stata leggere il codice: è stato misurare l'ingombro
+        ;; del pezzo uscito.
         tabs (map (fn [t]
                     (let [sz (:size t)]
                       (mesh-translate (box (nth sz 1) (nth sz 2) (nth sz 0))
                                       (:center t))))
-                  (filter (fn [t] (= axis (:owner t))) (:tabs c)))
-        ;; linguette E battute: sono tutte scatole, e appartengono all'anello
-        ;; che le porta stampate addosso
+                  tabs-boxes)
         solid (if (empty? tabs) annulus (mesh-union (cons annulus tabs)))]
     [(-> (mesh-difference (cons solid (map pocket marks)))
          (color base-color))
      (-> (mesh-union (map disc marks))
          (color mark-color))]))
+
+(defn ring-part
+  "L'anello `axis` della gabbia `c` come [base dischetti], NELLA POSA DELLA
+   GABBIA: l'anello chiaro con le tasche su tutte e due le facce e le sue
+   linguette, e i dischetti scuri che le riempiono a filo."
+  [c axis]
+  (build-ring c (:axis (first (filter (fn [x] (= axis (:axis x))) (:rings c))))
+              false))
 
 ;; --- La gabbia intera --------------------------------------------------------
 
@@ -142,7 +159,7 @@
   [d]
   (let [c (registration-cage :d d)]
     (mapv (fn [k r] [(str "gabbia-" (round d) "-" (name k) ".3mf")
-                     (ring-part c (:axis r))])
+                     (build-ring c (:axis r) true)])
           ring-keys (:rings c))))
 
 (defn make-cage-ring
@@ -171,6 +188,28 @@
      (if (= :all which)
        (vec (apply concat (map one ring-keys)))
        (vec (one which))))))
+
+(defn make-print-ring
+  "Le mesh di UN anello nella posa di STAMPA — piatto, linguette in su, pronto da
+   esportare senza ruotare niente:
+
+     (register Grande (acquire-cage/make-print-ring 176 :big))
+     (export :Grande :3mf)
+
+   La differenza con `make-cage-ring` è solo l'orientamento, non la geometria:
+   quello ti dà l'anello dov'è nella gabbia (giusto per guardarla montata, due
+   anelli su tre in piedi), questo te lo dà steso sul piano.
+
+   Conta perché nello slicer anello e dischetti sono due oggetti: ruotarne uno
+   e non l'altro lascia i dischetti per aria, e il pezzo si stampa lo stesso —
+   senza mark. Se il file arriva già disteso, non c'è niente da ruotare."
+  [d which]
+  (let [c (registration-cage :d d)
+        k (first (keep-indexed (fn [i kk] (when (= kk which) i)) ring-keys))]
+    (when (nil? k)
+      (throw (js/Error. (str "make-print-ring: l'anello si chiede con :big, "
+                             ":medium o :small — non " which "."))))
+    (vec (build-ring c (:axis (nth (:rings c) k)) true))))
 
 (defn save-3mf
   "Salva la gabbia ⌀`d` mm come TRE file 3MF a due colori nella cartella `dir` —

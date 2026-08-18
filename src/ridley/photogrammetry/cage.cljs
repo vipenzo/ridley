@@ -173,6 +173,16 @@
     :y [v n u]
     :x [n u v]))
 
+(defn unplace
+  "World [x y z] back into the ring's own (u,v,n) frame — the exact inverse of
+   `place`, and the whole of what turning a ring from CAGE orientation into
+   PRINT orientation requires. Sizes of axis-aligned boxes permute with it too."
+  [axis [x y z]]
+  (case axis
+    :z [x y z]
+    :y [z x y]
+    :x [y z x]))
+
 (defn- axis-unit [axis s]
   (place axis [0.0 0.0 (double s)]))
 
@@ -385,6 +395,16 @@
                            (range seg)))]
     {:vertices verts :faces faces}))
 
+(defn anchor-axis
+  "Which ring an anchor id belongs to: `:zp07` → :z, and `:zero-zp` → :z too —
+   which is why this exists instead of reading the first letter, since 'zero'
+   itself begins with a z."
+  [id]
+  (let [s (name id)]
+    (keyword (if (and (> (count s) 5) (= "zero-" (subs s 0 5)))
+               (subs s 5 6)
+               (subs s 0 1)))))
+
 (defn ^:export registration-cage
   "The registration-cage proxy. Keyword options:
      :d      diameter (mm) OVER THE LARGEST RING — REQUIRED, and deliberately
@@ -464,3 +484,35 @@
      ;; and the model of it drift apart without either one looking wrong.
      :tabs (joint-tabs d h)
      :aperture (aperture d)}))
+
+(defn printable-ring
+  "Ring `which` (:x/:y/:z, or an index) of an already-built `cage`, described in
+   ITS OWN frame: flat in XY, marks on the ±Z faces, tabs rising in +Z.
+
+   {:axis :inner :outer :crown :index :h :marks [{:id :position :heading}] :tabs [{:center :size}]}
+
+   Same numbers as the cage — they are the cage's own anchors and tabs put
+   through `unplace`, not a second computation — only turned the way a printer
+   wants them.
+
+   It exists because two rings out of three stand on EDGE in cage coordinates,
+   and a 3MF written that way asks the user to rotate them in the slicer. A ring
+   and its discs are two objects there, so rotating one and not the other leaves
+   the discs behind — which is not hypothetical: it printed a ring with no marks
+   on it (Vincenzo, 2026-08-18). A part should arrive in the orientation it is
+   printed in; then there is nothing to rotate and nothing to forget."
+  [cage which]
+  (let [axis (if (keyword? which) which (ring-axis which))
+        r (first (filter #(= axis (:axis %)) (:rings cage)))
+        h (:cage-h cage)]
+    (assoc (select-keys r [:inner :outer :crown :index])
+           :axis axis
+           :h h
+           :marks (vec (for [[id a] (sort-by key (:anchors cage))
+                             :when (= axis (anchor-axis id))]
+                         {:id id
+                          :position (unplace axis (:position a))
+                          :heading (unplace axis (:heading a))}))
+           :tabs (vec (for [t (:tabs cage) :when (= axis (:owner t))]
+                        {:center (unplace axis (:center t))
+                         :size (unplace axis (:size t))})))))
