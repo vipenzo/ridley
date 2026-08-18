@@ -26,6 +26,22 @@ integrati in main. Documento di governo:
 `dev-docs/brief-observation-driven-acquire.md`; entry point
 `dev-docs/HANDOVER-edge-declared.md`.
 
+**Fronte APERTO (2026-08-17): LA GABBIA DI REGISTRAZIONE — l'ultimo
+esperimento prima dell'archivio.** Nasce da un caso reale fallito: un pezzo di
+elettrodomestico abbandonato dall'acquire e rifatto senza problemi con
+`edit-image-board`, con la diagnosi giusta — *«le tante foto obbediscono a
+criteri boilerplate: servono a far star su il meccanismo, non a disegnare
+l'oggetto»*. Il riferimento smette di stare SOTTO l'oggetto e gli va INTORNO:
+tre anelli ortogonali, il pezzo ancorato al centro, ogni foto ben mirata e
+auto-registrata, niente giradischi/θ/NOTE.md/fusione.
+
+*Fetta 0 COSTRUITA (2026-08-17), gate NON ancora fatto*: `registration-cage` +
+libreria `acquire-cage` (stampabile a due colori) + le guardie in `edit-acquire`.
+Ordine deliberato: **il detector automatico non si costruisce prima del gate** —
+tre delle quattro domande del gate si rispondono cliccando i mark a mano, e se la
+gabbia non batte l'image-board si archivia senza aver scritto il multi-ellisse.
+Documento di governo `dev-docs/brief-registration-ring.md`.
+
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già
 registrato. Entry point `dev-docs/HANDOVER-grab-and-register.md`; complemento

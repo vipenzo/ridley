@@ -1605,6 +1605,15 @@
     :description "Macro. Bind a name to a value and add it to the scene registry. For renderable values (meshes, panels) the object also becomes visible by default. Subsequent re-evaluations update the underlying value but preserve the current visibility state."
     :path "docs/manual/reference/en/register.md"}
 
+   "registration-cage"
+   {:name "registration-cage"
+    :category "acquisition"
+    :status "experimental"
+    :since ""
+    :signature "(registration-cage :d 176)\n(registration-cage :d 176 :marks 12 :disc 2.5 :h 3)"
+    :description "The **registration cage**: three concentric, mutually orthogonal printed rings with the part anchored in the middle, as a Ridley mesh with its six crowns of marks already named. It is the alternative `:proxy` of an `(acquire …)`, and like `registration-plate` it needs no file import — geometry and marks come from the same place, so what the solver looks for and what you print cannot drift apart."
+    :path "docs/manual/reference/en/registration-cage.md"}
+
    "registration-plate"
    {:name "registration-plate"
     :category "acquisition"

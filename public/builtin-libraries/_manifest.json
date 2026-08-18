@@ -1,3 +1,3 @@
 {
-  "libraries": ["puppet", "gears", "weave", "acquire-plate"]
+  "libraries": ["puppet", "gears", "weave", "acquire-plate", "acquire-cage"]
 }
