@@ -1750,7 +1750,20 @@
                     first-try (pnp/solve-pnp correspondences k {})
                     detect (bridge/plate-detect (:proxy-mesh @session))
                     sees? (fn [s] (and s (bridge/camera-sees-marked-face?
-                                          detect (:pose s))))]
+                                          detect (:pose s))))
+                    ;; A proxy whose marks face DIFFERENT ways — a cage — has no
+                    ;; single marked face, so plate-detect is nil and the plate's
+                    ;; test above never fires. The physical constraint is the
+                    ;; same one and still available per mark: each disc that was
+                    ;; clicked was photographed, so the camera was in front of it.
+                    ;; Without this a cage would be the one proxy with NO guard,
+                    ;; and it needs one exactly when the picks all land on a
+                    ;; single ring — coplanar again, planar solver again, mirror
+                    ;; twin again, and no crown-wide reflection to rescue it with.
+                    picked-cis (mapv :ci correspondences)
+                    per-mark-faces? (and (nil? detect) (boolean (some :normal targets)))
+                    sees-marks? (fn [s] (and s (bridge/camera-sees-marks?
+                                                targets picked-cis (:pose s))))]
                 ;; A pose that puts the camera BEHIND the printed face is
                 ;; impossible, not improbable — the discs were photographed. For
                 ;; a plate it also has one exact cause: the crown is mirror-
@@ -1763,7 +1776,8 @@
                 ;; overruled arbitrarily: a proxy drawn from an already-flipped
                 ;; pose shows mirrored labels, so clicking them confirms the
                 ;; flip. See bridge/mirror-crown-index.
-                (if (and detect first-try (not (sees? first-try)))
+                (cond
+                  (and detect first-try (not (sees? first-try)))
                   (let [flip #(bridge/mirror-crown-index (count targets) %)
                         mirrored (mapv (fn [c]
                                          (let [j (flip (:ci c))]
@@ -1803,7 +1817,43 @@
                               ;; reason. A refusal is a decision, not a failure.
                               (swap! session assoc :last-solve ::refused)
                               ::refused)))))
-                  first-try))]
+
+                  ;; Cage (or any proxy whose marks face different ways): the
+                  ;; solution claims the camera was behind a disc it says was
+                  ;; clicked. There is no crown-wide reflection to try — a cage
+                  ;; has six crowns, not one — but there is the same rescue the
+                  ;; plate falls back on, and here it is the FIRST resort rather
+                  ;; than the last: re-solve seeded from the alignment on screen.
+                  ;;
+                  ;; The cause is worth naming because it is not a bug and it
+                  ;; will recur: shot straight down one of the cage's three axes,
+                  ;; the two rings containing that axis are edge-on and their
+                  ;; marks are literally on the far side of a 3mm slab, so the
+                  ;; picks CAN only come from one ring — coplanar again, planar
+                  ;; solver again, mirror twin again. A few degrees off the axis
+                  ;; brings the others back.
+                  (and per-mark-faces? first-try (not (sees-marks? first-try)))
+                  (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
+                        retry (pnp/solve-pnp correspondences k
+                                             {:method :seeded :seed seed})]
+                    (if (sees-marks? retry)
+                      (assoc retry :note
+                             (str "la prima soluzione metteva la camera dietro i dischetti "
+                                  "cliccati (sono tutti su un anello solo, e un anello solo "
+                                  "ha il suo gemello specchiato): ripresa dall'allineamento "
+                                  "corrente"))
+                      (do (set-status-message!
+                           (str "NON applicata: ogni soluzione mette la camera DIETRO almeno "
+                                "uno dei dischetti che hai cliccato, che è impossibile — quel "
+                                "dischetto l'hai fotografato. Vuol dire che i punti stanno "
+                                "tutti su UN anello: clicca qualche mark su un secondo anello, "
+                                "e se da questa inquadratura gli altri anelli sono di taglio, "
+                                "rifai la foto spostandoti di una decina di gradi. Intanto "
+                                "lascio la posa che hai adesso."))
+                          (swap! session assoc :last-solve ::refused)
+                          ::refused)))
+
+                  :else first-try))]
       ;; A refusal must not reach the apply body: (:pose ::refused) is nil, and
       ;; bridge/solver-pose->camera of nil returns a PLAUSIBLE pose (measured:
       ;; {:position [0 0 0] :heading [0 0 1]}) rather than failing — so the

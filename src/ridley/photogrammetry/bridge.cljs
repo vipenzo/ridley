@@ -142,40 +142,68 @@
         extent (fn [i] (let [xs (axis-vals i)] (- (apply max xs) (apply min xs))))]
     [(extent 0) (extent 1) (extent 2)]))
 
+(defn index-anchor?
+  "True for an anchor id that is a ZERO-INDEX rather than a crown mark: `:zero`
+   on a plate, `:zero-zp` … on a cage's six marked faces.
+
+   Index marks ride in :anchors so they transport rigidly with the geometry for
+   free (see plate-detect), but they are not marks to PICK — offering them would
+   invite a correspondence against a disc whose whole job is to be the tiebreak
+   that identifies the others. The name is the carrier because :anchors is a flat
+   map with no room for a second kind of key, and a prefix survives the rigid
+   transports and the calibration rewrites that replace the values."
+  [id]
+  (= 0 (.indexOf (name id) "zero")))
+
 (defn pnp-target-points
   "The indexed PnP correspondence targets for `proxy-mesh` seen from
    `camera-pose` — source-agnostic so the whole picking gesture (pick indices,
    cycle, correspondence build) is identical whatever the proxy is:
 
-   - a proxy carrying named marks (:anchors — a registration PLATE) yields one
-     target per mark, its :obj the mark's position in the object/solver frame
-     (world->local, the SAME frame box corners live in, so the solver is
-     unchanged), :world the mark at the current pose, :id the mark keyword;
+   - a proxy carrying named marks (:anchors — a registration PLATE or CAGE)
+     yields one target per mark, its :obj the mark's position in the object/
+     solver frame (world->local, the SAME frame box corners live in, so the
+     solver is unchanged), :world the mark at the current pose, :id the mark
+     keyword;
    - otherwise the 8 box corners (bf/corners), :id the 0-7 corner index.
 
    Each: {:obj [x y z] :world [x y z] :visible? bool :id kw-or-int}. Colour and
    label are the UI layer's concern (edit_acquire), deliberately not here. Pure."
   [proxy-mesh camera-pose]
-  (let [proxy-pose (:creation-pose proxy-mesh)]
-    ;; :zero is the plate's asymmetric ZERO-INDEX (see plate-detect) — it rides in
-    ;; :anchors so it transports rigidly for free, but it is NOT a crown mark to
-    ;; pick, so it never appears among the pickable targets.
-    (if-let [marks (seq (sort-by key (dissoc (:anchors proxy-mesh) :zero)))]
+  (let [proxy-pose (:creation-pose proxy-mesh)
+        ;; Per-mark front-facing is right for a CAGE and wrong for a PLATE, so
+        ;; the proxy declares which it wants rather than being sniffed for.
+        ;;
+        ;; A plate's marks are all coplanar on ONE face and the user always
+        ;; photographs THAT face, so every mark is offerable — and culling them
+        ;; would actively break it, because before PnP there is no pose to test
+        ;; against except the default vantage, which frames the plate's blank
+        ;; underside: it would hide every mark and leave nothing to click on a
+        ;; fresh session.
+        ;;
+        ;; A cage has no such face. Whatever the vantage, about half its marks
+        ;; are turned away — never all of them, so the plate's failure cannot
+        ;; happen — and offering those invites a click on a disc that is not in
+        ;; the picture. Occlusion of a mark BY THE PART stays the user's 'o' key.
+        cull? (boolean (:anchor-culling? proxy-mesh))
+        cam-pos (:position camera-pose)]
+    (if-let [marks (seq (sort-by key (remove (comp index-anchor? key)
+                                             (:anchors proxy-mesh))))]
       (mapv (fn [[id pose]]
               (let [world (:position pose)]
                 {:id id
                  :obj (world->local proxy-pose world)
                  :world world
-                 ;; A registration plate's marks are all coplanar on ONE face and
-                 ;; the user always photographs THAT face — so every mark is on
-                 ;; the visible side, always offerable. (Per-mark front-facing is
-                 ;; a BOX notion — hide corners on the back face — that here only
-                 ;; mis-fires: before PnP there is no pose to test against except
-                 ;; the default vantage, which frames the plate's blank underside,
-                 ;; so it would hide every mark and leave nothing to click on a
-                 ;; fresh session; and PnP is seedless, needing no rough pose.)
-                 ;; Occlusion of a mark BY THE PART is the user's 'o' key.
-                 :visible? true}))
+                 ;; the mark's own printed-face normal in the OBJECT frame, so a
+                 ;; solved pose can be tested against the physical fact that the
+                 ;; disc was photographed — see camera-sees-marks?
+                 :normal (some->> (:heading pose)
+                                  (world->local-dir proxy-pose)
+                                  m/normalize)
+                 :visible? (if (and cull? cam-pos (:heading pose))
+                             (pos? (m/dot (m/normalize (:heading pose))
+                                          (m/v- cam-pos world)))
+                             true)}))
             marks)
       (let [dims (dims-from-mesh proxy-mesh proxy-pose)
             objs (bf/corners dims)
@@ -219,6 +247,37 @@
   [{:keys [face-normal zero-obj]} solver-pose]
   (when (and face-normal zero-obj solver-pose)
     (pos? (m/dot face-normal (m/v- (cam/camera-center solver-pose) zero-obj)))))
+
+(def behind-face-cos
+  "How far behind a mark's printed face a solved camera may fall before the pose
+   is called impossible — a cosine, ≈4.6°. Not zero: a mark seen almost exactly
+   edge-on sits at cos ≈ 0, and a pose that is merely IMPRECISE would then flip
+   the sign of a mark that was legitimately, if badly, clicked. Anything further
+   behind than this is not imprecision — it is the wrong side."
+  -0.08)
+
+(defn camera-sees-marks?
+  "True when `solver-pose` puts the camera on the printed side of EVERY mark in
+   `cis` (indices into `targets`, i.e. the marks the user says they clicked).
+
+   The generalisation of camera-sees-marked-face? from a plate — one face, one
+   normal, one zero-index — to a proxy whose marks face different ways, which is
+   what a CAGE is. The physical fact is unchanged and just as sharp: those discs
+   were photographed, so the camera was in front of each of them. A pose that
+   puts it behind one is not unlikely, it is impossible.
+
+   Targets carrying no :normal (box corners) never veto. Pure."
+  [targets cis solver-pose]
+  (when solver-pose
+    (let [c (cam/camera-center solver-pose)]
+      (every? (fn [i]
+                (let [{:keys [normal obj]} (nth targets i nil)]
+                  (or (nil? normal)
+                      (let [v (m/v- c obj)
+                            len (Math/sqrt (m/dot v v))]
+                        (or (zero? len)
+                            (> (/ (m/dot normal v) len) behind-face-cos))))))
+              cis))))
 
 (defn mirror-crown-index
   "The index the SAME physical disc takes under the plate's own mirror symmetry:

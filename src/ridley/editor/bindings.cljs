@@ -34,6 +34,7 @@
             [ridley.editor.edit-acquire :as edit-acquire]
             [ridley.editor.acquire-stage :as acquire-stage]
             [ridley.photogrammetry.plate :as plate]
+            [ridley.photogrammetry.cage :as cage]
             [ridley.editor.mesh-board :as mesh-board]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
@@ -670,6 +671,12 @@
    ;; zero-index under :anchors), so `(edit-acquire dir {:proxy (registration-plate
    ;; :d 130)})` needs no file import and the emitted (acquire …) is self-contained.
    'registration-plate  plate/registration-plate
+   ;; registration-cage: the parametric CAGE proxy — three orthogonal rings, six
+   ;; crowns (both faces of each ring) + a zero-index per face under :anchors.
+   ;; The reference travels WITH the part instead of the part standing on the
+   ;; reference, so every photograph self-registers, the sphere of views is
+   ;; reachable in one session, and the marks sit at the part's own depth.
+   'registration-cage   cage/registration-cage
    ;; edit-plane-mark (dev-docs/brief-plane-marks.md §Seguito): wrap a plane mark
    ;; INSIDE the emitted (acquire …)'s :marks to re-open it on the stage —
    ;;   :marks {:piano-1 (edit-plane-mark {…})}
