@@ -165,6 +165,31 @@
     (.append sb "\""))
   (.append sb ">\n"))
 
+(defn- group-plan
+  "Come i mesh si raggruppano in OGGETTI: [[chiave [indici…]] …], nell'ordine.
+   Un mesh senza `:export-group` è un gruppo per conto suo, cioè esattamente il
+   comportamento di prima.
+
+   Serve perché un pezzo a due colori NON è due oggetti. Uno slicer tratta gli
+   oggetti come corpi indipendenti: li appoggia sul piatto ciascuno per conto
+   suo, genera supporti sotto le parti che nel PROPRIO oggetto non toccano
+   niente, e segnala conflitto dove i loro percorsi coincidono. Su un anello
+   della gabbia questo si è visto tutto insieme — supporti sotto i dischetti
+   della faccia superiore, che senza l'anello galleggiano a 2.4mm, e un
+   conflitto di gcode sulle pareti delle tasche (Vincenzo, 2026-08-18). La
+   forma giusta è un oggetto solo con più PARTI, che è anche come Bambu e Orca
+   rappresentano i modelli multicolore."
+  [meshes]
+  (let [n (count meshes)]
+    (loop [i 0, seen {}, out []]
+      (if (= i n)
+        out
+        (let [g (:export-group (nth meshes i))
+              k (if g [:g g] [:solo i])]
+          (if-let [pos (get seen k)]
+            (recur (inc i) seen (update-in out [pos 1] conj i))
+            (recur (inc i) (assoc seen k (count out)) (conj out [k [i]]))))))))
+
 (defn- meshes->model-xml
   "Build the 3D/3dmodel.model XML string for one or more meshes.
    Each mesh becomes its own <object id=\"N\"> with a corresponding <item>.
@@ -184,12 +209,36 @@
       (mesh-vertices-xml mesh sb)
       (mesh-triangles-xml mesh sb)
       (.append sb "      </mesh>\n    </object>\n"))
-    (.append sb "  </resources>\n  <build>\n")
-    (doseq [idx (range (count meshes))]
-      (.append sb "    <item objectid=\"")
-      (.append sb (inc idx))
-      (.append sb "\"/>\n"))
-    (.append sb "  </build>\n</model>\n")
+    ;; un oggetto <components> per ogni gruppo di più mesh; i gruppi da uno
+    ;; restano l'oggetto stesso, come sempre
+    (let [plan (group-plan meshes)
+          base (count meshes)
+          top (map-indexed (fn [gi [_ idxs]]
+                             (if (= 1 (count idxs))
+                               (inc (first idxs))
+                               (+ base 1 gi)))
+                           plan)]
+      (doseq [[gi [_ idxs]] (map-indexed vector plan)
+              :when (> (count idxs) 1)]
+        (.append sb "    <object id=\"")
+        (.append sb (+ base 1 gi))
+        (.append sb "\" type=\"model\"")
+        (when-let [nm (:export-group (nth meshes (first idxs)))]
+          (.append sb " name=\"")
+          (.append sb (str nm))
+          (.append sb "\""))
+        (.append sb ">\n      <components>\n")
+        (doseq [i idxs]
+          (.append sb "        <component objectid=\"")
+          (.append sb (inc i))
+          (.append sb "\"/>\n"))
+        (.append sb "      </components>\n    </object>\n"))
+      (.append sb "  </resources>\n  <build>\n")
+      (doseq [id top]
+        (.append sb "    <item objectid=\"")
+        (.append sb id)
+        (.append sb "\"/>\n"))
+      (.append sb "  </build>\n</model>\n"))
     (.toString sb)))
 
 (def ^:private content-types-xml
@@ -202,27 +251,57 @@
 
 (defn- model-settings-config
   "Build the Metadata/model_settings.config XML for Bambu/Orca.
-   Emits one <object> entry per colored mesh, with extruder = palette-index + 1.
+
+   Un mesh per conto suo diventa un <object> con la sua voce 'extruder'; più
+   mesh dello stesso `:export-group` diventano UN oggetto con una <part> per
+   ciascuno — la forma con cui Bambu e Orca rappresentano un pezzo multicolore,
+   e l'unica in cui lo slicer lo considera un corpo solo (vedi `group-plan`).
+
    Returns nil if no mesh is colored (no need to write the file)."
   [meshes mesh->color]
   (when (seq mesh->color)
-    (let [sb (StringBuffer.)]
+    (let [sb (StringBuffer.)
+          base (count meshes)
+          nm-of (fn [i] (some-> (:export-name (nth meshes i)) name))
+          extruder (fn [i] (some-> (get mesh->color i) inc))]
       (.append sb "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
       (.append sb "<config>\n")
-      (doseq [[idx mesh] (map-indexed vector meshes)
-              :let [color-idx (get mesh->color idx)]
-              :when color-idx]
-        (.append sb "  <object id=\"")
-        (.append sb (inc idx))
-        (.append sb "\">\n")
-        (when-let [nm (:export-name mesh)]
-          (.append sb "    <metadata key=\"name\" value=\"")
-          (.append sb (name nm))
-          (.append sb "\"/>\n"))
-        (.append sb "    <metadata key=\"extruder\" value=\"")
-        (.append sb (inc color-idx))
-        (.append sb "\"/>\n")
-        (.append sb "  </object>\n"))
+      (doseq [[gi [_ idxs]] (map-indexed vector (group-plan meshes))]
+        (if (= 1 (count idxs))
+          (let [i (first idxs)]
+            (when (extruder i)
+              (.append sb "  <object id=\"")
+              (.append sb (inc i))
+              (.append sb "\">\n")
+              (when-let [nm (nm-of i)]
+                (.append sb "    <metadata key=\"name\" value=\"")
+                (.append sb nm)
+                (.append sb "\"/>\n"))
+              (.append sb "    <metadata key=\"extruder\" value=\"")
+              (.append sb (extruder i))
+              (.append sb "\"/>\n  </object>\n")))
+          (do
+            (.append sb "  <object id=\"")
+            (.append sb (+ base 1 gi))
+            (.append sb "\">\n")
+            (when-let [g (:export-group (nth meshes (first idxs)))]
+              (.append sb "    <metadata key=\"name\" value=\"")
+              (.append sb (str g))
+              (.append sb "\"/>\n"))
+            (doseq [i idxs]
+              (.append sb "    <part id=\"")
+              (.append sb (inc i))
+              (.append sb "\" subtype=\"normal_part\">\n")
+              (when-let [nm (nm-of i)]
+                (.append sb "      <metadata key=\"name\" value=\"")
+                (.append sb nm)
+                (.append sb "\"/>\n"))
+              (when (extruder i)
+                (.append sb "      <metadata key=\"extruder\" value=\"")
+                (.append sb (extruder i))
+                (.append sb "\"/>\n"))
+              (.append sb "    </part>\n"))
+            (.append sb "  </object>\n"))))
       (.append sb "</config>\n")
       (.toString sb))))
 

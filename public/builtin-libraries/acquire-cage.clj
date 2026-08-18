@@ -124,10 +124,17 @@
                                       (:center t))))
                   tabs-boxes)
         solid (if (empty? tabs) annulus (mesh-union (cons annulus tabs)))]
-    [(-> (mesh-difference (cons solid (map pocket marks)))
-         (color base-color))
-     (-> (mesh-union (map disc marks))
-         (color mark-color))]))
+    ;; :export-group lega le due mesh in UN oggetto con due parti. Senza,
+    ;; lo slicer le tratta come corpi indipendenti: appoggia ciascuno sul
+    ;; piatto per conto suo e mette i supporti sotto i dischetti della faccia
+    ;; superiore, che da soli galleggiano.
+    (let [g (str "anello-" (name axis))]
+      [(-> (mesh-difference (cons solid (map pocket marks)))
+           (color base-color)
+           (assoc :export-group g :export-name "anello"))
+       (-> (mesh-union (map disc marks))
+           (color mark-color)
+           (assoc :export-group g :export-name "dischetti"))])))
 
 (defn ring-part
   "L'anello `axis` della gabbia `c` come [base dischetti], NELLA POSA DELLA
