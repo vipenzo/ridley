@@ -40,7 +40,8 @@ libreria `acquire-cage` (stampabile a due colori) + le guardie in `edit-acquire`
 Ordine deliberato: **il detector automatico non si costruisce prima del gate** —
 tre delle quattro domande del gate si rispondono cliccando i mark a mano, e se la
 gabbia non batte l'image-board si archivia senza aver scritto il multi-ellisse.
-Documento di governo `dev-docs/brief-registration-ring.md`.
+Documento di governo `dev-docs/brief-registration-ring.md`; entry point
+`dev-docs/HANDOVER-registration-cage.md`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già
