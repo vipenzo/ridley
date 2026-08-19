@@ -6192,7 +6192,7 @@
       (.catch (fn [_]
                 (state/capture-println
                  (str "edit-acquire: session.json assente in " dir
-                      " — la costruisco dal NOTE.md"))
+                      " — la costruisco dalla cartella"))
                 (-> (build-session-json-from-note dir)
                     (.catch (fn [err]
                               (state/capture-println
