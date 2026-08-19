@@ -295,7 +295,7 @@
      ;; CLI's, and its own to keep)
      :doc (js->clj obj :keywordize-keys true)}))
 
-(declare set-status-message! auto-log!)
+(declare set-status-message! auto-log! corner-labels)
 
 (defn- load-exif-focal!
   "Read the 35mm-equivalent focal length from photo 0's EXIF and adopt it as
@@ -1488,6 +1488,14 @@
    a neighbour."
   50)
 
+(def ^:private duplicate-pick-px
+  "Two picks closer than this are on the SAME disc, whatever their labels say.
+   Clicks snap to a blob centroid, so two claims on one disc come back within a
+   pixel or two of each other; distinct marks are hundreds of pixels apart even
+   on a ring seen well off-square. Six leaves room for the small difference
+   between a hand click's snap window and an auto-proposal's."
+  6.0)
+
 (def ^:private suspicious-snap-px
   "A snap that moves the click further than this has probably latched onto
    something that is not the mark. A disc is ~2.5mm across — some 50px on these
@@ -1554,8 +1562,33 @@
           ;; fetta A / box: place the armed target; ignore clicks when unarmed
           (:pnp-armed @session)
           (let [ci (:pnp-armed @session)
-                px (click-pixel raw e)]
+                px (click-pixel raw e)
+                ;; A disc belongs to ONE mark. If this click lands on a disc some
+                ;; other mark already holds, the two cannot both be right, and
+                ;; keeping both hands the solver a contradiction that wrecks the
+                ;; pose rather than showing up as one bad point (2026-08-19: three
+                ;; marks on one disc, rms 453px; later a fourth pair, 795px).
+                ;; The click just said what this disc IS, so the newer claim wins
+                ;; and the older one is released — never silently, since the
+                ;; released mark now needs placing again.
+                same-disc (vec (keep (fn [[other v]]
+                                       (let [q (:px v)]
+                                         (when (and (not= other ci)
+                                                    (< (Math/hypot (- (nth px 0) (nth q 0))
+                                                                   (- (nth px 1) (nth q 1)))
+                                                       duplicate-pick-px))
+                                           other)))
+                                     (pnp-picks)))]
             (.preventDefault e) (.stopPropagation e)
+            (doseq [other same-disc]
+              (swap! session update-in [:pnp-picks idx] dissoc other))
+            (when (seq same-disc)
+              (set-status-message!
+               (str "quel dischetto era già assegnato a " (corner-labels same-disc)
+                    ": ora è " (corner-labels [ci]) ", e "
+                    (if (> (count same-disc) 1) "quelli restano" "quello resta")
+                    " da ripiazzare — due mark sullo stesso dischetto mandano"
+                    " a gambe all'aria tutta la posa, non solo quel punto")))
             (swap! session assoc-in [:pnp-picks idx ci]
                    {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
             ;; a new click makes the last solve's residuals/outliers stale — drop
@@ -2093,18 +2126,42 @@
                            (reduce min js/Infinity
                                    (for [[j [qx qy]] predicted :when (not= j i)]
                                      (Math/sqrt (+ (* (- ux qx) (- ux qx)) (* (- uy qy) (- uy qy)))))))
-          added (atom 0)]
+          added (atom 0)
+          ;; Every pixel already spoken for — the picks that are there, plus the
+          ;; proposals made in this same pass.
+          claimed (atom (mapv :px (vals (pnp-picks))))]
       (doseq [i (sort visible)
               :when (and (not (contains? placed i)) (not (contains? occ i))
                          (contains? predicted i))]
         (let [px (get predicted i)
-              radius (max 15 (min 90 (* 0.12 (gap-to-nearest i px))))]
+              gap (gap-to-nearest i px)
+              radius (max 15 (min 90 (* 0.12 gap)))]
           (when-let [snap (blob/snap-to-blob backdrop/luminance-at px radius)]
-            (let [c (:center snap)]
-              (swap! session assoc-in [:pnp-picks idx i]
-                     {:px c :screen (backdrop/screen-of-pixel canvas (viewport/get-camera) c)
-                      :proposed? true})
-              (swap! added inc)))))
+            (let [c (:center snap)
+                  ;; TWO marks on ONE disc is not a near miss, it is impossible,
+                  ;; and it is the single most destructive thing that can enter
+                  ;; this map: the solver is handed a contradiction it can only
+                  ;; answer by wrecking the pose. It happened twice on the first
+                  ;; real session (2026-08-19) — once from repeated clicking, and
+                  ;; once from HERE, when a proposal snapped onto a disc another
+                  ;; mark already held and took an 18.7px fit to 795px.
+                  ;;
+                  ;; Half the distance to the nearest predicted neighbour is the
+                  ;; right bar and needs no pixel constant: two DISTINCT marks
+                  ;; are a whole gap apart, so anything closer than half a gap is
+                  ;; the same disc seen twice.
+                  too-close (* 0.5 gap)
+                  clash? (some (fn [q]
+                                 (< (Math/sqrt (+ (* (- (nth c 0) (nth q 0)) (- (nth c 0) (nth q 0)))
+                                                  (* (- (nth c 1) (nth q 1)) (- (nth c 1) (nth q 1)))))
+                                    too-close))
+                               @claimed)]
+              (when-not clash?
+                (swap! claimed conj c)
+                (swap! session assoc-in [:pnp-picks idx i]
+                       {:px c :screen (backdrop/screen-of-pixel canvas (viewport/get-camera) c)
+                        :proposed? true})
+                (swap! added inc))))))
       @added)))
 
 (defn- cage-phase-report!
