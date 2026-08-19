@@ -119,6 +119,62 @@ lo slicer li appoggia sul piatto per conto proprio, mette i supporti sotto i
 dischetti della faccia superiore e segnala conflitti sulle pareti coincidenti.
 I file escono già distesi in posa di stampa: non c'è niente da ruotare.
 
+## Banco preparato per il gate (2026-08-19)
+
+La gabbia è stampata e **incollata**. Prima di mandare Vincenzo a scattare, tre
+inciampi tolti dalla strada — due erano trappole vere, il terzo è la risposta al
+punto aperto qui sotto.
+
+**1. Una cartella di foto senza NOTE.md apriva una sessione VUOTA, e ne
+persisteva il vuoto.** `ensure-session-json!` ripiegava sulla sessione vuota (che
+è giusta per una cartella vuota, il caso della presa dal vivo) e la SCRIVEVA su
+disco: alla seconda apertura il codice che avrebbe potuto rimediare non veniva
+nemmeno più raggiunto. Ma la gabbia non ha giradischi, quindi non ha angoli,
+quindi **non ha NOTE**: adesso una cartella con immagini e senza NOTE dà una
+sessione con quelle foto, tutte fuori-anello (θ nil), che è il protocollo della
+gabbia e non una tolleranza (`session-json-from-folder`).
+
+**2. Le vie automatiche consigliavano un piatto a chi ha in mano una gabbia.**
+Auto (`a`), l'assegnazione batch e Grab (`g`) sono costruite sull'UNICA corona
+del piatto più il suo zero-indice; una gabbia ha sei corone e nessun `:zero`, e
+tutte e tre rifiutavano — correttamente — con «questo piatto non espone lo
+zero-indice: usa `registration-plate`». Ora dicono la verità (`cage-proxy?` +
+`no-auto-on-cage-msg`): il rilevamento automatico della gabbia non è ancora
+costruito, si registra a mano con `p`. Nessun comportamento cambiato, solo il
+messaggio — ma era un messaggio che mandava a rifare il lavoro nel modo
+sbagliato.
+
+**3. `:phases` — la rotazione degli anelli, da imporre a MISURARE.** Vedi la
+sezione dedicata più sotto, che questa chiude.
+
+- `(registration-cage :d 176 :phases {:x 2.5})` dichiara di quanto ogni anello è
+  girato attorno al proprio asse sulla gabbia che hai davvero incollato (`:x` il
+  grande, `:z` il piccolo), in gradi, regola della mano destra. La stampa non è
+  toccata: `acquire-cage` stampa sempre la gabbia nominale, `:phases` descrive
+  quella costruita.
+- E soprattutto la MISURA. Dopo ogni solve su gabbia, `cage-phase-report!`
+  stampa nella REPL la fase di ciascun anello, **ciascuno misurato contro una
+  posa risolta SENZA di lui** (leave-one-ring-out), più un giro di raffinamento.
+  Le due cose non sono zelo: misurato contro il fit che lo ha usato, un anello
+  girato di 3.0° legge **1.0°** — il fit ruota tutta la gabbia per spartire la
+  differenza — e trascina gli altri due a −1.2° ciascuno. Tenuto fuori e
+  raffinato: colpevole 3.00°, innocenti 0.00°.
+- **La prova è il ±, non la grandezza.** Un anello cliccato male dà stime che
+  si sparpagliano quanto la loro media; un anello incollato girato dà lo stesso
+  scarto da OGNI suo mark. L'accusa richiede `|deg| > 1.5 × spread`.
+- Quanto pesa: 4° non dichiarati = **22px di rms e 15mm di camera**; 1.8° con
+  rumore di click realistico (±0.7px) = 9.7px di rms, e la stima legge
+  1.80° ±0.04 da soli 5 mark per anello.
+
+Verificato dal vivo nel bundle del browser (non solo "compila"): il percorso
+esatto di `on-solve-pnp!` chiamato con osservazioni sintetiche stampa le sette
+righe giuste, diametro compreso, senza sollevare eccezioni. Suite **952 test, 0
+fallimenti**, 123 warning (invariati).
+
+Nell'ordine di montaggio la pagina del manuale diceva ancora «chiudi col
+piccolo per ultimo»: corretta in «piccolo e medio prima, il GRANDE per ultimo»,
+che è quella che lascia una sola incognita invece di tre.
+
 ## IL GATE — è questo che manca
 
 Al 2026-08-19 i tre anelli sono STAMPATI e Vincenzo li sta incollando. Poi si
@@ -169,10 +225,12 @@ pallini mentre si incolla è difficile — Vincenzo lo ha detto provandoci
 1. **per il gate**: incollare come viene, puntando al vuoto, e trattare la fase
    di ciascun anello come un numero da MISURARE invece che da imporre. È un solo
    scalare per anello, ed è la filosofia del canale (cfr. `plate-calib`: la
-   difficoltà si sposta dal costruire al misurare). Da fare: un `:phases` su
-   `registration-cage`, o il fit della fase dai residui. NON ancora costruito —
-   se al gate i residui di un anello sono sistematicamente peggiori degli altri,
-   è questo, non il solutore;
+   difficoltà si sposta dal costruire al misurare). **COSTRUITO il 2026-08-19**:
+   `:phases` su `registration-cage` per dichiararla, e `cage-phase-report!` che
+   la misura da una foto registrata (leave-one-ring-out + raffinamento). Vedi
+   §"Banco preparato per il gate". Se al gate i residui di un anello sono
+   sistematicamente peggiori degli altri, adesso la REPL lo dice per nome e con
+   il numero;
 2. **per una v2 stampata**: chiavettare il giunto, che è la proposta di Vincenzo
    («fossette e rilievi»). Il posto giusto NON è la faccia marcata ma il BORDO:
    la battuta già abbraccia il bordo del partner, quindi le si dà un dentino
@@ -223,9 +281,12 @@ viste, i ricalchi no.
   un solo fattore di scala, non due. Da generalizzare se il gate passa.
 - **Nessuna verifica visiva automatica**: le mesh in Ridley si vedono solo se
   REGISTRATE (`extract-render-data` non mostra le mesh di extrude/loft da sole).
-- **La fase per-anello non è né dichiarabile né misurabile** — vedi la sezione
-  sulla rotazione. È il primo lavoro da fare se il gate mostra residui
-  sbilanciati fra gli anelli.
+- ~~**La fase per-anello non è né dichiarabile né misurabile**~~ — FATTO il
+  2026-08-19, vedi §"Banco preparato per il gate". Resta fuori: la fase si
+  misura da UNA foto alla volta e non viene fusa fra le foto, né scritta da
+  sola nel sorgente; è l'utente che la dichiara. Con più foto registrate le
+  stime vanno confrontate a mano — se concordano, è la gabbia; se no, è una
+  foto.
 - **La faccia superiore** degli anelli ha i bordi meno netti di quella contro il
   piano di stampa; è inevitabile in una stampata sola. L'upgrade, se servisse:
   ogni anello in due metà da 1.5mm, ciascuna coi mark verso il piano, incollate
@@ -256,12 +317,15 @@ viste, i ricalchi no.
 
 ## File
 
-- `src/ridley/photogrammetry/cage.cljs` — il proxy: `registration-cage`,
-  `ring-radii`, `joint-tabs`, `crown-phase`, `aperture`
+- `src/ridley/photogrammetry/cage.cljs` — il proxy: `registration-cage`
+  (`:phases`), `ring-radii`, `joint-tabs`, `crown-phase`, `aperture`,
+  `turn-about-axis`, `phase-from-residuals` (leave-one-ring-out + raffinamento)
 - `src/ridley/photogrammetry/bridge.cljs` — `index-anchor?`,
   `camera-sees-marks?`, culling per-mark dichiarato
 - `src/ridley/editor/edit_acquire.cljs` — la guardia nel ramo `p` (cerca
-  `per-mark-faces?`)
+  `per-mark-faces?`), `cage-phase-report!` (il referto della fase dopo il
+  solve), `cage-proxy?`/`no-auto-on-cage-msg` (le vie automatiche parlano di
+  gabbia), `session-json-from-folder` (foto senza NOTE.md)
 - `public/builtin-libraries/acquire-cage.clj` — `make-cage-ring` (posa della
   gabbia), `make-print-ring` (posa di stampa), `files`, `save-3mf`, `cradle`,
   `measured`
@@ -269,7 +333,9 @@ viste, i ricalchi no.
   `:export-group` diventano un oggetto multi-parte
 - `test/ridley/photogrammetry/cage_test.cljs` — fasce disgiunte, sei corone,
   linguette e battute, nessun mark sotto una linguetta, posa recuperata da
-  cinque direzioni, degenerazione sull'asse
+  cinque direzioni, degenerazione sull'asse, la fase (un passo esatto rinomina i
+  mark e muove entrambe le facce; un anello storto di 4° e la fase dichiarata
+  che lo rimette a posto; il referto che dice QUALE anello e di quanto)
 - `docs/manual/reference/en/registration-cage.md`
 
 ## Nota per il manuale, valida in entrambi gli esiti del gate

@@ -427,3 +427,138 @@
                                    :else "STACCATA")))
           (is (or attached-to-ring? (some? carrier))
               (str (name kind) " deve toccare l'anello o la linguetta che la porta")))))))
+
+;; --- la fase degli anelli ----------------------------------------------------
+;;
+;; L'anello PIÙ GRANDE non ha linguette proprie: lo tengono quelle degli altri
+;; due che gli premono contro la faccia, e può girare restando appoggiato. Il
+;; punto di incollaggio dovrebbe cadere a metà fra due pallini, ma trovare quel
+;; punto a occhio mentre l'epossidica prende è difficile davvero (Vincenzo,
+;; 2026-08-19) — e a raggio 85mm un grado vale 1.5mm. Quindi la fase si MISURA
+;; sulla gabbia costruita invece di imporla, ed è :phases a riceverla.
+
+(defn- anchor-pos [c id] (get-in c [:anchors id :position]))
+
+(deftest phases-turn-a-whole-ring-both-faces-at-once
+  (testing "un passo esatto di fase rinomina i mark; e le due facce si muovono
+            insieme, perché sono gli stessi dischetti visti attraverso 3mm di
+            plastica"
+    (println "\n=== gabbia: la fase di un anello ===")
+    (let [nominal (cage/registration-cage :d 176)
+          step-deg (/ 360.0 12)
+          turned (cage/registration-cage :d 176 :phases {:x step-deg})
+          near? (fn [a b] (< (norm (v- a b)) 1e-9))]
+      (is (= (:anchors nominal) (:anchors (cage/registration-cage :d 176 :phases {})))
+          ":phases vuoto è la gabbia nominale")
+      (doseq [face ["p" "m"]]
+        (doseq [i (range 12)]
+          (let [id-i (keyword (str "x" face (when (< i 10) "0") i))
+                id-next (keyword (str "x" face (when (< (mod (inc i) 12) 10) "0")
+                                      (mod (inc i) 12)))]
+            (is (near? (anchor-pos turned id-i) (anchor-pos nominal id-next))
+                (str "girato di un passo, " (name id-i) " sta dove stava "
+                     (name id-next))))))
+      (println (str "  faccia +X e faccia −X entrambe girate di " step-deg "°"))
+      ;; e SOLO l'anello dichiarato si muove
+      (doseq [ax ["y" "z"]]
+        (is (near? (anchor-pos turned (keyword (str ax "p00")))
+                   (anchor-pos nominal (keyword (str ax "p00"))))
+            (str "l'anello " ax " non è stato toccato"))))))
+
+(deftest a-misglued-ring-is-recovered-by-declaring-its-phase
+  (testing "la domanda del gate: se un anello è incollato storto, il modello
+            nominale registra MALE e non dice perché. Dichiarare la fase
+            misurata rimette la posa a posto — è un solo scalare per anello."
+    (println "\n=== gabbia: anello storto, fase dichiarata ===")
+    (let [off-deg 4.0
+          ;; la gabbia VERA sul banco: l'anello grande (:x) girato di 4°
+          built (cage/registration-cage :d 176 :phases {:x off-deg})
+          nominal (cage/registration-cage :d 176)
+          declared (cage/registration-cage :d 176 :phases {:x off-deg})
+          k (k*)
+          truth (synth/viewpoint 40 30 420.0)
+          c-pos (cam/camera-center truth)
+          ts-built (targets-of built (:creation-pose built))
+          seen (filterv (fn [t]
+                          (and (pos? (dot (:normal t) (v- c-pos (:obj t))))
+                               (let [[u v] (cam/project k truth (:obj t))]
+                                 (and (<= 0 u 4032) (<= 0 v 3024)))))
+                        ts-built)
+          ;; i click cadono dove i dischetti STANNO DAVVERO
+          px-of (into {} (map (fn [t] [(:id t) (cam/project k truth (:obj t))]) seen))
+          ;; …ma il solutore legge le posizioni dal MODELLO che gli si dà
+          solve-with (fn [model]
+                       (let [ts (targets-of model (:creation-pose model))
+                             by-id (into {} (map (juxt :id identity) ts))
+                             corr (vec (keep (fn [[id px]]
+                                               (when-let [t (by-id id)]
+                                                 {:ci 0 :world (:obj t) :px px}))
+                                             px-of))]
+                         (when-let [sol (pnp/solve-pnp corr k {:max-outliers 0})]
+                           {:rms (:rms-px sol)
+                            :err (norm (v- (cam/camera-center (:pose sol)) c-pos))})))
+          bad (solve-with nominal)
+          good (solve-with declared)]
+      (println (str "  " (count seen) " mark visti, anelli " (sort (set (map ring-of seen)))))
+      (println (str "  modello NOMINALE  → rms " (.toFixed (:rms bad) 2)
+                    "px, camera fuori di " (.toFixed (:err bad) 1) "mm"))
+      (println (str "  fase DICHIARATA   → rms " (.toFixed (:rms good) 2)
+                    "px, camera fuori di " (.toFixed (:err good) 2) "mm"))
+      (is (> (:rms bad) 5.0)
+          "un anello storto di 4° NON passa inosservato nel residuo")
+      (is (< (:rms good) 0.01) "dichiarata la fase, il fit torna esatto")
+      (is (< (:err good) 0.05) "…e la camera torna dov'era")
+      (is (> (:err bad) (* 20 (:err good)))
+          "dichiarare la fase è ciò che separa i due casi"))))
+
+(deftest the-residual-says-WHICH-ring-is-turned-and-by-how-much
+  (testing "un residuo alto è un numero senza causa, e il sospetto naturale è il
+            solutore o i click — che non c'entrano. I mark dell'anello girato
+            dicono lo stesso scarto ALL'UNISONO, e quell'accordo è la prova."
+    (println "\n=== gabbia: quale anello è girato, e di quanto ===")
+    (let [off-deg 3.0
+          built (cage/registration-cage :d 176 :phases {:x off-deg})
+          nominal (cage/registration-cage :d 176)
+          k (k*)
+          truth (synth/viewpoint 40 30 420.0)
+          c-pos (cam/camera-center truth)
+          ts-built (targets-of built (:creation-pose built))
+          ts-nom (targets-of nominal (:creation-pose nominal))
+          by-id (into {} (map (juxt :id identity) ts-nom))
+          seen (filterv (fn [t]
+                          (and (pos? (dot (:normal t) (v- c-pos (:obj t))))
+                               (let [[u v] (cam/project k truth (:obj t))]
+                                 (and (<= 0 u 4032) (<= 0 v 3024)))))
+                        ts-built)
+          ;; il click cade sul dischetto VERO; il modello dice dov'è quello NOMINALE
+          picks (vec (keep (fn [t]
+                             (when-let [nt (by-id (:id t))]
+                               {:axis (cage/anchor-axis (:id t))
+                                :obj (:obj nt)
+                                :px (cam/project k truth (:obj t))}))
+                           seen))
+          solve (fn [subset]
+                  (when-let [s (pnp/solve-pnp
+                                (mapv (fn [p] {:world (:obj p) :px (:px p)}) subset)
+                                k {:max-outliers 0})]
+                    (fn [obj] (cam/project k (:pose s) obj))))
+          report (cage/phase-from-residuals picks solve)]
+      (doseq [[axis r] (sort-by key report)]
+        (println (str "  anello " (name axis) " (" (:n r) " mark): "
+                      (.toFixed (:deg r) 2) "° ±" (.toFixed (:spread-deg r) 2)
+                      " = " (.toFixed (:mm r) 2) "mm")))
+      (is (= #{:x :y :z} (set (keys report))) "tutti e tre gli anelli misurati")
+      (is (every? :held-out? (vals report))
+          "ogni anello è misurato contro una posa che NON lo ha usato")
+      (is (< (Math/abs (- (:deg (:x report)) off-deg)) 0.3)
+          "l'anello girato si dichiara, e col numero giusto")
+      (is (< (Math/abs (:deg (:y report))) 0.3) "l'anello y è a posto")
+      (is (< (Math/abs (:deg (:z report))) 0.3) "…e anche lo z")
+      ;; l'accordo fra i mark dello stesso anello è ciò che distingue un anello
+      ;; girato da una mano tremante — ed è il criterio con cui edit-acquire
+      ;; ACCUSA un anello, quindi si collauda quello, non la sola grandezza
+      (let [accused? (fn [r] (and (> (Math/abs (:deg r)) 0.3)
+                                  (> (Math/abs (:deg r)) (* 1.5 (:spread-deg r)))))]
+        (is (accused? (:x report)) "l'anello girato viene accusato")
+        (is (not (accused? (:y report))) "l'anello y non viene accusato")
+        (is (not (accused? (:z report))) "…né lo z")))))

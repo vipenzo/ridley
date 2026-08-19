@@ -43,6 +43,22 @@ gabbia non batte l'image-board si archivia senza aver scritto il multi-ellisse.
 Documento di governo `dev-docs/brief-registration-ring.md`; entry point
 `dev-docs/HANDOVER-registration-cage.md`.
 
+*Banco preparato per il gate (2026-08-19), gabbia stampata e incollata*: tre
+inciampi tolti dalla strada prima che costassero la giornata. (1) Una cartella di
+foto SENZA NOTE.md apriva una sessione **vuota** e ne persisteva il vuoto — ma la
+gabbia non ha giradischi, quindi non ha NOTE: ora le foto si prendono dalla
+cartella, tutte fuori-anello. (2) Le vie automatiche (Auto, batch, Grab), tutte
+costruite sull'unica corona del piatto, rispondevano a una gabbia consigliando un
+piatto; ora dicono che il rilevamento automatico della gabbia non esiste ancora e
+che si registra con `p`. (3) **`:phases`**: la rotazione dell'anello grande non è
+imposta da nessun giunto, e a r=85 un grado vale 1.5mm — 4° non dichiarati
+costano 22px di rms e 15mm di camera. Ora si dichiara, e soprattutto si MISURA:
+dopo ogni solve su gabbia la REPL stampa la fase di ciascun anello, ciascuno
+misurato contro una posa che non lo ha usato (leave-one-ring-out, più un giro di
+raffinamento) — su gabbia sintetica legge 3.00° ±0.00 sul colpevole e 0.00 sugli
+innocenti. La difficoltà si sposta dal costruire al misurare, come per
+`plate-calib`.
+
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già
 registrato. Entry point `dev-docs/HANDOVER-grab-and-register.md`; complemento

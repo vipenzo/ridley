@@ -11,6 +11,7 @@ status: experimental
 
 `(registration-cage :d 176)`
 `(registration-cage :d 176 :marks 12 :disc 2.5 :h 3)`
+`(registration-cage :d 176 :phases {:x 2.5})`
 
 ## Description
 
@@ -54,6 +55,11 @@ they were there to enforce a rigidity the mounting now supplies physically.
   stiffness, and it is the width of the band an edge-on ring paints across the
   part — 3mm against a 60mm part is 5% of it, which is the cage's whole
   occlusion cost.
+- `:phases` — how far each ring is turned about its **own** axis on the cage you
+  actually glued, in degrees, as `{:x 2.5 :y 0 :z 0}` (`:x` the largest ring,
+  `:z` the smallest), positive by the right-hand rule on that axis. Default 0,
+  meaning nominal. See *The rotation you cannot impose* below — this is a
+  number you **measure**, not a tolerance you try to hit.
 
 ## Why three rings, and why three sizes
 
@@ -162,13 +168,74 @@ direction — so a lip there would block the assembly rather than the ring. The
 four that exist sit outside the partner's outer radius, where nothing ever
 passes.
 
-Fit the two larger rings first, anchor the part, and close with the smallest ring
-last — it carries four of the six tabs. Use **epoxy**, not cyanoacrylate: the
-cage gets handled a great deal while being turned.
+Glue the **smallest and middle** rings first: their own tabs impose their
+rotation, so those two are fixed by construction. Then anchor the part, and
+close with the **largest** ring, whose rotation is the one nobody can impose
+(see *The rotation you cannot impose*) — doing it last leaves the whole assembly
+with exactly one free number instead of three. Use **epoxy**, not cyanoacrylate:
+the cage gets handled a great deal while being turned.
 
 The face against the build plate comes out sharper than the other one, and there
 is no way to have both in a single print. That is expected: what the printer gets
 wrong is measured afterwards, not chased beforehand.
+
+## The rotation you cannot impose
+
+Concentricity and squareness are imposed by the tabs and their stops. So is the
+rotation of the small and medium rings about their own axes: their tabs only
+reach their partners when those rings are turned right. The **largest ring is
+the exception** — it has no tabs of its own, it is held by the other two
+pressing on its face, and it can turn while staying perfectly seated.
+
+Nominally every joint lands exactly **halfway between two marks** (the crowns
+are turned by half a step for this reason, giving 15° of clearance at twelve
+marks), and that is the visual check: a contact point sitting *on* a disc means
+that ring is round. But finding that midpoint by eye while the epoxy sets is
+hard, and at r=85mm **one degree is 1.5mm**. So glue it as it comes, and treat
+each ring's rotation as a number to measure — the same move `plate-calib` makes
+for the plate, shifting the difficulty off the fabrication and onto an
+instrument.
+
+`edit-acquire` measures it for you. Register one photograph with `p`, clicking
+marks on **all three** rings, and the REPL prints:
+
+```
+  fase degli anelli (da questa foto):
+    anello x (5 mark): 2.53° ±0.06  =  3.75mm sulla corona
+    anello y (4 mark): 0.04° ±0.31  =  0.05mm sulla corona
+    anello z (4 mark): -0.02° ±0.28 =  -0.03mm sulla corona
+  → l'anello x sembra INCOLLATO GIRATO di 2.5°…
+```
+
+Each ring is measured against a pose solved **without** it, which is what makes
+the number trustworthy: measured against the fit that used it, a ring 3.0° round
+reads 1.0° and smears the rest over the two innocent rings, because the fit
+rotates the whole cage to split the difference. A turned ring also drags the
+*other* rings' hold-out poses, so once the evidence is confident about one, it
+is corrected and everything re-measured — which returns the innocent rings to
+zero instead of leaving them accused of about a degree apiece.
+
+The evidence is the **±**, not the size. A ring merely clicked sloppily gives
+estimates that scatter as widely as their own mean; a ring genuinely glued round
+gives the same offset from every one of its marks. Declare what it says:
+
+```clojure
+(edit-acquire "/Users/me/scans/testina"
+  {:proxy (registration-cage :d 176 :phases {:x 2.5})})
+```
+
+and re-solve. If the residual collapses, that was it. Measured on a synthetic
+cage: 4° of undeclared turn costs **22px of rms** and puts the camera **15mm**
+out of place — large enough to fail a session, and with nothing in the number
+itself to say the geometry, rather than the solver or your clicking, was at
+fault.
+
+A **90° error is not one of these** and needs no correction: with marks every
+30°, turning a ring by 90° only changes which mark is number zero, and the
+zero-index says which.
+
+Printing is unaffected — `acquire-cage` always prints the nominal cage. `:phases`
+describes the one you built.
 
 ## Anchoring the part
 

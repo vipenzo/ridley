@@ -353,15 +353,148 @@
   (let [step (/ (* 2.0 Math/PI) n)]
     (if (= 2 (mod n 4)) (/ step 4.0) (/ step 2.0))))
 
+(defn- deg->rad [x] (* (double x) (/ Math/PI 180.0)))
+
+(defn turn-about-axis
+  "Object-frame point `obj` turned by `deg` about the ring `axis`'s own axis —
+   the exact motion a ring makes when it is glued round from nominal, since it
+   stays seated and concentric while it turns."
+  [axis obj deg]
+  (let [[u v n] (unplace axis obj)
+        a (deg->rad deg)
+        c (Math/cos a) sn (Math/sin a)]
+    (place axis [(- (* u c) (* v sn)) (+ (* u sn) (* v c)) n])))
+
+(defn- ring-radius [{:keys [axis obj]}]
+  (let [[u v _] (unplace axis obj)] (Math/sqrt (+ (* u u) (* v v)))))
+
+(defn- phase-of-ring
+  "One ring's apparent turn (deg) and the scatter of the marks that said so,
+   measured against `project`. To first order: turn a mark by a probe angle, see
+   which way and how far its image moves, and read the click's residual along
+   that direction."
+  [axis ps project]
+  (let [probe 1.0
+        ests (vec (keep (fn [{:keys [obj px]}]
+                          (let [p0 (project obj)
+                                p1 (project (turn-about-axis axis obj probe))]
+                            ;; `project` gives nil behind the camera, and a mark
+                            ;; whose image barely moves when the ring turns (this
+                            ;; ring seen edge-on) measures nothing — dividing by
+                            ;; that is how a diagnosis becomes noise
+                            (when (and p0 p1)
+                              (let [t [(- (nth p1 0) (nth p0 0)) (- (nth p1 1) (nth p0 1))]
+                                    e [(- (nth px 0) (nth p0 0)) (- (nth px 1) (nth p0 1))]
+                                    tt (+ (* (nth t 0) (nth t 0)) (* (nth t 1) (nth t 1)))]
+                                (when (> tt 1e-6)
+                                  (* probe (/ (+ (* (nth e 0) (nth t 0))
+                                                 (* (nth e 1) (nth t 1)))
+                                              tt)))))))
+                        ps))]
+    (when (>= (count ests) 2)
+      (let [mean (/ (reduce + ests) (count ests))
+            var (/ (reduce + (map #(let [d (- % mean)] (* d d)) ests)) (count ests))]
+        {:deg mean
+         :mm (* (apply max (map ring-radius ps)) (deg->rad mean))
+         :spread-deg (Math/sqrt var)
+         :n (count ests)}))))
+
+(defn- estimate-all
+  "One pass: every ring with at least two picks, each measured against a pose
+   solved WITHOUT it (leave-one-ring-out). Falls back to the full fit when the
+   hold-out leaves too little to fit — flagged `:held-out? false`, because that
+   estimate under-reads and the caller must not present it as a measurement."
+  [picks solve]
+  (let [by-ring (group-by :axis picks)]
+    (into {}
+          (keep identity)
+          (for [[axis ps] by-ring
+                :when (>= (count ps) 2)]
+            (let [others (vec (mapcat val (dissoc by-ring axis)))
+                  held (when (seq others) (solve others))
+                  project (or held (solve picks))]
+              (when project
+                (when-let [r (phase-of-ring axis ps project)]
+                  [axis (assoc r :held-out? (some? held))])))))))
+
+(defn- confident?
+  "A ring is ACCUSED only when its own marks agree with each other. That
+   agreement is the entire evidence: a ring clicked sloppily scatters as widely
+   as its own mean, a ring GLUED round gives the same offset from every mark."
+  [{:keys [deg spread-deg]}]
+  (and (> (Math/abs deg) 0.3) (> (Math/abs deg) (* 1.5 spread-deg))))
+
+(def ^:private phase-passes
+  "How many times the estimate is refined. One turned ring contaminates the
+   hold-out poses of the other two — measured: with one ring 3.0° round, the two
+   innocent rings read −1.2° each (at ten times the scatter, which is what keeps
+   them from being accused). Correcting the confident ring and re-measuring
+   clears that, and a second refinement has nothing left to find."
+  2)
+
+(defn phase-from-residuals
+  "How far each ring looks TURNED, in degrees, read off one solved photograph.
+
+   `picks` are the correspondences the photograph was solved from, each
+   {:axis :obj [x y z] :px [u v]}: the mark's object position per the MODEL and
+   the pixel the user actually clicked. `solve` takes a subset of picks and
+   returns a function from object point to pixel (the pose that subset implies),
+   or nil when it cannot fit one.
+
+   Two things make the number trustworthy rather than merely suggestive.
+
+   LEAVE-ONE-RING-OUT: each ring is measured against a pose solved without it.
+   Measured against the fit that used it, a ring 3.0° round reads 1.0° — the fit
+   rotates the whole cage to split the difference and hides two thirds of the
+   error.
+
+   REFINEMENT: a genuinely turned ring drags the hold-out poses of the other
+   two, which then read about −1.2° apiece. So a ring the evidence is confident
+   about is corrected and everything re-measured, which returns the innocent
+   rings to zero.
+
+   Returns {axis {:deg :mm :spread-deg :n :held-out?}} per ring with at least two
+   picks. `:spread-deg` is reported next to `:deg` and never summarised away — see
+   `confident?`. `:held-out? false` marks an estimate that could not be held out
+   and therefore under-reads: a direction and a starting point, not an answer."
+  [picks solve]
+  (loop [ps picks
+         applied {}
+         pass 0]
+    (let [est (estimate-all ps solve)
+          sure (into {} (filter (fn [[_ r]] (and (confident? r) (:held-out? r))) est))]
+      (if (or (>= pass phase-passes) (empty? sure))
+        ;; report the TOTAL: what earlier passes already corrected, plus what is
+        ;; still left over in this one
+        (into {} (for [[axis r] est]
+                   [axis (let [total (+ (get applied axis 0.0) (:deg r))]
+                           (assoc r
+                                  :deg total
+                                  :mm (* (apply max (map ring-radius
+                                                         (filter #(= axis (:axis %)) ps)))
+                                         (deg->rad total))))]))
+        (recur (mapv (fn [{:keys [axis obj] :as p}]
+                       (if-let [r (get sure axis)]
+                         (assoc p :obj (turn-about-axis axis obj (:deg r)))
+                         p))
+                     ps)
+               (merge-with + applied (into {} (map (fn [[a r]] [a (:deg r)]) sure)))
+               (inc pass))))))
+
 (defn- face-anchors
   "The crown + zero-index anchors of ONE marked face: `n` marks on a circle of
-   radius `crown-r` starting at `crown-phase`, the index radially inside mark 0,
-   all at n = s·h/2."
-  [axis s crown-r index-r n h]
+   radius `crown-r` starting at `crown-phase` PLUS `phase-off` (rad, see
+   `registration-cage`'s :phases), the index radially inside mark 0, all at
+   n = s·h/2.
+
+   Both faces of a ring take the SAME `phase-off`, and must: the two crowns are
+   the same physical discs seen through 3mm of plastic, so a ring that was glued
+   turned is turned on both its sides at once."
+  [axis s crown-r index-r n h phase-off]
   (let [off (* s (/ h 2.0))
         heading (axis-unit axis s)
         step (/ (* 2.0 Math/PI) n)
-        phase (crown-phase n)
+        phase (+ (crown-phase n) phase-off)
         at (fn [r a] (place axis [(* r (Math/cos a)) (* r (Math/sin a)) off]))
         radial (fn [a] (place axis [(Math/cos a) (Math/sin a) 0.0]))]
     (into {(index-id axis s) {:position (at index-r phase)
@@ -427,6 +560,27 @@
      :disc   disc diameter (mm), default scales with :d (2.5 on the reference 176)
      :h      ring thickness (mm), default 3 — does NOT scale (see `default-h`)
      :seg    mesh segments per ring, default 64 (appearance only)
+     :phases how much each ring is turned about its OWN axis on the cage you
+             actually glued, in DEGREES, as {:x d :y d :z d} — :x the largest
+             ring, :z the smallest — positive by the right-hand rule on that
+             axis. Default 0, meaning nominal.
+
+             This exists because one of the three rotations is not constrained
+             by the joints. Concentricity and orthogonality are imposed by the
+             tabs and their stops; the small and medium rings' own tabs only
+             reach their partners when those rings are turned right; but the
+             LARGEST ring has no tabs of its own — it is held by the other two
+             pressing against its face, and it can turn while staying seated.
+             Nominally every joint lands halfway between two marks (15° of
+             clearance at twelve), and that is the visual check; but finding
+             that midpoint by eye while the epoxy sets is genuinely hard, and
+             at r=85mm one degree is 1.5mm. So the phase is a number to
+             MEASURE on the built cage rather than a tolerance to hit — the
+             same move `plate-calib` makes, difficulty shifted off the
+             fabrication and onto an instrument. One scalar per ring.
+
+             A 90° error is NOT one of these: with marks every 30° it only
+             renames which mark is number zero, and the zero-index says so.
 
    Returns a three-ring mesh with, under :anchors, six crowns of `marks` plus six
    zero-indices — `:zp00`…, `:zm00`…, `:yp00`…, `:ym00`…, `:xp00`…, `:xm00`…,
@@ -439,7 +593,7 @@
    The anchors are non-coplanar, so `pnp/solve-pnp` routes them to the general
    DLT rather than the planar homography — pick marks on TWO rings and the pose
    is conditioned on all six degrees of freedom with no mirror twin to reject."
-  [& {:keys [d marks disc h seg]
+  [& {:keys [d marks disc h seg phases]
       :or {h default-h seg 64}}]
   (when-not (and (number? d) (pos? d))
     (throw (js/Error.
@@ -462,9 +616,11 @@
                                           (:faces m))}))
                       {:verts [] :faces [] :groups {}}
                       rings)
+        phase-off (fn [axis] (deg->rad (or (get phases axis) 0.0)))
         anchors (reduce (fn [acc {:keys [axis crown index]}]
-                          (into acc (concat (face-anchors axis 1 crown index n h)
-                                            (face-anchors axis -1 crown index n h))))
+                          (let [po (phase-off axis)]
+                            (into acc (concat (face-anchors axis 1 crown index n h po)
+                                              (face-anchors axis -1 crown index n h po)))))
                         {}
                         rings)]
     {:type :mesh
@@ -489,6 +645,7 @@
      :cage-d d
      :cage-marks n
      :cage-h h
+     :cage-phases phases
      :rings rings
      ;; Fabrication rides on the proxy for the same reason the marks do: the
      ;; `acquire-cage` library must not restate any of this, or the printed cage

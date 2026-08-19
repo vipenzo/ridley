@@ -53,6 +53,7 @@
             [ridley.photogrammetry.camera :as pcamera]
             [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.bridge :as bridge]
+            [ridley.photogrammetry.cage :as cage]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.fuse :as fuse]
@@ -446,6 +447,25 @@
    pose), 'f' has no turntable angle to fit (plate photos are all out-of-ring)."
   []
   (boolean (seq (:anchors (:proxy-mesh @session)))))
+
+(defn- cage-proxy?
+  "True when the session's proxy is a registration CAGE. It is a plate-proxy?
+   too — same per-photo PnP on named marks — but the automatic paths (Auto, the
+   batch assignment, live Grab) are all built on the plate's ONE crown plus its
+   zero-index, and a cage has six crowns and no `:zero`. Those paths already
+   refuse it for want of a zero-index; this only lets them say WHY in terms of
+   what the user is holding, instead of advising a plate they deliberately
+   aren't using."
+  []
+  (boolean (:cage-d (:proxy-mesh @session))))
+
+(defn- no-auto-on-cage-msg
+  "The one sentence every automatic path owes a cage session. The multi-ellipse
+   detector is deliberately unbuilt until the cage's gate says the cage is worth
+   keeping (dev-docs/brief-registration-ring.md)."
+  []
+  (str "La gabbia non ha ancora il rilevamento automatico: registra ogni foto "
+       "a mano con 'p' (arma un dischetto, clicca dov'è nella foto)."))
 
 (defn- on-snap!
   "Photo 0: the gizmo just moved the PROXY, camera fixed — apply the refined
@@ -1934,6 +1954,66 @@
               (swap! added inc)))))
       @added)))
 
+(defn- cage-phase-report!
+  "After a solve on a CAGE, say whether a ring looks GLUED ROUND — the one error
+   the cage's design leaves open, and the one a residual reports without naming.
+
+   The largest ring has no tabs of its own: it is held by the other two pressing
+   on its face and can turn while staying seated, so its rotation is set by hand
+   at glue-up, where finding the point halfway between two marks is genuinely
+   hard (Vincenzo, 2026-08-19) and one degree is 1.5mm at r=85. Measured on a
+   synthetic cage: 4° of it costs 22px of rms and puts the camera 15mm out.
+   Without this report that is just a bad number with no cause attached, and the
+   natural suspect is the solver or the clicking — neither of which is at fault.
+
+   Prints; changes nothing. The fix it points at is `:phases` on
+   `registration-cage`, which is a declaration, so the user makes it."
+  [sol picks-by-ci targets k]
+  (when (and sol (:pose sol) (cage-proxy?))
+    (let [picks (vec (keep (fn [[ci px]]
+                             (when-let [t (nth targets ci nil)]
+                               {:axis (cage/anchor-axis (:id t)) :obj (:obj t) :px px}))
+                           picks-by-ci))
+          ;; the pose that MEASURES a ring is solved without that ring — see
+          ;; cage/phase-from-residuals for why measuring against the full fit
+          ;; reads a third of the truth and blames the innocent rings for the rest
+          solve (fn [subset]
+                  (when (>= (count subset) pnp/min-correspondences)
+                    (when-let [s (pnp/solve-pnp
+                                  (mapv (fn [p] {:world (:obj p) :px (:px p)}) subset)
+                                  k {:max-outliers 0})]
+                      (fn [obj] (pcamera/project k (:pose s) obj)))))
+          report (cage/phase-from-residuals picks solve)
+          ;; a ring is only ACCUSED when its marks agree with each other: a
+          ;; genuine turn shows the same offset on every mark of that ring, while
+          ;; sloppy clicking scatters. Without the agreement test this would blame
+          ;; the geometry for a shaky hand.
+          turned (filter (fn [[_ r]] (and (> (Math/abs (:deg r)) 0.6)
+                                          (> (Math/abs (:deg r)) (* 1.5 (:spread-deg r)))))
+                         report)]
+      (when (seq report)
+        (state/capture-println "  fase degli anelli (da questa foto):")
+        (doseq [[axis r] (sort-by key report)]
+          (state/capture-println
+           (str "    anello " (name axis) " (" (:n r) " mark): "
+                (.toFixed (:deg r) 2) "° ±" (.toFixed (:spread-deg r) 2)
+                "  =  " (.toFixed (:mm r) 2) "mm sulla corona"
+                (when-not (:held-out? r)
+                  " (misura PRUDENTE: pochi mark sugli altri anelli, il vero scarto è maggiore)")))))
+      (when (seq turned)
+        (let [[axis r] (first (sort-by (fn [[_ x]] (- (Math/abs (:deg x)))) turned))]
+          (state/capture-println
+           (str "  → l'anello " (name axis) " sembra INCOLLATO GIRATO di "
+                (.toFixed (:deg r) 1) "°, e i suoi mark lo dicono all'unisono"
+                " (±" (.toFixed (:spread-deg r) 2) "°). Non è il solutore e non sono"
+                " i click: riapri la sessione con"))
+          (state/capture-println
+           (str "     {:proxy (registration-cage :d "
+                (or (:cage-d (:proxy-mesh @session)) "<diam>")
+                " :phases {" axis " " (.toFixed (:deg r) 1) "})}"))
+          (state/capture-println
+           "     poi ri-registra questa foto: se il residuo crolla, era quello."))))))
+
 (defn- on-solve-pnp!
   "Solve the current photo's declared correspondences (robustly — a mislabeled
    corner is auto-rejected) and APPLY the pose, then STAY in PnP mode: rejected
@@ -1954,6 +2034,11 @@
                        (when-not (= r ::refused) r))]
           (let [added (propose-and-snap! (:pose sol) (session-intrinsics iw ih))
                 final (if (pos? added) (or (solve-and-apply! iw ih) sol) sol)]
+            (when-let [[iw2 ih2] (backdrop/image-size)]
+              (cage-phase-report! final
+                                  (mapv (fn [[ci {:keys [px]}]] [ci px]) (pnp-picks))
+                                  (pnp-targets)
+                                  (session-intrinsics iw2 ih2)))
             (set-status-message!
              (str "PnP " (name (:method final)) ": " (pnp-diagnosis final)
                   (when (pos? added)
@@ -1996,6 +2081,9 @@
       (< (count batch) min-plate-picks)
       (set-status-message!
        (str "Batch: servono almeno " min-plate-picks " dischetti cliccati (ne hai " (count batch) ")"))
+
+      (cage-proxy?)
+      (set-status-message! (no-auto-on-cage-msg))
 
       (nil? (:zero-obj (bridge/plate-detect (:proxy-mesh @session))))
       ;; the proxy has no zero-index (an OLD plate def, before it was exposed on
@@ -2745,6 +2833,9 @@
           registered? (fn [idx] (:pnp? (get-in @session [:acquire-results idx])))
           pending (filterv #(not (registered? %)) (range n))]
       (cond
+        (cage-proxy?)
+        (set-status-message! (no-auto-on-cage-msg))
+
         (nil? (:zero-obj det))
         (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate :d <diametro>) come proxy e riapri.")
         (empty? pending)
@@ -2942,8 +3033,10 @@
         marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
         zero-obj (:zero-obj det)]
     (if (nil? zero-obj)
-      {:ok? false :message (str "This proxy is not a registration plate (no zero-index): "
-                                "live capture registers against the plate's crown.")}
+      {:ok? false :message (if (cage-proxy?)
+                             (no-auto-on-cage-msg)
+                             (str "This proxy is not a registration plate (no zero-index): "
+                                  "live capture registers against the plate's crown."))}
       (let [cands (blob-detect/detect-blobs lum-at size {:rgba data})
             ;; The candidate RINGS, once. Stage 1 reads pixels only, so it is the
             ;; same answer at every seed focal — recomputing it per rung made a
@@ -6019,14 +6112,37 @@
 ;; Session mount + entry points
 ;; ------------------------------------------------------------
 
+(defn- session-json-from-folder
+  "session.json's TEXT for a folder of images with NO NOTE.md: every photo
+   out-of-ring (θ nil), in filename order.
+
+   This is not a lenient fallback, it is the registration CAGE's protocol. The
+   reference travels WITH the object, so there is no turntable, no angle to
+   record, and therefore nothing a NOTE could say that the folder doesn't:
+   every shot is free and registers on its own marks via PnP ('p'). The photo
+   table was only ever the turntable's log.
+
+   Without this, `ensure-session-json!`'s last resort — an EMPTY session, right
+   for an empty folder — would swallow a folder of real photos AND persist the
+   emptiness, so the second open wouldn't even reach this code."
+  [dir files]
+  (state/capture-println
+   (str "edit-acquire: nessun NOTE.md in " dir " — prendo le " (count files)
+        " foto dalla cartella, tutte fuori-anello (θ libera). È il protocollo"
+        " della gabbia: registrale una per una con 'p'."))
+  (js/JSON.stringify
+   (clj->js {:dir dir :photos (mapv (fn [f] [f nil]) files) :bootstrap []})
+   nil 1))
+
 (defn- build-session-json-from-note
   "Build session.json's TEXT for `dir` from its NOTE.md + image files — the
    same shape and rules cli.cljs's init-session writes, but IN-APP so a fresh
    session (photos + NOTE.md, no session.json yet) opens without the manual
    `node out/paq.js --init-session …` step. Parsing goes through the shared
    ridley.photogrammetry.note, so the tool and the CLI agree on angles and on
-   which shots are out-of-ring (θ `libera`). Returns Promise<string>; rejects
-   when there is no NOTE.md with a photo table."
+   which shots are out-of-ring (θ `libera`). With images but no NOTE, falls
+   back to `session-json-from-folder`. Returns Promise<string>; rejects only
+   when the folder has neither a NOTE with a photo table nor a single image."
   [dir]
   (-> (js/Promise.all
        #js [(-> (stl/desktop-read-file (str dir "/NOTE.md")) (.catch (fn [_] nil)))
@@ -6037,22 +6153,24 @@
                                 (map (fn [^js e] (.-name e)))
                                 (filter #(re-find #"(?i)\.(jpe?g|png)$" %))
                                 sort vec)]
-                 (when-not note-txt
-                   (throw (js/Error. (str "manca NOTE.md in " dir))))
-                 (let [{:keys [photos caliper]} (note/parse-note-text note-txt)]
-                   (when-not (seq photos)
-                     (throw (js/Error. (str "il NOTE.md di " dir " non ha una tabella foto"))))
-                   (let [missing (remove (set files) (map :image photos))]
-                     (when (seq missing)
-                       (state/capture-println
-                        (str "edit-acquire: foto citate nel NOTE ma assenti nella cartella: "
-                             (str/join ", " missing)))))
-                   (js/JSON.stringify
-                    (clj->js {:dir dir
-                              :photos (mapv (fn [p] [(:image p) (:theta-deg p)]) photos)
-                              :bootstrap (vec (keep #(when (:star? %) (:image %)) photos))
-                              :caliper caliper})
-                    nil 1)))))))
+                 (if-not note-txt
+                   (if (seq files)
+                     (session-json-from-folder dir files)
+                     (throw (js/Error. (str "né NOTE.md né immagini in " dir))))
+                   (let [{:keys [photos caliper]} (note/parse-note-text note-txt)]
+                     (when-not (seq photos)
+                       (throw (js/Error. (str "il NOTE.md di " dir " non ha una tabella foto"))))
+                     (let [missing (remove (set files) (map :image photos))]
+                       (when (seq missing)
+                         (state/capture-println
+                          (str "edit-acquire: foto citate nel NOTE ma assenti nella cartella: "
+                               (str/join ", " missing)))))
+                     (js/JSON.stringify
+                      (clj->js {:dir dir
+                                :photos (mapv (fn [p] [(:image p) (:theta-deg p)]) photos)
+                                :bootstrap (vec (keep #(when (:star? %) (:image %)) photos))
+                                :caliper caliper})
+                      nil 1))))))))
 
 (defn- empty-session-json
   "session.json for a folder with nothing in it yet — the LIVE case: the session is
