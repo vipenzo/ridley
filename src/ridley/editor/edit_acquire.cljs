@@ -295,7 +295,7 @@
      ;; CLI's, and its own to keep)
      :doc (js->clj obj :keywordize-keys true)}))
 
-(declare set-status-message!)
+(declare set-status-message! auto-log!)
 
 (defn- load-exif-focal!
   "Read the 35mm-equivalent focal length from photo 0's EXIF and adopt it as
@@ -333,8 +333,25 @@
 
 (declare update-panel!)
 
-(defn- set-status-message! [msg]
+(defn- set-status-message!
+  "Show `msg` on the panel's status line AND keep a copy in the REPL stream.
+
+   The status line clears itself after four seconds, which is right for a line
+   that must not go stale but wrong for anything worth reading twice — and the
+   messages this channel produces are long, and arrive exactly when the user is
+   looking at the photograph instead of at the panel (Vincenzo, 2026-08-19: 'non
+   faccio in tempo a leggerli che spariscono'). The diagnoses are the whole point
+   of them: which disc was renamed, which ring looks glued round, why a solve was
+   refused. So the flash stays for immediacy and the REPL keeps the record.
+
+   Consecutive duplicates are dropped, since a gesture repeated on the same
+   obstacle (clicking off the declared plane, say) would otherwise fill the
+   stream with one sentence."
+  [msg]
   (when-let [t (:status-msg-timer @session)] (js/clearTimeout t))
+  (when (and msg (not= msg (:last-logged-status @session)))
+    (auto-log! msg)
+    (swap! session assoc :last-logged-status msg))
   (swap! session assoc
          :status-message msg
          :status-msg-timer (js/setTimeout
