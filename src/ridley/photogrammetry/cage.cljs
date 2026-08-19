@@ -334,6 +334,43 @@
   [axis s]
   (keyword (str "zero-" (name axis) (face-tag s))))
 
+(defn mark-parts
+  "A crown id like :yp07 → {:axis :y :sign 1 :index 7}; nil for a zero-index or
+   anything that is not a crown mark."
+  [id]
+  (when-let [m (re-matches #"([xyz])([pm])(\d+)" (name id))]
+    {:axis (keyword (nth m 1))
+     :sign (if (= "p" (nth m 2)) 1 -1)
+     :index (js/parseInt (nth m 3) 10)}))
+
+(defn crown-misreadings
+  "Every way ONE ring's crown can be misread while the clicks themselves are
+   right — `n` marks per crown, so 4n of them.
+
+   The cage earns this list the hard way. Both faces of a ring carry the same
+   discs at the same angles, so a photograph cannot tell you which face you are
+   looking at; and from the far side the numbering runs the other way. Read a
+   ring from the wrong side and you get the other face AND the reversed sense,
+   plus whatever offset picking the wrong mark as number zero introduces.
+
+   Crucially this is PER RING and not global. Measured on a real session
+   (2026-08-19): in one photograph the largest ring was numbered correctly while
+   the middle one came out mirrored, because the camera was on opposite sides of
+   the two — which is the normal state of affairs for a cage, not bad luck. A
+   rescue that flips every label together cannot fix that photograph."
+  [n]
+  (for [flip-face? [false true] mirror? [false true] rot (range n)]
+    {:flip-face? flip-face? :mirror? mirror? :rot rot}))
+
+(defn relabel
+  "`id` re-read under one of `crown-misreadings`' entries; nil if `id` is not a
+   crown mark. `n` is marks per crown."
+  [id {:keys [rot mirror? flip-face?]} n]
+  (when-let [{:keys [axis sign index]} (mark-parts id)]
+    (mark-id axis
+             (if flip-face? (- sign) sign)
+             (mod (+ rot (if mirror? (- index) index)) n))))
+
 (defn crown-phase
   "The angle (rad) every crown is turned by, and it is not decoration.
 

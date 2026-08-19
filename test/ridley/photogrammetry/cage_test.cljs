@@ -562,3 +562,60 @@
         (is (accused? (:x report)) "l'anello girato viene accusato")
         (is (not (accused? (:y report))) "l'anello y non viene accusato")
         (is (not (accused? (:z report))) "…né lo z")))))
+
+;; --- rileggere una corona dal lato sbagliato ---------------------------------
+;;
+;; Le due facce di un anello portano gli stessi dischetti agli stessi angoli, e
+;; dalla faccia opposta la numerazione corre al contrario. Nella prima sessione
+;; vera (2026-08-19) dodici click erano tutti centrati su dischetti reali e l'rms
+;; era 1007px: i click giusti, i NOMI sbagliati. E sbagliati in modo DIVERSO da
+;; anello ad anello — grande giusto, medio specchiato — perché la camera stava da
+;; parti opposte dei due, che per una gabbia è la norma.
+
+(deftest the-two-faces-are-the-same-discs
+  (testing "cambiare faccia a un mark non lo sposta nel piano dell'anello: è lo
+            stesso dischetto attraverso la plastica, e per questo una foto non
+            può dirti quale faccia stai guardando"
+    (println "\n=== gabbia: le due facce sono gli stessi dischetti ===")
+    (let [c (cage/registration-cage :d 176)
+          n (:cage-marks c)
+          pos #(get-in c [:anchors % :position])]
+      (doseq [i [0 4 7 11]]
+        (let [a (pos (cage/relabel (cage/mark-id :y 1 i) {:rot 0} n))
+              b (pos (cage/relabel (cage/mark-id :y 1 i) {:rot 0 :flip-face? true} n))]
+          (is (< (norm (v- (mapv - a b) [0 0 0])) (+ 1e-9 (:cage-h c)))
+              "le due facce distano al più lo spessore dell'anello")
+          ;; e la distanza è ESATTAMENTE lo spessore, lungo l'asse dell'anello
+          (is (< (Math/abs (- (norm (v- a b)) (:cage-h c))) 1e-9))))
+      (println (str "  spessore " (:cage-h c) "mm, e nient'altro cambia")))))
+
+(deftest a-crown-read-from-the-far-side-is-recoverable
+  (testing "letta dall'altro lato una corona dà faccia opposta, verso invertito e
+            uno scarto: è una delle 4n riletture, e va ritrovata esattamente"
+    (println "\n=== gabbia: la rilettura che rimette a posto i nomi ===")
+    (let [c (cage/registration-cage :d 176)
+          n (:cage-marks c)
+          ms (cage/crown-misreadings n)]
+      (is (= (* 4 n) (count ms)) "4n riletture: due facce × due versi × n scarti")
+      (is (= (count ms) (count (set ms))) "…tutte distinte")
+      (is (= (cage/mark-id :y 1 5) (cage/relabel (cage/mark-id :y 1 5) {:rot 0} n))
+          "la rilettura nulla non tocca niente")
+      ;; il caso vero: ym01→yp10, ym03→yp08, ym10→yp01 (specchio + scarto 11)
+      (let [t {:flip-face? true :mirror? true :rot 11}]
+        (doseq [[from to] [[:ym01 :yp10] [:ym03 :yp08] [:ym10 :yp01]]]
+          (println (str "  " (name from) " → " (name (cage/relabel from t n))))
+          (is (= to (cage/relabel from t n)))))
+      ;; e ogni rilettura è invertibile: esiste sempre quella che riporta indietro
+      (doseq [t ms]
+        (let [there (cage/relabel :zp03 t n)
+              back (some (fn [u] (when (= :zp03 (cage/relabel there u n)) u)) ms)]
+          (is (some? back) (str "la rilettura " t " deve essere annullabile")))))))
+
+(deftest mark-parts-round-trips
+  (testing "leggere e riscrivere un id è la stessa cosa"
+    (doseq [axis [:x :y :z] s [1 -1] i (range 12)]
+      (let [id (cage/mark-id axis s i)
+            p (cage/mark-parts id)]
+        (is (= {:axis axis :sign s :index i} p))
+        (is (= id (cage/mark-id (:axis p) (:sign p) (:index p))))))
+    (is (nil? (cage/mark-parts :zero-zp)) "lo zero-indice non è un mark di corona")))

@@ -175,6 +175,55 @@ Nell'ordine di montaggio la pagina del manuale diceva ancora «chiudi col
 piccolo per ultimo»: corretta in «piccolo e medio prima, il GRANDE per ultimo»,
 che è quella che lascia una sola incognita invece di tre.
 
+## La trappola delle facce, trovata al primo scatto vero (2026-08-19)
+
+Vincenzo ha registrato la prima foto e ha ottenuto **1007px**. I dodici click
+erano tutti centrati su dischetti veri — verificato ritagliando la foto attorno a
+ciascuno. Erano i NOMI a essere sbagliati, e il colpevole è il programma:
+
+**i pallini che l'editor offre li sceglie dalla posa del PROXY, non dalla foto.**
+Col proxy fuori posa offre i mark della faccia sbagliata; e siccome le due facce
+di un anello portano gli stessi dischetti agli stessi angoli, non c'è niente sullo
+schermo che lo riveli. L'utente clicca i dischetti che vede, con le etichette che
+gli vengono date, e non può accorgersi di nulla.
+
+Il punto che rende la cosa insidiosa: **gli anelli sbagliano in modi DIVERSI nella
+stessa foto.** Lì l'anello grande era numerato correttamente e il medio era
+specchiato (`ym01→yp10`, `ym03→yp08`, `ym10→yp01`, cioè `i → 11−i` più uno
+scarto), perché la camera stava da parti opposte dei due — che per una gabbia è la
+norma, non sfortuna. Quindi **ribaltare tutte le etichette insieme non ripara
+niente**, ed è la ragione per cui il soccorso lavora anello per anello.
+
+`cage-relabel-rescue` (in `edit_acquire.cljs`): quando il solve mette la camera
+dietro un dischetto cliccato e nemmeno la ripresa dall'allineamento a schermo
+salva, si fida dell'anello con più punti, risolve da quello solo, poi lascia che
+ogni anello scelga la propria rilettura fra le 4n di `cage/crown-misreadings` (due
+facce × due versi × n scarti), e rifà il fit. Adotta solo se la guardia fisica
+passa **sulle etichette nuove** e l'rms scende sotto la metà. I click non si
+toccano mai: si rinominano, via `relabel-picks!`.
+
+Misurato sui dati veri di quella foto: **712px → 23px**, dodici dischetti
+rinominati, e le correzioni trovate dal solutore coincidono con quelle ricavate a
+mano dalla riproiezione.
+
+Il messaggio di rifiuto è stato corretto: diceva «vuol dire che i punti stanno
+tutti su UN anello», che in quel caso era **falso** (i punti stavano su tre) e
+mandava a rifare una foto che andava benissimo.
+
+Collaudo: le primitive (`mark-parts`, `crown-misreadings`, `relabel`) hanno test
+in `cage_test.cljs`, incluso il caso vero `ym01→yp10`; l'orchestrazione è
+verificata **dal vivo sui dati della sessione reale**, non da un test unitario —
+`edit_acquire` non è caricabile sotto Node.
+
+### Nota di metodo, che è costata un giro
+
+La prima diagnosi di questa sessione era sbagliata: avevo calcolato le intrinseche
+trattando la foto come orizzontale (8064×6048) mentre l'EXIF dice **Orientation
+6**, cioè verticale (6048×8064). Con l'ottica girata di 90° avevo "escluso" il
+verso di rotazione — che era invece uno dei due colpevoli. Il segnale c'era ed era
+leggibile: un pick a y=6118 in un'immagine alta 6048. **Prima di escludere una
+causa, controllare che l'immagine sia quella che si crede.**
+
 ## IL GATE — è questo che manca
 
 Al 2026-08-19 i tre anelli sono STAMPATI e Vincenzo li sta incollando. Poi si

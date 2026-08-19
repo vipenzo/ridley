@@ -1751,6 +1751,116 @@
 
 (defn- min-pnp-picks [] (if (plate-proxy?) min-plate-picks pnp/min-correspondences))
 
+(defn- cage-crown-count
+  "Marks per crown on the session's cage proxy."
+  []
+  (or (:cage-marks (:proxy-mesh @session)) 12))
+
+(defn- best-misreading
+  "For ONE ring's picks, the entry of `cage/crown-misreadings` that puts them
+   closest to where `pose` says their discs are. Returns {:t :err :pairs} with
+   `pairs` as [correspondence new-ci], or nil when no candidate maps cleanly."
+  [group pose k targets id->ci n]
+  (let [id-of (fn [ci] (:id (nth targets ci)))
+        obj-of (fn [ci] (:obj (nth targets ci)))]
+    (->> (cage/crown-misreadings n)
+         (keep (fn [t]
+                 (let [pairs (mapv (fn [c]
+                                     (when-let [nci (id->ci (cage/relabel (id-of (:ci c)) t n))]
+                                       [c nci]))
+                                   group)]
+                   (when (every? some? pairs)
+                     {:t t
+                      :pairs pairs
+                      :err (/ (reduce + (map (fn [[c nci]]
+                                               (if-let [q (pcamera/project k pose (obj-of nci))]
+                                                 (Math/hypot (- (nth q 0) (nth (:px c) 0))
+                                                             (- (nth q 1) (nth (:px c) 1)))
+                                                 1e9))
+                                             pairs))
+                              (count pairs))}))))
+         (reduce (fn [a b] (if (or (nil? a) (< (:err b) (:err a))) b a)) nil))))
+
+(defn- cage-relabel-rescue
+  "Recover a solve whose picks are RIGHT and whose labels are misread, one ring
+   at a time.
+
+   The cage makes this failure ordinary rather than careless. Both faces of a
+   ring carry the same discs at the same angles, so no photograph tells you which
+   face you are looking at, and from the far side the crown numbers run backwards.
+   Worse, the marks the editor OFFERS are chosen from where the proxy currently
+   sits, not from the photograph — so a proxy that is merely out of pose hands the
+   user labels from the wrong faces, and both faces look identical, so nothing on
+   screen can give it away. Found on the first real session (2026-08-19): twelve
+   clicks all dead centre on real discs, and an rms of 1007px.
+
+   Fixing every label together is not enough, and that is the whole design here.
+   In that same photograph the largest ring was numbered CORRECTLY while the
+   middle one was mirrored, because the camera sat on opposite sides of the two —
+   the normal condition for a cage. So: trust the ring with the most picks, solve
+   from it alone, then let every ring choose its own misreading against that pose,
+   and refit. Same clicks, better names (1007px → 18px on that photograph).
+
+   Returns {:sol :flip :changed} — `flip` a ci→ci permutation for
+   `relabel-picks!` — or nil when nothing better was found. Deliberately
+   conservative: the result must both satisfy the physical guard and beat the
+   original rms substantially, or the user keeps what they had."
+  [correspondences targets k baseline-rms extra-poses]
+  (let [n (cage-crown-count)
+        id->ci (into {} (map-indexed (fn [i t] [(:id t) i])) targets)
+        obj-of (fn [ci] (:obj (nth targets ci)))
+        axis-of (fn [ci] (cage/anchor-axis (:id (nth targets ci))))
+        groups (vals (group-by #(axis-of (:ci %)) correspondences))
+        anchor (reduce (fn [a b] (if (> (count b) (count a)) b a)) (first groups) groups)]
+    (when (and (seq anchor) (>= (count anchor) 4) (> (count groups) 1))
+      (let [;; poses to try the rings against: the anchor ring on its own (both
+            ;; faces — flipping which face its discs are on is what decides which
+            ;; side of them the camera must have been, at a cost of 3mm of
+            ;; geometry), plus whatever the caller already has in hand
+            anchor-poses
+            (keep identity
+                  (for [t [{:flip-face? false :mirror? false :rot 0}
+                           {:flip-face? true :mirror? false :rot 0}]]
+                    (let [corr (keep (fn [c]
+                                       (when-let [nci (id->ci (cage/relabel
+                                                               (:id (nth targets (:ci c))) t n))]
+                                         {:ci nci :world (obj-of nci) :px (:px c)}))
+                                     anchor)]
+                      (when (= (count corr) (count anchor))
+                        (:pose (pnp/solve-pnp (vec corr) k {}))))))
+            candidates
+            (keep (fn [pose]
+                    (let [picked (map #(best-misreading % pose k targets id->ci n) groups)]
+                      (when (every? some? picked)
+                        (let [by-axis (into {} (map (fn [g m] [(axis-of (:ci (first g))) (:t m)])
+                                                    groups picked))
+                              corr (vec (for [[c nci] (mapcat :pairs picked)]
+                                          {:ci nci :world (obj-of nci) :px (:px c)}))
+                              sol (pnp/solve-pnp corr k {})]
+                          ;; the physical guard has to be asked about the NEW
+                          ;; names: a disc's printed face is what decides which
+                          ;; side of it the camera can have been, so judging a
+                          ;; relabelled solve by the old labels' normals answers
+                          ;; a question nobody asked
+                          (when (and sol (bridge/camera-sees-marks?
+                                          targets (mapv :ci corr) (:pose sol)))
+                            {:sol sol
+                             :by-axis by-axis
+                             :changed (count (remove (fn [[c nci]] (= nci (:ci c)))
+                                                     (mapcat :pairs picked)))})))))
+                  (concat anchor-poses extra-poses))
+            best (reduce (fn [a b] (if (or (nil? a) (< (:rms-px (:sol b)) (:rms-px (:sol a)))) b a))
+                         nil candidates)]
+        (when (and best
+                   (pos? (:changed best))
+                   (< (:rms-px (:sol best)) (* 0.5 baseline-rms)))
+          {:sol (:sol best)
+           :changed (:changed best)
+           :flip (fn [ci]
+                   (or (when-let [t (get (:by-axis best) (axis-of ci))]
+                         (id->ci (cage/relabel (:id (nth targets ci)) t n)))
+                       ci))})))))
+
 (defn- solve-and-apply!
   "Solve the current photo's placed correspondences and APPLY the pose (move the
    proxy on photo 0, the camera otherwise), updating results/residuals/outliers
@@ -1855,23 +1965,49 @@
                   (and per-mark-faces? first-try (not (sees-marks? first-try)))
                   (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
                         retry (pnp/solve-pnp correspondences k
-                                             {:method :seeded :seed seed})]
-                    (if (sees-marks? retry)
+                                             {:method :seeded :seed seed})
+                        ;; Before blaming the geometry, suspect the NAMES. On a
+                        ;; cage the offered labels come from where the proxy sits,
+                        ;; not from the photograph, and the two faces of a ring
+                        ;; are indistinguishable — so a proxy merely out of pose
+                        ;; produces clicks that are all correct and labels that
+                        ;; are not. Ring by ring, because they are not all wrong
+                        ;; the same way.
+                        rescue (when-not (sees-marks? retry)
+                                 (cage-relabel-rescue correspondences targets k
+                                                      (:rms-px first-try)
+                                                      (keep :pose [first-try retry])))]
+                    (if (and rescue (not (sees-marks? retry)))
+                      (do (relabel-picks! idx (:flip rescue))
+                          (assoc (:sol rescue) :note
+                                 (str "erano i NOMI, non i click: " (:changed rescue)
+                                      " dischetti stavano sull'altra faccia del loro anello"
+                                      " (o contati nel verso opposto, che è la stessa cosa"
+                                      " vista dall'altro lato). Rinominati anello per anello"
+                                      " — i tuoi click non li ho toccati")))
+                      (if (sees-marks? retry)
                       (assoc retry :note
                              (str "la prima soluzione metteva la camera dietro i dischetti "
                                   "cliccati (sono tutti su un anello solo, e un anello solo "
                                   "ha il suo gemello specchiato): ripresa dall'allineamento "
                                   "corrente"))
+                      ;; Nothing left: not the pose on screen, and not a
+                      ;; misreading of the names either. Name BOTH remaining
+                      ;; causes — the old message asserted the picks were all on
+                      ;; one ring, which on a real session was simply false and
+                      ;; sent the user off to re-shoot a photograph that was fine
+                      ;; (2026-08-19).
                       (do (set-status-message!
                            (str "NON applicata: ogni soluzione mette la camera DIETRO almeno "
                                 "uno dei dischetti che hai cliccato, che è impossibile — quel "
-                                "dischetto l'hai fotografato. Vuol dire che i punti stanno "
-                                "tutti su UN anello: clicca qualche mark su un secondo anello, "
-                                "e se da questa inquadratura gli altri anelli sono di taglio, "
-                                "rifai la foto spostandoti di una decina di gradi. Intanto "
-                                "lascio la posa che hai adesso."))
+                                "dischetto l'hai fotografato. Ho già provato a rinominarli "
+                                "anello per anello e non basta. Due cause possibili: i punti "
+                                "stanno tutti su UN anello (clicca qualche mark su un secondo "
+                                "anello), oppure qualche click è finito su un dischetto di un "
+                                "anello diverso da quello che dice l'etichetta. Intanto lascio "
+                                "la posa che hai adesso."))
                           (swap! session assoc :last-solve ::refused)
-                          ::refused)))
+                          ::refused))))
 
                   :else first-try))]
       ;; A refusal must not reach the apply body: (:pose ::refused) is nil, and
