@@ -25,7 +25,7 @@ protocollo piatto+giradischi penalizzava proprio le foto che servono al disegno.
 
 ## Stato: cosa c'è
 
-Tre commit sul branch `grab-and-register`:
+Sette commit sul branch `grab-and-register`:
 
 - `053fd22` **fix(export)** — indipendente dalla gabbia. `(export :Grande :3mf)`
   restituiva `nil` senza fare niente; ora `export` rimette insieme le mesh
@@ -36,8 +36,29 @@ Tre commit sul branch `grab-and-register`:
   edit-acquire, i test.
 - `3db88fd` **feat(acquire-cage)** — la libreria di fabbricazione, il manuale,
   Roadmap e brief.
+- `5d05f97` **docs** — questo handover.
+- `63112e4` **feat(acquire-cage)** — i file di stampa arrivano già distesi
+  (`cage/printable-ring`): due anelli su tre stanno di taglio nelle coordinate
+  della gabbia, e ruotarli nello slicer significa poter lasciare indietro i
+  dischetti, che sono un altro oggetto.
+- `0b4297a` **fix(acquire-cage)** — le quattro battute erano **staccate**
+  dall'anello di 0.3mm: sono uscite dalla stampante come pezzi sciolti e sono
+  saltate via togliendo l'anello dal piatto. Il gioco serve fra la battuta e
+  l'anello da fermare, non fra la battuta e la linguetta che la porta.
+- `023d775` **fix(3mf)** — un pezzo a due colori è **un oggetto con due parti**,
+  non due oggetti. Da separati, lo slicer metteva i supporti sotto i dischetti
+  della faccia superiore (che nel proprio oggetto galleggiano a 2.4mm) e
+  segnalava un conflitto di gcode sulle pareti coincidenti delle tasche. Ora le
+  mesh che condividono `:export-group` escono come `<components>` + `<part>`,
+  la forma che Bambu e Orca si aspettano.
 
-Suite: **947 test, 0 fallimenti**, 123 warning (invariati).
+Suite: **949 test, 0 fallimenti**, 123 warning (invariati).
+
+Tre difetti su tre sono stati trovati dal PEZZO STAMPATO, non dal modello, ed è
+la lezione operativa di questa fetta: per la fabbricazione il collaudo che conta
+è `mesh-components` sul pezzo (deve dare **1 solido**) più l'ingombro misurato,
+non la rilettura del codice. Il test geometrico che c'era verificava che le
+linguette non SBATTESSERO contro niente — cosa diversa dall'essere attaccate.
 
 ### La geometria, e perché è quella
 
@@ -93,14 +114,15 @@ nome. **Il ramo del piatto non è stato toccato.**
 (edit-acquire "/…/testina" {:proxy (acquire-cage/measured 176 175.4)})
 ```
 
-Un anello per file, non uno con sei oggetti: in uno slicer un anello e i suoi
-dischetti restano oggetti distinti, e uno spostato senza l'altro dà un pezzo che
-si stampa benissimo e va buttato.
+Un anello per file, e dentro **un oggetto con due parti**: da oggetti separati
+lo slicer li appoggia sul piatto per conto proprio, mette i supporti sotto i
+dischetti della faccia superiore e segnala conflitti sulle pareti coincidenti.
+I file escono già distesi in posa di stampa: non c'è niente da ruotare.
 
 ## IL GATE — è questo che manca
 
-Vincenzo sta stampando i tre file (`~/Downloads/gabbia-176-{big,medium,small}.3mf`).
-Poi va montata, e poi si scatta. Il confronto è col risultato image-board **già
+Al 2026-08-19 i tre anelli sono STAMPATI e Vincenzo li sta incollando. Poi si
+ancora la testina e si scatta. Il confronto è col risultato image-board **già
 fatto** sullo stesso pezzo di elettrodomestico. Cinque foto mirate + una da
 dietro (la promessa nuova).
 
@@ -115,6 +137,51 @@ dietro (la promessa nuova).
 progetto. Se SÌ → la forma giusta del canale è *image-board registrate*, e il
 cap. 19 del manuale si scrive attorno a quel flusso.
 
+### LA ROTAZIONE DEGLI ANELLI — il punto aperto più importante
+
+Domanda di Vincenzo, 2026-08-18, ed è quella giusta: *«i dischi possono avere
+una posizione qualunque uno rispetto agli altri?»*. **No.** Il modello dichiara
+dove sta ogni dischetto, e a raggio 85mm un solo grado vale 1.5mm.
+
+Cosa è vincolato e cosa no:
+
+- concentricità e ortogonalità: le impongono linguette e battute;
+- la rotazione di anello PICCOLO e MEDIO attorno al proprio asse: la fissano le
+  loro stesse linguette, che arrivano sugli altri anelli solo se l'anello è
+  girato bene;
+- la rotazione dell'anello GRANDE: **libera.** Non ha linguette proprie, è
+  tenuto da quelle degli altri due che gli premono contro la faccia, e può
+  girare restando appoggiato.
+
+Il controllo visivo esatto: le corone sono ruotate di mezzo passo
+(`cage/crown-phase`), quindi **ogni punto di contatto cade esattamente a metà
+fra due pallini**, 15° da ciascuno. Un contatto sopra un pallino è un anello
+storto.
+
+Resta un'ambiguità di 90°, ed è benigna: con dodici mark ogni 30° una rotazione
+di 90° porta i dischetti dove il modello ne aspetta altri, quindi cambia solo
+QUALE mark è il numero zero. Lo dice lo zero-indice, e si sistema nel modello.
+
+**Il difetto di progetto, dichiarato**: trovare a occhio il punto a metà fra due
+pallini mentre si incolla è difficile — Vincenzo lo ha detto provandoci
+(2026-08-19), e ha ragione. Due strade, in ordine di costo:
+
+1. **per il gate**: incollare come viene, puntando al vuoto, e trattare la fase
+   di ciascun anello come un numero da MISURARE invece che da imporre. È un solo
+   scalare per anello, ed è la filosofia del canale (cfr. `plate-calib`: la
+   difficoltà si sposta dal costruire al misurare). Da fare: un `:phases` su
+   `registration-cage`, o il fit della fase dai residui. NON ancora costruito —
+   se al gate i residui di un anello sono sistematicamente peggiori degli altri,
+   è questo, non il solutore;
+2. **per una v2 stampata**: chiavettare il giunto, che è la proposta di Vincenzo
+   («fossette e rilievi»). Il posto giusto NON è la faccia marcata ma il BORDO:
+   la battuta già abbraccia il bordo del partner, quindi le si dà un dentino
+   verso l'interno e al bordo si fa una tacca corrispondente. Le quattro battute
+   esistenti chiavetterebbero l'anello grande (due) e il medio (due), cioè
+   esattamente quelli che servono. Da verificare che la tacca non arrivi ai
+   dischetti: la corona sta 2.5mm dentro il bordo e il dischetto ha raggio 1.25,
+   quindi il margine è ~1.25mm.
+
 ### Il montaggio (da fare prima del gate)
 
 Sei giunti incollati con **epossidica**. I quattro dell'anello piccolo hanno la
@@ -124,8 +191,11 @@ dell'anello, ed è esattamente la direzione da cui l'anello entra: lì avrebbe
 bloccato il montaggio invece dell'anello. Quei due si allineano a occhio, punta
 della linguetta a filo del bordo esterno.
 
-Ordine: prima i due anelli grandi, poi il pezzo al centro, poi l'anello piccolo
-(porta quattro linguette su sei).
+Ordine consigliato, che riduce il problema della rotazione a una variabile
+sola: **prima piccolo + medio**, che hanno la fase già imposta dalle proprie
+linguette; poi il pezzo al centro; poi l'anello grande per ultimo, che chiude
+la cerniera e a cui resta solo la propria rotazione da centrare sui quattro
+contatti.
 
 **Ancoraggio del pezzo**: il vincolo è SOLO la rigidità durante la sessione — la
 posizione nella gabbia non viene mai assunta, solo usata come frame. Quindi il
@@ -153,6 +223,9 @@ viste, i ricalchi no.
   un solo fattore di scala, non due. Da generalizzare se il gate passa.
 - **Nessuna verifica visiva automatica**: le mesh in Ridley si vedono solo se
   REGISTRATE (`extract-render-data` non mostra le mesh di extrude/loft da sole).
+- **La fase per-anello non è né dichiarabile né misurabile** — vedi la sezione
+  sulla rotazione. È il primo lavoro da fare se il gate mostra residui
+  sbilanciati fra gli anelli.
 - **La faccia superiore** degli anelli ha i bordi meno netti di quella contro il
   piano di stampa; è inevitabile in una stampata sola. L'upgrade, se servisse:
   ogni anello in due metà da 1.5mm, ciascuna coi mark verso il piano, incollate
@@ -177,6 +250,9 @@ viste, i ricalchi no.
 - `box` prende **(destra, su, avanti)**, non (x, y, z): le linguette uscivano
   ruotate di 90°, e a dirlo è stato misurare l'ingombro del pezzo prodotto, non
   rileggere il codice.
+- **Le mesh ruotano attorno al proprio centroide**: ruotare l'anello e i suoi
+  dischetti separatamente li disallinea. Per questo `printable-ring` cambia
+  frame con `unplace` invece di ruotare le mesh.
 
 ## File
 
@@ -186,8 +262,11 @@ viste, i ricalchi no.
   `camera-sees-marks?`, culling per-mark dichiarato
 - `src/ridley/editor/edit_acquire.cljs` — la guardia nel ramo `p` (cerca
   `per-mark-faces?`)
-- `public/builtin-libraries/acquire-cage.clj` — `make-cage-ring`, `files`,
-  `save-3mf`, `cradle`, `measured`
+- `public/builtin-libraries/acquire-cage.clj` — `make-cage-ring` (posa della
+  gabbia), `make-print-ring` (posa di stampa), `files`, `save-3mf`, `cradle`,
+  `measured`
+- `src/ridley/export/threemf.cljs` — `group-plan`: mesh con lo stesso
+  `:export-group` diventano un oggetto multi-parte
 - `test/ridley/photogrammetry/cage_test.cljs` — fasce disgiunte, sei corone,
   linguette e battute, nessun mark sotto una linguetta, posa recuperata da
   cinque direzioni, degenerazione sull'asse
