@@ -237,6 +237,39 @@ zero-index says which.
 Printing is unaffected — `acquire-cage` always prints the nominal cage. `:phases`
 describes the one you built.
 
+## Reading the marks: let the editor name them
+
+Do not count the discs. On a cage, counting is where sessions are lost: three
+crowns cross in one frame, both faces of a ring carry the *same* discs at the
+same angles, and the numbering reverses between them — so the direction you must
+count in changes from ring to ring within a single photograph, depending on which
+side of each ring the camera happens to be.
+
+Press **`n`** (or the **Nomi** button) and `edit-acquire` writes every visible
+mark's name on the photograph itself. It reads exactly what the solver reads, so
+it is honest about being wrong: if the names land nowhere near the discs, the
+proxy is out of pose, and that is the reading.
+
+Which gives the order of work that avoids the whole difficulty:
+
+1. Click **four marks on ONE ring** — the largest is easiest to trace. Four
+   coplanar marks determine a planar pose exactly.
+2. Press **`r`**. Expect a low residual from those four alone.
+3. The names now land on the right discs on **every** ring, including rings with
+   no picks at all, and the editor auto-places the marks it can find.
+
+Measured on a real session (2026-08-20, ⌀176 cage, 48mm-equivalent phone shots):
+four hand clicks on the largest ring, twenty-five marks found automatically
+across all three rings, **11.8px** with two rejected. The same photograph, worked
+the other way — reading each ring's numbers by eye — had six clicks of one crown
+landing on discs of three different rings, a residual of 514px, and no
+relabelling that could undo it.
+
+If a ring's numbers really do have to be read by hand, the sense is fixed:
+**`xp`/`yp`/`zp` run counter-clockwise, `xm`/`ym`/`zm` run clockwise**, each seen
+from the side it is printed on. Mark 0 is the one with the zero-index disc just
+inside it, toward the ring's centre.
+
 ## Anchoring the part
 
 The only requirement is that the part cannot **move relative to the cage during

@@ -1452,6 +1452,50 @@
       (set! (.-textContent dot) label))
     (.appendChild ov dot)))
 
+(defn- append-overlay-name!
+  "The NAME of a mark, printed beside where the model says that mark shows in the
+   photo."
+  [ov rect cx cy colour text]
+  (let [tag (.createElement js/document "div")
+        st (.-style tag)]
+    (set! (.-position st) "absolute")
+    (set! (.-left st) (str (- cx (.-left rect) -10) "px"))
+    (set! (.-top st) (str (- cy (.-top rect) 8) "px"))
+    (set! (.-fontSize st) "11px")
+    (set! (.-fontWeight st) "700")
+    (set! (.-whiteSpace st) "nowrap")
+    (set! (.-pointerEvents st) "none")
+    (set! (.-color st) colour)
+    (set! (.-textShadow st) "0 0 3px #000, 0 0 3px #000")
+    (set! (.-textContent tag) text)
+    (.appendChild ov tag)))
+
+(defn- draw-mark-names!
+  "Write every visible mark's NAME on the photograph, where the model currently
+   says that mark is ('n' / the Nomi button).
+
+   The editor draws a dot per mark but never says WHICH mark, and on a cage that
+   is the whole difficulty: three rings' crowns cross in one frame, both faces of
+   a ring carry identical discs, and the numbering reverses between them. So the
+   user counts — and on 2026-08-20 counting put six clicks of one crown onto
+   discs of three different rings, which no relabelling could undo and which cost
+   two sessions to diagnose. The names were derivable the whole time; they were
+   simply never shown.
+
+   It reads exactly what the solver reads, so it is honest about being wrong: with
+   the proxy out of pose the names land nowhere near the discs, and that is itself
+   the reading — align first, then trust them. Once one crown is registered (four
+   clicks are enough) they land on the right discs everywhere, including rings
+   with no picks at all."
+  [ov rect]
+  (when (:show-names? @session)
+    (doseq [t (pnp-targets)
+            :when (:visible? t)
+            :let [pos (viewport/world->screen (:world t))]
+            :when pos]
+      (append-overlay-name! ov rect (nth pos 0) (nth pos 1)
+                            (hex->css (:color t)) (:label t)))))
+
 (defn- redraw-overlay-dots! []
   (let [ov (ensure-pnp-overlay!)
         rect (canvas-rect)
@@ -1471,7 +1515,19 @@
     (doseq [[i {:keys [px screen]}] (map-indexed vector (pnp-batch))
             :let [[cx cy] (or (and px (backdrop/screen-of-pixel cv cam px)) screen)]
             :when (and cx cy)]
-      (append-overlay-dot! ov rect cx cy "rgba(255,255,255,0.35)" (str (inc i))))))
+      (append-overlay-dot! ov rect cx cy "rgba(255,255,255,0.35)" (str (inc i))))
+    (draw-mark-names! ov rect)))
+
+(defn- toggle-mark-names! []
+  (swap! session update :show-names? not)
+  (redraw-overlay-dots!)
+  (update-panel!)
+  (set-status-message!
+   (if (:show-names? @session)
+     (str "nomi dei mark SULLA FOTO. Se cadono lontano dai dischetti, è il proxy a "
+          "essere fuori posa: registra prima una corona sola (bastano 4 click), poi "
+          "torneranno al loro posto su tutti gli anelli")
+     "nomi dei mark nascosti")))
 
 (def min-plate-picks
   "A plate registers by the planar homography, which is exactly determined by 4
@@ -4382,6 +4438,7 @@
         (set! (.-className actions) "eaq-pnp-actions")
         (let [solve (.createElement js/document "button")
               clr (.createElement js/document "button")
+              names (.createElement js/document "button")
               batchb (when (plate-proxy?) (.createElement js/document "button"))
               exit (.createElement js/document "button")]
           (set! (.-type solve) "button")
@@ -4391,6 +4448,9 @@
           (set! (.-type clr) "button")
           (set! (.-textContent clr) "Azzera")
           (.addEventListener clr "click" (fn [_] (clear-pnp-picks!)))
+          (set! (.-type names) "button")
+          (set! (.-textContent names) (if (:show-names? @session) "Nomi: sì (n)" "Nomi (n)"))
+          (.addEventListener names "click" (fn [_] (toggle-mark-names!)))
           ;; a plate can register identity-free (fetta B) — offer the toggle
           (when batchb
             (set! (.-type batchb) "button")
@@ -4401,6 +4461,7 @@
           (.addEventListener exit "click" (fn [_] (stop-pnp!)))
           (.appendChild actions solve)
           (.appendChild actions clr)
+          (.appendChild actions names)
           (when batchb (.appendChild actions batchb))
           (.appendChild actions exit))
         (.appendChild box actions)))))
@@ -4914,6 +4975,9 @@
         ;; Armed flow only (batch has no armed target).
           (and pnp? (not (batch-mode?)) (= key "o"))
           (do (.preventDefault e) (.stopPropagation e) (skip-armed-corner!))
+
+          (and pnp? (= key "n"))
+          (do (.preventDefault e) (.stopPropagation e) (toggle-mark-names!))
 
           (and pnp? (not (batch-mode?)) (re-matches #"[1-8]" key))
           (do (.preventDefault e) (.stopPropagation e)
