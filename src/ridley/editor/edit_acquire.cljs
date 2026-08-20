@@ -1523,22 +1523,43 @@
    clicked (Vincenzo 2026-08-01, foto 10 / mark 11). No amount of aim fixes that,
    so there has to be a way to say 'take my click literally'.
 
-   And because a user who does not know the override cannot ask for it, a snap
-   that travelled suspiciously far ANNOUNCES itself and names the way out — the
-   affordance is offered at the moment it is needed rather than hidden in a
-   keymap."
-  [raw ^js e]
-  (if (.-altKey e)
-    (do (set-status-message! "click preso alla lettera (Alt): nessuno snap")
-        raw)
-    (let [px (snap-plate-click raw)
-          d (Math/hypot (- (nth px 0) (nth raw 0)) (- (nth px 1) (nth raw 1)))]
-      (when (> d suspicious-snap-px)
-        (set-status-message!
-         (str "lo snap ha spostato il click di " (modal/fmt-number d) "px — se ha agganciato "
-              "la cosa sbagliata (un bordo scuro lì vicino), riclicca tenendo ALT "
-              "per prenderlo alla lettera")))
-      px)))
+   `label` names the mark being placed, and it is not decoration. The snap is
+   reported at the moment of clicking, while the eye is on the photograph and
+   several marks have just been placed in a row; without a name the report is
+   unanswerable — 'lo snap ha spostato il click di 76px, di quale click parla?'
+   (Vincenzo, 2026-08-20).
+
+   A snap that travels FURTHER THAN THE WINDOW it started in is not refinement,
+   it is a different feature: `blob/snap-to-blob` is a mean-shift, so it walks,
+   and once it has walked past its own radius the disc under the cursor is no
+   longer what it settled on. There the click is taken literally without being
+   asked — a literal click is wrong by a few pixels, a snap onto the neighbouring
+   disc is wrong by a whole mark, and one bad correspondence does not degrade a
+   pose, it destroys it."
+  [raw ^js e label]
+  (let [named (if label (str " (" label ")") "")]
+    (if (.-altKey e)
+      (do (set-status-message! (str "click" named " preso alla lettera (Alt): nessuno snap"))
+          raw)
+      (let [px (snap-plate-click raw)
+            d (Math/hypot (- (nth px 0) (nth raw 0)) (- (nth px 1) (nth raw 1)))]
+        (cond
+          (> d plate-click-snap-radius)
+          (do (set-status-message!
+               (str "il click" named " l'ho preso ALLA LETTERA: l'aggancio automatico se ne "
+                    "andava di " (modal/fmt-number d) "px, cioè fuori dalla sua stessa "
+                    "finestra — a quella distanza non stava più rifinendo il tuo dischetto "
+                    "ma agganciandone un altro"))
+              raw)
+
+          (> d suspicious-snap-px)
+          (do (set-status-message!
+               (str "l'aggancio automatico ha spostato il click" named " di "
+                    (modal/fmt-number d) "px — se ha preso la cosa sbagliata (un bordo scuro "
+                    "lì vicino), riclicca tenendo ALT per prenderlo alla lettera"))
+              px)
+
+          :else px)))))
 
 (defn- screen-for [px client-fallback]
   (or (backdrop/screen-of-pixel (viewport/get-canvas) (viewport/get-camera) px) client-fallback))
@@ -1553,7 +1574,7 @@
           (batch-mode?)
           (do
             (.preventDefault e) (.stopPropagation e)
-            (let [px (click-pixel raw e)]
+            (let [px (click-pixel raw e nil)]
               (swap! session update-in [:pnp-batch idx] (fnil conj [])
                      {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
               (redraw-overlay-dots!)
@@ -1562,7 +1583,7 @@
           ;; fetta A / box: place the armed target; ignore clicks when unarmed
           (:pnp-armed @session)
           (let [ci (:pnp-armed @session)
-                px (click-pixel raw e)
+                px (click-pixel raw e (:label (nth (pnp-targets) ci nil)))
                 ;; A disc belongs to ONE mark. If this click lands on a disc some
                 ;; other mark already holds, the two cannot both be right, and
                 ;; keeping both hands the solver a contradiction that wrecks the
