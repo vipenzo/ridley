@@ -50,6 +50,7 @@
             [ridley.geometry.primitives :as prims]
             [ridley.viewport.core :as viewport]
             [ridley.turtle.attachment :as attachment]
+            [ridley.turtle.core :as turtle]
             [ridley.photogrammetry.camera :as pcamera]
             [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.bridge :as bridge]
@@ -801,10 +802,18 @@
                         (let [dir (m/v+ (m/v* ex a) (m/v+ (m/v* ey b) (m/v* ez c)))]
                           [(m/dot dir right-C) (m/dot dir up-C) (m/dot dir heading-C)]))
                 ;; {:axis :sign :offset} plane → remap its normal to the new frame axis.
-                remap-plane (fn [{:keys [axis sign offset]}]
+                remap-plane (fn [{:keys [axis sign offset base]}]
                               (let [nrm (remap (assoc [0.0 0.0 0.0] axis (double sign)))
                                     a (apply max-key #(Math/abs ^double (nth nrm %)) [0 1 2])]
-                                {:axis a :sign (if (>= (nth nrm a) 0) 1 -1) :offset offset}))]
+                                (cond-> {:axis a :sign (if (>= (nth nrm a) 0) 1 -1) :offset offset}
+                                  ;; a FREE plane is a pose, so it rides the same
+                                  ;; remap the marks and normals do — position as a
+                                  ;; point, heading/up as directions
+                                  base (assoc :base
+                                              {:position (m/v+ build-pos
+                                                               (Mv (m/v- (:position base) center)))
+                                               :heading (remap (:heading base))
+                                               :up (remap (:up base))}))))]
             (swap! session update :proxy-mesh
                    (fn [m]
                      (let [xform-pt (fn [v] (m/v+ build-pos (Mv (m/v- v center))))]
@@ -3617,6 +3626,8 @@
 
 (defn- axis-unit [a] (assoc [0.0 0.0 0.0] a 1.0))
 
+(declare obj-dir->world)
+
 (defn- retrace-dims []
   (bridge/dims-from-mesh (:proxy-mesh @session)
                          (get-in @session [:proxy-mesh :creation-pose])))
@@ -3632,16 +3643,47 @@
   [hit]
   (<= (m/magnitude hit) (+ (* 0.5 (m/magnitude (retrace-dims))) 45.0)))
 
-(defn- plane-of
-  "The plane in the OBJECT frame for a {:axis :sign :offset} spec + the box dims:
-   {:point :normal}. `offset` moves the plane OUTWARD along the face normal (mm),
-   so a positive value floats it above the box surface (a feature sitting proud of
-   the face). Shared by the retrace and the named-mark gesture."
-  [{:keys [axis sign offset]}]
+(defn- preset-plane-pose
+  "The pose of the proxy bounding-box face `axis`/`sign` — the six presets. Kept
+   because for a BOX proxy they are the part's own faces and remain the fastest
+   way to say 'this one'."
+  [axis sign]
   (let [half (* 0.5 (nth (retrace-dims) axis))
-        coord (* sign (+ half (or offset 0.0)))]
-    {:point (assoc [0.0 0.0 0.0] axis coord)
-     :normal (axis-unit axis)}))
+        a2 (last (remove #{axis} [0 1 2]))]
+    {:position (assoc [0.0 0.0 0.0] axis (* sign half))
+     :heading (m/v* (axis-unit axis) (double sign))
+     :up (axis-unit a2)}))
+
+(defn- plane-pose
+  "A tracing plane's full POSE in the object frame — position, heading (the
+   outward normal) and up (the in-plane reference direction).
+
+   A plane used to be `{:axis :sign :offset}`: one of the proxy bounding box's
+   six faces, plus a shift along its normal. That was right while the proxy WAS
+   the part, because then the six faces were the part's own faces. The
+   registration CAGE ended that: the proxy is now the reference AROUND the part,
+   its bounding box is a 176mm cube enclosing a 40mm object, and 'which face are
+   you tracing on' has no answer — 'facce di cosa?' (Vincenzo, 2026-08-20). An
+   arbitrary plane needs three degrees of orientation; a shift along a fixed
+   normal offers none.
+
+   So the plane is a pose, `:base`, freely placed with the gizmo. The six faces
+   survive as presets that SET that pose, and `:offset` still slides it along its
+   own normal — the one part of the old gesture that generalises unchanged.
+   Legacy specs (and old session files) with only :axis/:sign are read through
+   `preset-plane-pose`, so nothing already recorded is lost."
+  [{:keys [base axis sign offset] :as spec}]
+  (let [p (or base (preset-plane-pose (or axis 1) (or sign 1)))]
+    (if (and offset (not (zero? offset)))
+      (turtle/f p offset)
+      p)))
+
+(defn- plane-of
+  "The plane in the OBJECT frame as {:point :normal} — what a ray is intersected
+   against. Shared by the retrace and the named-mark gesture."
+  [spec]
+  (let [{:keys [position heading]} (plane-pose spec)]
+    {:point position :normal heading}))
 
 ;; ---- multiple named ricalchi (P4a-3 follow-up, Vincenzo 2026-07-24: "più di
 ;; uno, ognuno con un id") ----
@@ -3689,19 +3731,24 @@
    the panel text). Coloured by retrace-face-colors, matching the pressed face
    button."
   [{:keys [axis sign] :as spec}]
-  (let [coord (nth (:point (plane-of spec)) axis)
-        [a1 a2] (vec (remove #{axis} [0 1 2]))
-        dims (retrace-dims)
-        h1 (* 0.5 (nth dims a1))
-        h2 (* 0.5 (nth dims a2))
-        mk (fn [s1 s2] (-> [0.0 0.0 0.0] (assoc axis coord) (assoc a1 (* s1 h1)) (assoc a2 (* s2 h2))))
+  (let [{:keys [position heading up]} (plane-pose spec)
+        ;; the quad is built in the PLANE's own frame now, not from two box axes:
+        ;; an arbitrary plane has no box axes to borrow
+        v up
+        u (m/normalize (m/cross heading v))
+        half (* 0.5 (apply max (retrace-dims)))
+        mk (fn [s1 s2] (m/v+ position (m/v+ (m/v* u (* s1 half)) (m/v* v (* s2 half)))))
         proxy-pose (get-in @session [:proxy-mesh :creation-pose])
         [w0 w1 w2 w3] (mapv #(bridge/local->world proxy-pose %)
                             [(mk -1 -1) (mk 1 -1) (mk 1 1) (mk -1 1)])]
     {:type :mesh
      :data {:vertices [w0 w1 w2 w3]
             :faces [[0 1 2] [0 2 3]]
-            :material {:color (retrace-face-colors [axis sign]) :opacity 0.3 :double-sided true}}}))
+            ;; a freely-placed plane matches no face button, so it gets a neutral
+            ;; colour rather than borrowing the last preset's and implying it is
+            ;; still on that face
+            :material {:color (or (retrace-face-colors [axis sign]) 0xbbbbbb)
+                       :opacity 0.3 :double-sided true}}}))
 
 (defn- active-face-quad [] (face-quad (active-plane-spec)))
 
@@ -3832,11 +3879,66 @@
     (.removeEventListener canvas "wheel" retrace-on-wheel true))
   (remove-pnp-loupe!))
 
+(defn- obj-pose->world
+  "A pose expressed in the proxy's object frame, in world coordinates."
+  [obj-pose]
+  (let [pp (get-in @session [:proxy-mesh :creation-pose])]
+    {:position (bridge/local->world pp (:position obj-pose))
+     :heading (obj-dir->world pp (:heading obj-pose))
+     :up (obj-dir->world pp (:up obj-pose))}))
+
+(defn- world-pose->obj
+  "The inverse of `obj-pose->world`."
+  [w-pose]
+  (let [pp (get-in @session [:proxy-mesh :creation-pose])]
+    {:position (bridge/world->local pp (:position w-pose))
+     :heading (m/normalize (bridge/world->local-dir pp (:heading w-pose)))
+     :up (m/normalize (bridge/world->local-dir pp (:up w-pose)))}))
+
+(defn- on-retrace-gizmo-commit!
+  "A gizmo gesture on the tracing PLANE. The gesture is applied in WORLD space —
+   where the handles are — and the result converted back to the object frame,
+   rather than trying to rotate the delta into object coordinates by hand.
+
+   Committing FOLDS the offset slider into the base pose and zeroes it, so the
+   plane never has two owners: after a drag the slider slides from wherever the
+   drag left the plane. The points are NOT cleared — unlike changing face, moving
+   the plane a little is usually a correction to a trace already begun, and
+   throwing it away would punish the gesture that this whole change exists to
+   make possible."
+  [cmd-type value]
+  (let [spec (active-plane-spec)
+        w (obj-pose->world (plane-pose spec))
+        moved (case cmd-type
+                :f (turtle/f w value)
+                :rt (turtle/move-right w value)
+                :u (turtle/move-up w value)
+                :th (turtle/th w value)
+                :tv (turtle/tv w value)
+                :tr (turtle/tr w value))]
+    (swap! session assoc-in (active-r-path :plane)
+           {:base (world-pose->obj moved) :offset 0.0})
+    (redraw-retrace!)
+    (save-acquire-state!)
+    (update-panel!)))
+
+(defn- install-retrace-gizmo!
+  "The tracing plane's own gizmo: translate + rotate, no scale (a plane has no
+   size), and :nudge-mesh? false so dragging moves the PLANE and not the photo's
+   proxy — the same choice edit-mesh-split makes for its cut plane, and for the
+   same reason: seeing the object move when only the plane is changing reads as
+   the object moving."
+  []
+  (gizmo/enter! (obj-pose->world (plane-pose (active-plane-spec)))
+                {:handles #{:translate :rotate} :nudge-mesh? false}
+                {:on-commit on-retrace-gizmo-commit!}))
+
 (defn- start-retrace! []
   (when (and @session (not= :retrace (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :retrace)
     (ensure-active-ricalco!)
+    (install-retrace-gizmo!)
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" retrace-on-pointerdown true)
       (.addEventListener canvas "pointermove" retrace-on-pointermove true)
@@ -4104,6 +4206,16 @@
     (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
+(declare install-retrace-gizmo!)
+
+(defn- refresh-retrace-gizmo!
+  "Put the gizmo back on the plane after something else moved it (a face preset,
+   the offset slider) — it is built at a pose and has no mutator."
+  []
+  (when (= :retrace (:mode @session))
+    (gizmo/close!)
+    (install-retrace-gizmo!)))
+
 (defn- set-retrace-face!
   "Pick the ACTIVE ricalco's declared face. A ricalco belongs to ONE plane, so
    switching its face clears ITS points (they'd be meaningless there); the offset
@@ -4111,8 +4223,12 @@
   [axis sign]
   (let [had (seq (get-in @session (active-r-path :points)))]
     (swap! session update-in (active-r-path)
-           (fn [rt] (assoc rt :plane (assoc (:plane rt) :axis axis :sign sign) :points [])))
+           (fn [rt] (assoc rt
+                           :plane {:axis axis :sign sign :offset 0.0
+                                   :base (preset-plane-pose axis sign)}
+                           :points [])))
     (redraw-retrace!)
+    (refresh-retrace-gizmo!)
     (save-acquire-state!)
     (when had (set-status-message! "Piano cambiato — ricalco azzerato"))
     (update-panel!)))
@@ -4123,6 +4239,7 @@
    clicks and moves the drawn face rectangle, so it's a set-first control."
   [offset]
   (swap! session assoc-in (active-r-path :plane :offset) offset)
+  (refresh-retrace-gizmo!)
   (redraw-retrace!))
 
 (defn- retrace-offset-range [_] [-15 15 0.5])
@@ -4149,11 +4266,10 @@
    emitted proxy's anchor pose), so shape and proxy stay coincident."
   [{:keys [name plane points]} pose uniq]
   (when (>= (count points) 3)
-    (let [{:keys [axis sign]} plane
-          a2 (last (remove #{axis} [0 1 2]))
-          normal-obj (m/v* (axis-unit axis) (double sign))
-          v-obj (axis-unit a2)
-          u-obj (m/cross normal-obj v-obj)
+    (let [{:keys [heading up]} (plane-pose plane)
+          normal-obj heading
+          v-obj up
+          u-obj (m/normalize (m/cross normal-obj v-obj))
           n (count points)
           centroid-obj (mapv #(/ % n) (reduce m/v+ [0.0 0.0 0.0] points))
           f3 (fn [x] (.toFixed x 3))
@@ -5152,7 +5268,15 @@
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
           int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
-          norm-plane (fn [pl] {:axis (:axis pl) :sign (:sign pl) :offset (or (:offset pl) 0.0)})]
+          ;; a plane saved by an older session has only :axis/:sign/:offset; one
+          ;; saved since carries :base, the free pose. Keep whichever is there —
+          ;; plane-pose reads both, so an old ricalco re-opens exactly where it was.
+          norm-plane (fn [pl]
+                       (cond-> {:axis (:axis pl) :sign (:sign pl)
+                                :offset (or (:offset pl) 0.0)}
+                         (:base pl) (assoc :base {:position (vec (:position (:base pl)))
+                                                  :heading (vec (:heading (:base pl)))
+                                                  :up (vec (:up (:base pl)))})))]
       ;; Ricalchi (P4a-3). Back-compat: a file saved with the old single :retrace
       ;; is migrated to a one-element list named ricalco-1.
       (cond

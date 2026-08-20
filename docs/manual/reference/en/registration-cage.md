@@ -270,6 +270,30 @@ If a ring's numbers really do have to be read by hand, the sense is fixed:
 from the side it is printed on. Mark 0 is the one with the zero-index disc just
 inside it, toward the ring's centre.
 
+## Tracing on a plane you place yourself
+
+The retrace (`d`) used to ask which of the proxy bounding box's **six faces** you
+were tracing on, plus a shift along that face's normal. That was right while the
+proxy WAS the part: the six faces were the part's own faces. A cage ends it — the
+proxy is now the reference *around* the part, its bounding box is a cube enclosing
+an object a quarter its size, and "which face" has no answer.
+
+So the tracing plane is a **pose**: place and orient it with the gizmo, exactly
+as you place anything else. The six face buttons remain, as presets that set that
+pose, and the offset slider still slides the plane along its own normal.
+
+The plane is then emitted as the traced shape's `:mark`, so the outline arrives
+with its own frame:
+
+```clojure
+(let [q (:contorno (:shapes A))]
+  (turtle (:mark q) (extrude (:shape q) (f 3))))
+```
+
+Dragging the plane does **not** clear the points already traced on it (changing
+face still does — those points would be meaningless elsewhere): moving a plane
+slightly is usually a correction to a trace already under way.
+
 ## Anchoring the part
 
 The only requirement is that the part cannot **move relative to the cage during
