@@ -619,3 +619,64 @@
         (is (= {:axis axis :sign s :index i} p))
         (is (= id (cage/mark-id (:axis p) (:sign p) (:index p))))))
     (is (nil? (cage/mark-parts :zero-zp)) "lo zero-indice non è un mark di corona")))
+
+(def ^:private foto5-picks
+  "I quattordici punti VERI della foto 5 della sessione del 2026-08-20 (gabbia
+   ⌀176, telefono a 48mm-equivalenti, immagine 3024×4032 dopo l'orientamento
+   EXIF): dodici mark della corona −X più due dell'anello Y, questi ultimi due
+   piazzati dall'aggancio automatico e finiti 24 e 40px fuori posto.
+
+   Fixture di dati reali invece di sintetici, e per una ragione precisa: la
+   versione sintetica di questa configurazione NON riproduce il guasto. Con
+   pixel puliti il DLT malcondizionato torna 0.00px, e anche mettendo ±30px sui
+   due punti fuori piano si ferma a 9px — passerebbe il test anche senza la
+   correzione, che è il modo peggiore di avere un test. Il guasto vero chiede
+   questi numeri: l'rms era 9736px.
+   Un VETTORE ordinato, non una mappa: con quattordici chiavi Clojure passa a
+   una hash-map e l'ordine di `keys` non è quello di scrittura — e su un sistema
+   malcondizionato come questo l'ordine delle righe CAMBIA la soluzione (misurato:
+   7700px in un ordine, 8px in un altro). Un fixture che non fissa l'ordine non
+   riproduce il guasto."
+  [[:xm00 [2416.4 2210.5]] [:xm01 [2280.9 2555.2]] [:xm02 [1913.3 2718.6]]
+   [:xm03 [1390.1 2601.5]] [:xm04 [888.6 2209.3]]  [:xm05 [593.2 1671.7]]
+   [:xm06 [606.3 1192.4]]  [:xm07 [871.3 910.6]]   [:xm08 [1277.0 873.3]]
+   [:xm09 [1708.6 1049.3]] [:xm10 [2094.1 1361.7]] [:xm11 [2338.2 1781.7]]
+   [:ym01 [1248.9 2591.1]] [:ym03 [1107.9 1958.6]]])
+
+(deftest a-whole-crown-plus-two-strays-still-registers
+  (testing "«non complanare» non vuol dire «ha profondità». Una corona intera più
+            due mark di un secondo anello passa il test di complanarità — quei due
+            stanno decine di mm fuori dal piano — ma dodici punti su quattordici
+            non portano nessuna informazione di profondità: la portano i due, e
+            con essa tutto il loro errore. Peggio, se l'eliminazione degli
+            scarti ne toglie uno resta un insieme di fatto complanare in pasto al
+            DLT. Sessione vera, foto 5: rms 9736px."
+    (println "\n=== gabbia: una corona intera + due punti sparsi (dati veri) ===")
+    (let [c (cage/registration-cage :d 176)
+          ts (targets-of c (:creation-pose c))
+          by-id (into {} (map (juxt :id identity) ts))
+          iw 3024 ih 4032
+          k (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 48 (/ (double iw) ih)) iw ih)
+          mk (fn [rows] (mapv (fn [[id px]] {:world (:obj (by-id id)) :px px}) rows))
+          tutti (mk foto5-picks)
+          ;; ciò che resta DOPO che la pulizia ha buttato xm00 e ym01 — ed è qui
+          ;; che casca: undici punti complanari più uno
+          restanti (mk (remove (comp #{:xm00 :ym01} first) foto5-picks))
+          dlt-tutti (pnp/refine tutti k (pnp/estimate-dlt tutti k) {})
+          dlt-restanti (pnp/refine restanti k (pnp/estimate-dlt restanti k) {})
+          sol (pnp/solve-pnp restanti k {:max-outliers 0})]
+      (is (= 14 (count tutti)))
+      (println (str "  DLT su tutti e 14      : rms " (.toFixed (:rms-px dlt-tutti) 1) "px"))
+      (println (str "  DLT sui 12 rimasti     : rms " (.toFixed (:rms-px dlt-restanti) 0) "px"))
+      (is (< (:rms-px dlt-tutti) 30.0)
+          "col punto fuori piano ancora dentro, il DLT sta benissimo")
+      (is (> (:rms-px dlt-restanti) 1000.0)
+          "tolto quel punto il DLT crolla — se non crolla, il test non collauda niente")
+      (is (some? sol) "e una soluzione va comunque trovata")
+      (when sol
+        (println (str "  come risolve : " (name (:method sol))
+                      " · rms " (.toFixed (:rms-px sol) 1) "px"))
+        (is (< (:rms-px sol) 30.0)
+            "col soccorso il fit torna utilizzabile")
+        (is (= :planar-seeded (:method sol))
+            "e passa dal piano che i più condividono, non per fortuna")))))

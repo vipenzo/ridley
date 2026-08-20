@@ -346,6 +346,21 @@
              extent (reduce max 0.0 (map spread pts))]
          (< (reduce max 0.0 (map off pts)) (* 1e-3 (max 1e-9 extent))))))))
 
+(defn- dominant-plane-subset
+  "The correspondences lying on the plane that MOST of them share, or nil when
+   they do not cluster on one. Used to rescue a DLT that had too little depth to
+   work with (see `solve-once`)."
+  [correspondences]
+  (let [pts (mapv :world correspondences)]
+    (when-let [{:keys [o n]} (plane-frame pts)]
+      (let [off (mapv #(Math/abs (la/v-dot (la/v-sub % o) n)) pts)
+            extent (reduce max 0.0 (map #(la/v-norm (la/v-sub % o)) pts))
+            bar (* 0.05 (max 1e-9 extent))
+            on-plane (mapv first (filter (fn [[_ d]] (< d bar))
+                                         (map vector correspondences off)))]
+        (when (and (>= (count on-plane) 4) (< (count on-plane) (count correspondences)))
+          on-plane)))))
+
 (defn- solve-once
   "One seedless-estimate + refine pass over `correspondences`, or nil if
    under-determined. `method` chooses the seedless estimator:
@@ -378,8 +393,45 @@
                  (estimate-homography correspondences intrinsics))
         start (if seeded? seed (or dlt planar seed))]
     (when start
-      (assoc (refine correspondences intrinsics start {:sigma-px sigma-px})
-             :method (cond dlt :dlt planar :planar :else :seed)))))
+      (let [first-pass (assoc (refine correspondences intrinsics start {:sigma-px sigma-px})
+                              :method (cond dlt :dlt planar :planar :else :seed))]
+        ;; A DLT needs points that SPAN depth, and "not coplanar" is not the same
+        ;; as "spans depth". A cage photographed with a whole crown clicked and
+        ;; two stray marks from a second ring is comfortably non-coplanar — the
+        ;; strays are tens of mm off the plane — yet twelve of the fourteen points
+        ;; carry no depth information at all, so the two that do carry all of it,
+        ;; and their noise with it. Measured on a real session (2026-08-20, foto
+        ;; 5): 12 marks on one ring + 2 on another gave an rms of 9736px, while
+        ;; the same points seeded from the dominant ring's homography give a
+        ;; normal fit.
+        ;;
+        ;; So when the DLT comes back visibly bad, seed instead from the plane
+        ;; most of the points share and refine against ALL of them: the off-plane
+        ;; points are then doing what they are actually good for — breaking the
+        ;; homography's mirror ambiguity and pinning depth — rather than being
+        ;; asked to condition an estimator on their own. Keep whichever fits
+        ;; better, so this can only help.
+        ;;
+        ;; Only on a bad first pass, and only under :auto — a caller who NAMES an
+        ;; estimator gets that estimator, or the forcing is a lie and no test can
+        ;; measure the thing it says it is measuring.
+        ;;
+        ;; Where it actually bites is INSIDE the outlier loop, and that is worth
+        ;; recording: on the real session's foto 5 the DLT over all fourteen
+        ;; points was fine (12.5px). Then the cleaning dropped the worst two —
+        ;; and one of them was `ym01`, one of the only TWO points off the crown's
+        ;; plane. What remained was eleven coplanar points and one, on which the
+        ;; DLT returned 7700px. The rejection is blind to what a point
+        ;; CONTRIBUTES: it removes the largest residual, which is exactly the kind
+        ;; of lone off-plane point that is both noisy and structurally essential.
+        (if (and dlt (= method :auto) (> (:rms-px first-pass) accept-rms-px))
+          (or (when-let [sub (dominant-plane-subset correspondences)]
+                (when-let [h (estimate-homography sub intrinsics)]
+                  (let [alt (assoc (refine correspondences intrinsics h {:sigma-px sigma-px})
+                                   :method :planar-seeded)]
+                    (when (< (:rms-px alt) (:rms-px first-pass)) alt))))
+              first-pass)
+          first-pass)))))
 
 (defn solve-pnp
   "Robust PnP: seedless DLT (≥6 correspondences) + LM refine, then GREEDY outlier

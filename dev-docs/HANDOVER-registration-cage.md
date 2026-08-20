@@ -224,6 +224,60 @@ verso di rotazione — che era invece uno dei due colpevoli. Il segnale c'era ed
 leggibile: un pick a y=6118 in un'immagine alta 6048. **Prima di escludere una
 causa, controllare che l'immagine sia quella che si crede.**
 
+## Il caso "una corona intera più due punti" (2026-08-20)
+
+Le prime quattro foto della sessione a 48mm sono andate a 11.8 / 11.7 / 11.9 /
+10.7px, con **quattro click a mano** ciascuna e il resto trovato dagli agganci
+automatici. La quinta ha dato **9736px**, ed è un guasto che merita di stare
+scritto perché non assomiglia alla sua causa.
+
+I punti erano 12 sulla corona −X e 2 sull'anello Y. Non è un insieme complanare —
+quei due stanno decine di mm fuori dal piano, e `coplanar?` giustamente dice no —
+ma **«non complanare» non vuol dire «ha profondità»**: dodici punti su quattordici
+non ne portano nessuna, quindi la portano i due, e con essa tutto il loro errore
+(erano agganci automatici finiti 24 e 40px fuori posto, con il nome però GIUSTO).
+
+E il colpo di grazia è l'eliminazione degli scarti, che è cieca a ciò che un
+punto CONTRIBUISCE: ha buttato il residuo più alto, cioè `ym01` — uno dei due
+soli punti fuori piano. Misurato: DLT su tutti e 14 = **12.5px**; sui 12 rimasti
+= **7700px**.
+
+`solve-once` ora, sotto `:auto` e solo quando il primo passaggio esce brutto,
+riparte dal piano che i più condividono (`dominant-plane-subset` +
+`estimate-homography`) e raffina su TUTTI i punti: i punti fuori piano fanno
+allora ciò per cui sono buoni — rompere l'ambiguità speculare dell'omografia e
+fissare la profondità — invece di doverla condizionare da soli. Tiene la
+soluzione migliore delle due, quindi non può peggiorare. Sui dati veri: **8px**,
+metodo `:planar-seeded`.
+
+Corretto anche un difetto introdotto scrivendolo: il soccorso scavalcava un
+`:method` forzato dal chiamante, e un forzamento che non forza rende impossibile
+misurare ciò che si dice di misurare.
+
+### Il test è su dati VERI, e non per pigrizia
+
+La versione sintetica di questa configurazione NON riproduce il guasto: con pixel
+puliti il DLT malcondizionato torna 0.00px, e anche mettendo ±30px sui due punti
+fuori piano si ferma a 9px. Un test così sarebbe passato anche senza la
+correzione. Il fixture è quindi le quattordici coppie reali della foto 5 —
+e come **vettore ordinato**, non mappa: con 14 chiavi Clojure passa a hash-map,
+l'ordine di `keys` non è quello di scrittura, e su un sistema così malcondizionato
+**l'ordine delle righe cambia la soluzione** (7700px in un ordine, 8px in un
+altro). Un fixture che non fissa l'ordine non riproduce niente.
+
+## I nomi dei mark sulla foto ('n')
+
+Il gesto che toglie di mezzo tutta la difficoltà del contare: scrive il nome di
+ogni mark visibile sulla foto, dove il modello dice che si trova. Legge quel che
+legge il solutore, quindi è onesto quando sbaglia — nomi lontani dai dischetti
+vogliono dire proxy fuori posa.
+
+Da cui la ricetta breve, che è quella che ha fatto funzionare la sessione:
+**quattro click su UN anello solo** (quattro mark complanari determinano
+esattamente una posa planare) → `r` → da lì i nomi cadono sui dischetti giusti di
+ogni anello e gli agganci automatici fanno il resto. Misurato: 4 click a mano →
+25 mark trovati → 11.8px.
+
 ## IL GATE — è questo che manca
 
 Al 2026-08-19 i tre anelli sono STAMPATI e Vincenzo li sta incollando. Poi si
