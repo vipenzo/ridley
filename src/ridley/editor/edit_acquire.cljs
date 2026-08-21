@@ -1044,7 +1044,7 @@
       start-pose)
     (camera-pose-for idx)))
 
-(declare install-retrace-gizmo! reset-view-zoom! refresh-retrace-gizmo!)
+(declare install-retrace-gizmo! reset-view-zoom! refresh-retrace-gizmo! redraw-mark-names!)
 
 (defn- enter-photo!
   "Close/reopen the gizmo for photo `idx` — simpler to reason about than
@@ -1072,7 +1072,10 @@
       ;; space, so navigating just re-shows them (and their labels) from this
       ;; photo's camera; never tear it down to install a gizmo.
       :mark (redraw-marks!)
-      (install-gizmo! idx)))
+      (install-gizmo! idx))
+    ;; the names follow the photo in every mode — checking a cage against a view
+    ;; means stepping through the views with them on
+    (redraw-mark-names!))
   (update-panel!))
 
 ;; ============================================================
@@ -1517,6 +1520,20 @@
       (append-overlay-name! ov rect (nth pos 0) (nth pos 1)
                             (hex->css (:color t)) (:label t)))))
 
+(defn- redraw-mark-names!
+  "Rebuild the names overlay on its own, for the modes that have no picks to draw.
+
+   'n' started as a PnP aid — name the disc you are about to click. It is just as
+   useful BEFORE placing anything: stepping through the photos with the names on
+   is how you check that the cage the model believes in is the cage in the
+   photograph, which is the sanity test that catches a badly registered view
+   (Vincenzo, 2026-08-21). So it works everywhere, not only where it was born."
+  []
+  (when (and @session (not= :pnp (:mode @session)))
+    (let [ov (ensure-pnp-overlay!)]
+      (set! (.-innerHTML ov) "")
+      (draw-mark-names! ov (canvas-rect)))))
+
 (defn- redraw-overlay-dots! []
   (let [ov (ensure-pnp-overlay!)
         rect (canvas-rect)
@@ -1541,7 +1558,7 @@
 
 (defn- toggle-mark-names! []
   (swap! session update :show-names? not)
-  (redraw-overlay-dots!)
+  (if (= :pnp (:mode @session)) (redraw-overlay-dots!) (redraw-mark-names!))
   (update-panel!)
   (set-status-message!
    (if (:show-names? @session)
@@ -3957,7 +3974,9 @@
       (viewport/show-preview! (proxy-preview-items))))
   (update-panel!))
 
-(defn- redraw-retrace! [] (viewport/show-preview! (retrace-preview-items)))
+(defn- redraw-retrace! []
+  (viewport/show-preview! (retrace-preview-items))
+  (redraw-mark-names!))
 
 ;; loupe reuse (same magnifier as PnP — the camera is locked, so a crop under
 ;; the cursor stays on its photo feature); the '-pnp-' state keys are shared
@@ -5362,7 +5381,7 @@
           (and pnp? (not (batch-mode?)) (= key "o"))
           (do (.preventDefault e) (.stopPropagation e) (skip-armed-corner!))
 
-          (and pnp? (= key "n"))
+          (and (#{:pnp :retrace :gizmo} (:mode @session)) (= key "n"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-mark-names!))
 
           (and (= :retrace (:mode @session)) (re-matches #"[123]" key))
