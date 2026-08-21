@@ -1039,7 +1039,7 @@
       start-pose)
     (camera-pose-for idx)))
 
-(declare install-retrace-gizmo!)
+(declare install-retrace-gizmo! reset-view-zoom!)
 
 (defn- enter-photo!
   "Close/reopen the gizmo for photo `idx` — simpler to reason about than
@@ -1050,6 +1050,7 @@
   (stop-marker!) ; and any open marker-click mode (its listener is photo-specific)
   (gizmo/close!)
   (swap! session assoc :current-idx idx)
+  (reset-view-zoom!)
   (let [{:keys [file]} (nth (:photos @session) idx)]
     (viewport/set-camera-pose! (ensure-photo-pose idx))
     (set-photo-for-current-focal! file)
@@ -3729,15 +3730,26 @@
       (not (get-in @session [:ricalchi (:ricalco-idx @session)]))
       (swap! session assoc :ricalco-idx (dec (count rs))))))
 
-(defn- retrace-plane [] (plane-of (active-plane-spec)))
+(defn- active-plane-pose
+  "The plane as it should be DRAWN and clicked against right now: the trial pose
+   while a gizmo drag is in flight, the committed one otherwise. The trial exists
+   so the plane follows the handle continuously instead of jumping at release
+   (Vincenzo, 2026-08-21) — you are aiming a plane at a surface in a photograph,
+   and aiming without feedback is guessing."
+  []
+  (or (:trial-plane @session) (plane-pose (active-plane-spec))))
+
+(defn- retrace-plane []
+  (let [{:keys [position heading]} (active-plane-pose)]
+    {:point position :normal heading}))
 
 (defn- face-quad
   "A translucent coloured quad ON the face declared by `spec` — the plane
    indicator, so it's obvious in 3D which face you're tracing/marking (not just
    the panel text). Coloured by retrace-face-colors, matching the pressed face
    button."
-  [{:keys [axis sign] :as spec}]
-  (let [{:keys [position heading up]} (plane-pose spec)
+  [{:keys [axis sign] :as spec} pose]
+  (let [{:keys [position heading up]} pose
         ;; the quad is built in the PLANE's own frame now, not from two box axes:
         ;; an arbitrary plane has no box axes to borrow
         v up
@@ -3756,7 +3768,7 @@
             :material {:color (or (retrace-face-colors [axis sign]) 0xbbbbbb)
                        :opacity 0.3 :double-sided true}}}))
 
-(defn- active-face-quad [] (face-quad (active-plane-spec)))
+(defn- active-face-quad [] (face-quad (active-plane-spec) (active-plane-pose)))
 
 (defn- retrace-solver-pose []
   (bridge/editor->solver-pose (current-camera-pose)
@@ -3768,6 +3780,20 @@
    precise marks over the photo rather than the solid balls of the first cut
    (Vincenzo 2026-07-23: 'i pallini gialli sono enormi')."
   0.9)
+
+(defn- plane-origin-marker
+  "The plane's ORIGIN, drawn as a small solid ball — the point that becomes the
+   emitted mark's :position, and therefore the thing being aimed when the gizmo
+   is dragged. Without it the quad shows an orientation and hides the one number
+   the gesture exists to set."
+  []
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        c (bridge/local->world proxy-pose (:position (active-plane-pose)))]
+    ;; a :dots item, the same primitive the traced vertices use — bigger, white
+    ;; and opaque, so it reads as "the origin" and not as one more clicked point
+    {:type :dots
+     :data [{:pos c :radius (* 2.6 retrace-dot-radius) :color 0xffffff :opacity 1.0}]
+     :on-top true}))
 
 (def ^:private trace-color
   "Single bright yellow for EVERY ricalco's outline. The old active/inactive dim
@@ -3828,7 +3854,7 @@
    plane indicator, so which face you're tracing is obvious) plus the trace on
    top of it."
   []
-  (into [(active-face-quad)] (trace-items)))
+  (into [(active-face-quad) (plane-origin-marker)] (trace-items)))
 
 (defn- toggle-proxy!
   "Show/hide the SOLID proxy in the main (gizmo) view so the photo underneath is
@@ -3849,19 +3875,86 @@
 
 ;; loupe reuse (same magnifier as PnP — the camera is locked, so a crop under
 ;; the cursor stays on its photo feature); the '-pnp-' state keys are shared
+(declare retrace-on-pan)
+
+(defn- swallow-context-menu [^js e]
+  (when (and @session (> (or (:view-zoom @session) 1.0) 1.0))
+    (.preventDefault e)))
+
 (defn- retrace-on-pointermove [^js e]
+  (retrace-on-pan e)
   (when (and @session (= :retrace (:mode @session)))
     ;; no magnifier over a handle — there the pointer's job is to grab, and a
     ;; loupe there reads as "this is still about clicking the photo"
     (if (gizmo/over-handle? e) (hide-pnp-loupe!) (update-loupe! e))))
 
-(defn- retrace-on-wheel [^js e]
-  (when (and @session (= :retrace (:mode @session)))
+(def ^:private view-zoom-max 8.0)
+
+(defn- apply-view-zoom! []
+  (let [{:keys [view-zoom view-cx view-cy]} @session]
+    (viewport/set-view-window! (or view-zoom 1.0) (or view-cx 0.5) (or view-cy 0.5))))
+
+(defn- reset-view-zoom!
+  "Back to the whole frame. Called on every photo change: a window that made
+   sense on one shot frames nothing on the next."
+  []
+  (swap! session assoc :view-zoom 1.0 :view-cx 0.5 :view-cy 0.5)
+  (apply-view-zoom!))
+
+(defn- zoom-view-at!
+  "Wheel zoom about the POINTER, so the detail under the cursor stays under it —
+   the behaviour every map and photo viewer has, and the reason the wheel was
+   worth taking from the loupe (Vincenzo, 2026-08-21: 'usiamo pure la rotella')."
+  [^js e dir]
+  (let [^js canvas (viewport/get-canvas)
+        rect (.getBoundingClientRect canvas)
+        w (.-width rect) h (.-height rect)
+        ;; pointer in 0..1 of the canvas
+        px (/ (- (.-clientX e) (.-left rect)) (max 1.0 w))
+        py (/ (- (.-clientY e) (.-top rect)) (max 1.0 h))
+        {:keys [view-zoom view-cx view-cy]} @session
+        z0 (or view-zoom 1.0)
+        cx0 (or view-cx 0.5) cy0 (or view-cy 0.5)
+        z1 (-> (* z0 (Math/pow 1.15 dir)) (max 1.0) (min view-zoom-max))
+        ;; the frame point currently under the pointer, in 0..1 of the FULL frame
+        fx (+ cx0 (/ (- px 0.5) z0))
+        fy (+ cy0 (/ (- py 0.5) z0))
+        ;; keep it there at the new zoom
+        cx1 (- fx (/ (- px 0.5) z1))
+        cy1 (- fy (/ (- py 0.5) z1))
+        clamp (fn [c z] (let [half (/ 0.5 z)] (-> c (max half) (min (- 1.0 half)))))]
+    (swap! session assoc :view-zoom z1
+           :view-cx (clamp cx1 z1) :view-cy (clamp cy1 z1))
+    (apply-view-zoom!)))
+
+(defn- retrace-on-wheel
+  "The wheel zooms the PHOTOGRAPH now, not the magnifier. Tracing an outline on a
+   3024×4032 photo shown at canvas size means aiming at features a couple of
+   pixels across; the loupe showed them but you still had to click in the
+   original scale. With a real zoom the loupe matters much less, which is what
+   made the trade worth it."
+  [^js e]
+  (when (and @session (#{:retrace :pnp} (:mode @session)))
     (.preventDefault e) (.stopPropagation e)
-    (let [dir (if (pos? (.-deltaY e)) -1.0 1.0)
-          z' (-> (* (loupe-zoom) (Math/pow 1.2 dir)) (max loupe-zoom-min) (min loupe-zoom-max))]
-      (swap! session assoc :pnp-loupe-zoom z')
-      (update-loupe! e))))
+    (zoom-view-at! e (if (pos? (.-deltaY e)) -1.0 1.0))
+    (when (= :retrace (:mode @session)) (update-loupe! e))))
+
+(defn- retrace-on-pan
+  "Right-button drag pans the zoomed window. Only meaningful while zoomed in, and
+   the right button is free — the left one is placing points."
+  [^js e]
+  (when (and @session (> (or (:view-zoom @session) 1.0) 1.0)
+             (pos? (bit-and (.-buttons e) 2)))
+    (.preventDefault e) (.stopPropagation e)
+    (let [^js canvas (viewport/get-canvas)
+          rect (.getBoundingClientRect canvas)
+          z (or (:view-zoom @session) 1.0)
+          dx (/ (.-movementX e) (max 1.0 (.-width rect)) z)
+          dy (/ (.-movementY e) (max 1.0 (.-height rect)) z)
+          clamp (fn [c] (let [half (/ 0.5 z)] (-> c (max half) (min (- 1.0 half)))))]
+      (swap! session update :view-cx (fn [c] (clamp (- (or c 0.5) dx))))
+      (swap! session update :view-cy (fn [c] (clamp (- (or c 0.5) dy))))
+      (apply-view-zoom!))))
 
 (defn- retrace-on-pointerdown [^js e]
   ;; The gizmo gets first refusal: this listener is on the CAPTURE phase and the
@@ -3889,7 +3982,8 @@
     (.removeEventListener canvas "pointerdown" retrace-on-pointerdown true)
     (.removeEventListener canvas "pointermove" retrace-on-pointermove true)
     (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
-    (.removeEventListener canvas "wheel" retrace-on-wheel true))
+    (.removeEventListener canvas "wheel" retrace-on-wheel true)
+    (.removeEventListener canvas "contextmenu" swallow-context-menu true))
   (remove-pnp-loupe!))
 
 (defn- obj-pose->world
@@ -3921,6 +4015,8 @@
    make possible."
   [cmd-type value]
   (let [spec (active-plane-spec)
+        ;; deliberately plane-pose, not active-plane-pose: the trial already IS
+        ;; this gesture applied, so folding it in again would double every drag
         w (obj-pose->world (plane-pose spec))
         moved (case cmd-type
                 :f (turtle/f w value)
@@ -3935,6 +4031,28 @@
     (save-acquire-state!)
     (update-panel!)))
 
+(defn- on-retrace-gizmo-drag!
+  "Every pointer-move of a live drag. `value` is already the TOTAL since the drag
+   began, so the trial is computed from the (untouched) committed pose each time
+   and never accumulated — the same one-shot semantics on-commit has."
+  [{:keys [cmd-type value]}]
+  (let [base (plane-pose (active-plane-spec))
+        w (obj-pose->world base)
+        moved (case cmd-type
+                :f (turtle/f w value)
+                :rt (turtle/move-right w value)
+                :u (turtle/move-up w value)
+                :th (turtle/th w value)
+                :tv (turtle/tv w value)
+                :tr (turtle/tr w value)
+                w)]
+    (swap! session assoc :trial-plane (world-pose->obj moved))
+    (redraw-retrace!)))
+
+(defn- on-retrace-gizmo-drag-end! []
+  (swap! session dissoc :trial-plane)
+  (redraw-retrace!))
+
 (defn- install-retrace-gizmo!
   "The tracing plane's own gizmo: translate + rotate, no scale (a plane has no
    size), and :nudge-mesh? false so dragging moves the PLANE and not the photo's
@@ -3944,7 +4062,9 @@
   []
   (gizmo/enter! (obj-pose->world (plane-pose (active-plane-spec)))
                 {:handles #{:translate :rotate} :nudge-mesh? false}
-                {:on-commit on-retrace-gizmo-commit!}))
+                {:on-commit on-retrace-gizmo-commit!
+                 :on-drag on-retrace-gizmo-drag!
+                 :on-drag-end on-retrace-gizmo-drag-end!}))
 
 (defn- start-retrace! []
   (when (and @session (not= :retrace (:mode @session)))
@@ -3956,7 +4076,8 @@
       (.addEventListener canvas "pointerdown" retrace-on-pointerdown true)
       (.addEventListener canvas "pointermove" retrace-on-pointermove true)
       (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
-      (.addEventListener canvas "wheel" retrace-on-wheel #js {:capture true :passive false}))
+      (.addEventListener canvas "wheel" retrace-on-wheel #js {:capture true :passive false})
+      (.addEventListener canvas "contextmenu" swallow-context-menu true))
     (redraw-retrace!)
     (update-panel!)))
 
@@ -4057,7 +4178,7 @@
    magenta dot per mark. The solid proxy is hidden (like :retrace) so the photo
    under it stays readable."
   []
-  (conj (into [(face-quad (:mark-plane @session))] (trace-items))
+  (conj (into [(let [sp (:mark-plane @session)] (face-quad sp (plane-pose sp)))] (trace-items))
         (mark-dots-item)))
 
 (defn- redraw-marks! []
@@ -4283,15 +4404,23 @@
           normal-obj heading
           v-obj up
           u-obj (m/normalize (m/cross normal-obj v-obj))
-          n (count points)
-          centroid-obj (mapv #(/ % n) (reduce m/v+ [0.0 0.0 0.0] points))
+          ;; The mark sits where the PLANE was placed, not at the centroid of what
+          ;; happened to be traced. Vincenzo, 2026-08-21: "se lo scopo è
+          ;; posizionare un mark, quindi un punto, serve il centro del foglietto".
+          ;; Once the plane is a pose the user places by hand, that placement IS
+          ;; the answer to "where is this shape's origin" — and a centroid that
+          ;; shifts every time another point is added is not an origin anyone can
+          ;; aim. The polyline is written in the plane's own frame so shape and
+          ;; mark stay coincident: (turtle (:mark q) (extrude (:shape q) …)) puts
+          ;; the outline back exactly where it was traced.
+          origin-obj (:position (plane-pose plane))
           f3 (fn [x] (.toFixed x 3))
-          coords (mapcat (fn [p] (let [d (m/v- p centroid-obj)]
+          coords (mapcat (fn [p] (let [d (m/v- p origin-obj)]
                                    [(f3 (m/dot d u-obj)) (f3 (m/dot d v-obj))]))
                          points)]
       (str ":" (uniq name)
            " {:shape (poly " (str/join " " coords) ")"
-           " :mark {:position " (fmt-vec (bridge/local->world pose centroid-obj))
+           " :mark {:position " (fmt-vec (bridge/local->world pose origin-obj))
            " :heading " (fmt-vec (obj-dir->world pose normal-obj))
            " :up " (fmt-vec (obj-dir->world pose v-obj)) "}}"))))
 

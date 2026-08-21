@@ -3086,6 +3086,31 @@
     (set! (.-fov camera) vfov-deg)
     (.updateProjectionMatrix camera)))
 
+(defn set-view-window!
+  "Render only a WINDOW of the camera's frustum, blown up to fill the canvas —
+   zoom and pan for a locked camera. `zoom` ≥ 1 (1 = whole frame), `cx`/`cy` the
+   window's centre in 0..1 of the full frame. nil clears it.
+
+   It is a projection trick, not a camera move, and that is the entire point: an
+   acquire session keeps the camera FROZEN on the photograph's solved pose, so
+   orbiting or dollying to look closer would break the very registration being
+   worked on. `setViewOffset` leaves position and orientation untouched and only
+   changes which part of the frustum is sampled, so the photo backdrop and the 3D
+   overlay stay registered to each other, and every pixel↔screen conversion keeps
+   working — they all go through this same projection matrix."
+  [zoom cx cy]
+  (when-let [{:keys [^js camera ^js canvas]} @state]
+    (if (or (nil? zoom) (<= zoom 1.0))
+      (.clearViewOffset camera)
+      (let [w (.-clientWidth canvas)
+            h (.-clientHeight canvas)
+            vw (/ w zoom)
+            vh (/ h zoom)
+            x (-> (- (* cx w) (* 0.5 vw)) (max 0.0) (min (- w vw)))
+            y (-> (- (* cy h) (* 0.5 vh)) (max 0.0) (min (- h vh)))]
+        (.setViewOffset camera w h x y vw vh)))
+    (.updateProjectionMatrix camera)))
+
 (defn highlight-mesh-by-name!
   "Highlight a mesh by its registry name (orange outline + emissive tint).
    Pass nil to clear."

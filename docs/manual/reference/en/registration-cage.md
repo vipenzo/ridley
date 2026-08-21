@@ -290,6 +290,18 @@ with its own frame:
   (turtle (:mark q) (extrude (:shape q) (f 3))))
 ```
 
+The plane's **origin** is drawn as a white ball, and it is not decoration: that
+point becomes the emitted mark's `:position`, and the traced outline is written
+in the plane's own frame around it. So where you put the plane is where the
+shape's origin is — `(turtle (:mark q) …)` starts there.
+
+The plane follows the handle **during** the drag, not only at release, and the
+**wheel zooms the photograph** (right-button drag pans it once zoomed). The zoom
+is a change to which part of the frustum is rendered, never a camera move: an
+acquire session keeps the camera frozen on the photograph's solved pose, so
+orbiting to look closer would break the registration being worked on. Changing
+photo resets the zoom — a window that framed one shot frames nothing on the next.
+
 Dragging the plane does **not** clear the points already traced on it (changing
 face still does — those points would be meaningless elsewhere): moving a plane
 slightly is usually a correction to a trace already under way.
