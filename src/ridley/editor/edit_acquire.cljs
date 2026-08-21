@@ -3666,6 +3666,34 @@
      :heading (m/v* (axis-unit axis) (double sign))
      :up (axis-unit a2)}))
 
+(defn- cage-ring-presets
+  "For a CAGE proxy: one preset per ring, each a pose at the cage's CENTRE with
+   the ring's own axis as normal. Returns [{:label :pose} …], or nil for a proxy
+   that is not a cage.
+
+   Vincenzo's proposal (2026-08-21), and it is the right answer to a problem the
+   occlusion cue failed to solve: placing a plane freely in space from a single
+   photograph leaves you with no idea where it is. These give a KNOWN starting
+   point — and a useful one, because the part being measured sits at the centre
+   of the three rings by construction, so the centre is where its features are.
+
+   Labelled by ring SIZE rather than by axis: :x/:y/:z are the model's names for
+   the three, but what the eye can tell apart on the bench is big, medium and
+   small."
+  []
+  (let [mesh (:proxy-mesh @session)]
+    (when-let [rings (seq (:rings mesh))]
+      (let [labels ["Big ring" "Medium ring" "Small ring"]]
+        (vec (map-indexed
+              (fn [i {:keys [axis]}]
+                (let [n (axis-unit (case axis :x 0 :y 1 :z 2))
+                      ;; any direction in the plane will do for :up; take the next
+                      ;; axis round, so the three presets are mutually consistent
+                      u (axis-unit (case axis :x 1 :y 2 :z 0))]
+                  {:label (nth labels i (str "Ring " (name axis)))
+                   :pose {:position [0.0 0.0 0.0] :heading n :up u}}))
+              rings))))))
+
 (defn- plane-pose
   "A tracing plane's full POSE in the object frame — position, heading (the
    outward normal) and up (the in-plane reference direction).
@@ -4405,6 +4433,23 @@
     (gizmo/close!)
     (install-retrace-gizmo!)))
 
+(defn- set-ring-preset!
+  "Put the active anchor's plane at the cage centre, oriented like ring `i`.
+   Unlike changing FACE this keeps any points already traced: the plane is being
+   aimed, not redeclared."
+  [i]
+  (when-let [presets (cage-ring-presets)]
+    (when-let [{:keys [label pose]} (nth presets i nil)]
+      (swap! session update-in (active-r-path :plane)
+             merge {:base pose :offset 0.0})
+      (redraw-retrace!)
+      (refresh-retrace-gizmo!)
+      (save-acquire-state!)
+      (set-status-message!
+       (str "anchor at the cage centre, in the " (str/lower-case label) "'s plane"
+            " — move it from here"))
+      (update-panel!))))
+
 (defn- set-retrace-face!
   "Pick the ACTIVE ricalco's declared face. A ricalco belongs to ONE plane, so
    switching its face clears ITS points (they'd be meaningless there); the offset
@@ -4866,6 +4911,19 @@
             (.appendChild rrow del)
             (.appendChild list-el rrow)))
         (.appendChild box list-el)
+        ;; The cage presets come FIRST: they are the ones that mean something on a
+        ;; cage, and the only ones that give a known starting point.
+        (when-let [presets (cage-ring-presets)]
+          (let [row (.createElement js/document "div")]
+            (set! (.-className row) "eaq-pnp-corners")
+            (doseq [[i {:keys [label]}] (map-indexed vector presets)]
+              (let [b (.createElement js/document "button")]
+                (set! (.-type b) "button")
+                (set! (.-textContent b) (str label " (" (inc i) ")"))
+                (set! (.-title b) "Put the anchor at the cage centre, in this ring's plane")
+                (.addEventListener b "click" (fn [_] (set-ring-preset! i)))
+                (.appendChild row b)))
+            (.appendChild box row)))
         (set! (.-className faces) "eaq-pnp-corners")
         ;; The six faces are the proxy BOUNDING BOX's faces. On a box proxy that
         ;; box is the part, so they are the part's own faces and the fastest way
@@ -5291,6 +5349,10 @@
 
           (and pnp? (= key "n"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-mark-names!))
+
+          (and (= :retrace (:mode @session)) (re-matches #"[123]" key))
+          (do (.preventDefault e) (.stopPropagation e)
+              (set-ring-preset! (dec (js/parseInt key 10))))
 
           (and pnp? (not (batch-mode?)) (re-matches #"[1-8]" key))
           (do (.preventDefault e) (.stopPropagation e)
