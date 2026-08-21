@@ -43,10 +43,31 @@
   (reset! skip-next true))
 
 (defn consume-skip!
-  "If the skip flag is armed, disarm it and return true; otherwise return false."
+  "If the skip flag is armed, disarm it and return true; otherwise return false.
+
+   A consumption with NO session open is a LEAK, and it is reported. Armed and
+   consumed while a session runs is the flag doing its job — a session re-running
+   its own marker. Armed with nothing running means somebody armed it and the
+   marker that should have eaten it never came, so the flag has been sitting there
+   waiting to swallow the NEXT modal open instead.
+
+   That swallow is silent by construction: the macro returns its value and the
+   evaluation reports success, so the user sees 'Evaluation successful' and an
+   editor that simply does not open. It is the signature of the edit-attach
+   reentry glitch — 'first reopen silently fails', on the books unexplained for
+   weeks — and on 2026-08-21 it ate an (edit-acquire …) too. Whatever the cause
+   turns out to be, it stops being invisible here."
   []
   (if @skip-next
-    (do (reset! skip-next false) true)
+    (do (reset! skip-next false)
+        (when (nil? @state/interactive-mode)
+          (state/capture-println
+           (str "modale SALTATO: il flag 'salta il prossimo' era armato senza nessuna "
+                "sessione aperta, quindi questa apertura è stata mangiata in silenzio. "
+                "Rilancia (ora il flag è consumato e la seconda volta si apre). "
+                "Se succede spesso, segnalalo: vuol dire che qualcuno arma il flag e "
+                "non lo consuma.")))
+        true)
     false))
 
 ;; Transient-tweak flag: set by the editor's "Tweak this value" command, which
@@ -296,9 +317,29 @@
   (cm/replace-range from to code))
 
 (defn run-definitions!
-  "Re-run the whole definitions buffer (the commit step in script mode)."
+  "Re-run the whole definitions buffer (the commit step in script mode).
+
+   Disarms a skip flag that this run did not consume. Both armers — a permanent
+   tweak's cancel, edit-bezier's — arm it and immediately call this, expecting
+   their own marker to eat it during the run. When the marker ISN'T there (the
+   buffer was edited meanwhile, the form sits in a branch that didn't execute,
+   the run errored first), the flag used to survive and swallow the NEXT modal
+   open instead, silently. That is the edit-attach reentry glitch's mechanism,
+   fixed once at its own call site in 2026-07-09 and back on 2026-08-21 through
+   a different door, eating an (edit-acquire …).
+
+   Bounding the flag's life to the one run it was armed for closes the whole
+   family rather than the instance: an unconsumed flag is by definition a flag
+   whose marker never came."
   []
-  (when-let [f @state/run-definitions-fn] (f)))
+  (when-let [f @state/run-definitions-fn]
+    (f)
+    (when @skip-next
+      (reset! skip-next false)
+      (state/capture-println
+       (str "modale: il flag 'salta il prossimo' non è stato consumato da questa "
+            "corsa (il marcatore che doveva mangiarlo non c'era) — disarmato qui, "
+            "invece di lasciarlo mangiare la prossima apertura.")))))
 
 ;; ============================================================
 ;; Shared script-mode re-eval boilerplate
