@@ -3800,11 +3800,22 @@
     {:type :mesh
      :data {:vertices [w0 w1 w2 w3]
             :faces [[0 1 2] [0 2 3]]
-            ;; a freely-placed plane matches no face button, so it gets a neutral
-            ;; colour rather than borrowing the last preset's and implying it is
-            ;; still on that face
-            :material {:color (or (retrace-face-colors [axis sign]) 0xbbbbbb)
-                       :opacity 0.3 :double-sided true}}}))
+            ;; The sheet reads against two very different backgrounds, so it is
+            ;; drawn differently for each. Over the PHOTO alone it must stay faint
+            ;; and tinted, or it hides what is being measured. Against the solid
+            ;; cage it is competing with an opaque dark surface, and at 0.3 the
+            ;; occlusion it exists to show is "appena appena" visible (Vincenzo,
+            ;; 2026-08-21) — so it goes lighter and much more opaque, and the edge
+            ;; where a ring cuts across it becomes obvious.
+            ;;
+            ;; A freely-placed plane matches no face button either way, so it gets
+            ;; a neutral colour rather than borrowing the last preset's and
+            ;; implying it is still on that face.
+            :material (if (:hide-proxy? @session)
+                        {:color (or (retrace-face-colors [axis sign]) 0xbbbbbb)
+                         :opacity 0.3 :double-sided true}
+                        {:color (or (retrace-face-colors [axis sign]) 0xf2f2f2)
+                         :opacity 0.75 :double-sided true})}}))
 
 (defn- active-face-quad [] (face-quad (active-plane-spec) (active-plane-pose)))
 
