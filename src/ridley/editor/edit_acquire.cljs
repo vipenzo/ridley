@@ -803,9 +803,14 @@
                           [(m/dot dir right-C) (m/dot dir up-C) (m/dot dir heading-C)]))
                 ;; {:axis :sign :offset} plane → remap its normal to the new frame axis.
                 remap-plane (fn [{:keys [axis sign offset base]}]
-                              (let [nrm (remap (assoc [0.0 0.0 0.0] axis (double sign)))
-                                    a (apply max-key #(Math/abs ^double (nth nrm %)) [0 1 2])]
-                                (cond-> {:axis a :sign (if (>= (nth nrm a) 0) 1 -1) :offset offset}
+                              ;; a FREELY placed plane may carry no preset at all;
+                              ;; remapping a face that isn't there is what broke the
+                              ;; session open on 2026-08-21
+                              (let [nrm (when (and (number? axis) (number? sign))
+                                          (remap (assoc [0.0 0.0 0.0] axis (double sign))))
+                                    a (when nrm (apply max-key #(Math/abs ^double (nth nrm %)) [0 1 2]))]
+                                (cond-> {:offset offset}
+                                  a (assoc :axis a :sign (if (>= (nth nrm a) 0) 1 -1))
                                   ;; a FREE plane is a pose, so it rides the same
                                   ;; remap the marks and normals do — position as a
                                   ;; point, heading/up as directions
@@ -3826,9 +3831,14 @@
         heading (:heading (current-camera-pose))
         {:keys [ex ey ez]} (bridge/box-basis proxy-pose)
         axis-world [ex ey ez]
-        front? (fn [{:keys [axis sign]}]
-                 (or free-orbit? (nil? heading)
-                     (neg? (m/dot (m/v* (nth axis-world axis) (double sign)) heading))))]
+        ;; A plane is FRONT-FACING when its outward normal points toward the
+        ;; camera. Read that normal from the plane's POSE, not from :axis/:sign —
+        ;; a freely placed plane has no face, and reaching for one crashed the
+        ;; whole session open on reopen (2026-08-21: `Index argument to nth must
+        ;; be a number`, raised asynchronously and therefore invisible).
+        front? (fn [plane]
+                 (let [n (obj-dir->world proxy-pose (:heading (plane-pose plane)))]
+                   (neg? (m/dot n heading))))]
     (vec (mapcat
           (fn [i {:keys [points plane]}]
             (let [active? (= i active-idx)]
@@ -4025,8 +4035,12 @@
                 :th (turtle/th w value)
                 :tv (turtle/tv w value)
                 :tr (turtle/tr w value))]
-    (swap! session assoc-in (active-r-path :plane)
-           {:base (world-pose->obj moved) :offset 0.0})
+    ;; MERGE, never replace: :axis/:sign are the preset the panel highlights, and
+    ;; dropping them leaves a plane that `canonicalize-orientation!` then tries to
+    ;; remap through (assoc [0 0 0] nil …) — which kills the whole session open,
+    ;; asynchronously and silently (2026-08-21).
+    (swap! session update-in (active-r-path :plane)
+           merge {:base (world-pose->obj moved) :offset 0.0})
     (redraw-retrace!)
     (save-acquire-state!)
     (update-panel!)))
@@ -6903,6 +6917,12 @@
                                      (str "Empty session: open the camera and grab a frame "
                                           "— the first one measures the lens."))))))))))
       (.catch (fn [err]
+                ;; ALSO to the browser console: this runs after the evaluation has
+                ;; returned, so capture-println writes into a print buffer nobody
+                ;; flushes any more — the session dies and the user is told
+                ;; "Evaluation successful" and nothing else (2026-08-21, and it
+                ;; cost a long hunt to see an error that had been raised all along)
+                (js/console.error "edit-acquire: couldn't load session —" err)
                 (state/capture-println (str "edit-acquire: couldn't load session — " err))
                 (modal/release!)))))
 
