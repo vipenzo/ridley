@@ -3903,18 +3903,22 @@
    plane indicator, so which face you're tracing is obvious) plus the trace on
    top of it."
   []
-  ;; The proxy is DRAWN here now, as a wireframe. Placing a plane in space from a
-  ;; single photograph is guessing at depth, and the cheapest depth cue there is
-  ;; is occlusion: a plane that disappears BEHIND a ring says where it is better
-  ;; than any number (Vincenzo, 2026-08-21). Wireframe rather than solid so the
-  ;; photo underneath stays readable, and under the same 'v' toggle as everywhere
-  ;; else for when the rings get in the way.
+  ;; The proxy is drawn SOLID here. Placing a plane in space from a single
+  ;; photograph is guessing at depth, and the cheapest depth cue is occlusion: a
+  ;; plane that disappears BEHIND a ring says where it is better than any number.
+  ;;
+  ;; It was a wireframe first, and that was a design mistake of mine: a wireframe
+  ;; is thin lines, and lines cannot occlude a plane — you see it through the gaps,
+  ;; which are nearly everything. Only a solid occluder occludes. It costs the
+  ;; photo underneath, and that cost is accepted deliberately (Vincenzo,
+  ;; 2026-08-21: «non importa se copre la foto, tanto la si può nascondere»),
+  ;; because 'v' takes the cage away the moment you need to read the photo.
   ;;
   ;; The quad is deliberately NOT on-top: drawn over everything it would never be
   ;; occluded, and the cue this exists for would be gone.
   (into (cond-> [(active-face-quad) (plane-origin-marker)]
           (not (:hide-proxy? @session))
-          (conj {:type :wireframe :data (:proxy-mesh @session)}))
+          (conj {:type :mesh :data (:proxy-mesh @session)}))
         (trace-items)))
 
 (declare redraw-retrace!)
