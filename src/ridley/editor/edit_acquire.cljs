@@ -3623,9 +3623,9 @@
   "[axis sign] → human name. A name alone ('Fronte') doesn't say WHICH face, so
    the same colour (retrace-face-colors) tints the active face in 3D and its
    button (Vincenzo 2026-07-25: colour the current one)."
-  {[0 1] "Lato +X" [0 -1] "Lato −X"
-   [1 1] "Sopra"   [1 -1] "Sotto"
-   [2 1] "Fronte"  [2 -1] "Retro"})
+  {[0 1] "+X side" [0 -1] "−X side"
+   [1 1] "Top"     [1 -1] "Bottom"
+   [2 1] "Front"   [2 -1] "Back"})
 
 (def ^:private retrace-face-colors
   "[axis sign] → colour, shared by the active-face highlight quad and its button
@@ -3996,8 +3996,8 @@
                   (redraw-retrace!)
                   (save-acquire-state!)
                   (update-panel!))
-              (set-status-message! "Il click cade troppo lontano dalla faccia — usa una foto che la mostra più di fronte"))
-            (set-status-message! "Il click non incontra il piano dichiarato")))))))
+              (set-status-message! "That click lands too far from the plane — use a photo that shows it more face-on"))
+            (set-status-message! "That click does not meet the declared plane")))))))
 
 (defn- teardown-retrace-listeners! []
   (let [^js canvas (viewport/get-canvas)]
@@ -4248,8 +4248,8 @@
                   (redraw-marks!)
                   (save-acquire-state!)
                   (update-panel!))
-              (set-status-message! "Il click cade troppo lontano dalla faccia — usa una foto che la mostra più di fronte"))
-            (set-status-message! "Il click non incontra il piano dichiarato")))))))
+              (set-status-message! "That click lands too far from the plane — use a photo that shows it more face-on"))
+            (set-status-message! "That click does not meet the declared plane")))))))
 
 (defn- teardown-mark-listeners! []
   (let [^js canvas (viewport/get-canvas)]
@@ -4397,7 +4397,7 @@
     (redraw-retrace!)
     (refresh-retrace-gizmo!)
     (save-acquire-state!)
-    (when had (set-status-message! "Piano cambiato — ricalco azzerato"))
+    (when had (set-status-message! "Plane changed — anchor's points cleared"))
     (update-panel!)))
 
 (defn- on-retrace-offset-change!
@@ -4419,52 +4419,33 @@
   (let [{:keys [ex ey ez]} (bridge/box-basis pose)]
     (m/normalize (m/v+ (m/v* ex x) (m/v+ (m/v* ey y) (m/v* ez z))))))
 
-(defn- ricalco-shape+mark
-  "One ricalco → \":id {:shape (poly …) :mark {:position :heading :up}}\", or nil
-   below 3 points. Per Vincenzo's design (2026-07-24): the ricalco is emitted with
-   an implicit mark so it carries BOTH the 2D outline and its face frame, and
-   `(let [q (:id (:shapes A))] (turtle (:mark q) (extrude (:shape q) (f d))))`
-   extrudes it ON the face, PERPENDICULAR — instead of a bare 2D poly that follows
-   the current turtle. The poly is re-expressed in an in-plane frame centred on the
-   ricalco's centroid: v = an in-plane box axis, u = normal × v, so it matches
-   Ridley's shape placement (shape-x → -right, shape-y → up, extrude → heading)
-   with the mark's heading = OUTWARD face normal and up = v; the extrusion then
-   lands un-mirrored and perpendicular. The mark is lifted through `pose` (the
-   emitted proxy's anchor pose), so shape and proxy stay coincident."
-  [{:keys [name plane points]} pose uniq]
-  (when (>= (count points) 3)
-    (let [{:keys [heading up]} (plane-pose plane)
-          normal-obj heading
-          v-obj up
-          u-obj (m/normalize (m/cross normal-obj v-obj))
-          ;; The mark sits where the PLANE was placed, not at the centroid of what
-          ;; happened to be traced. Vincenzo, 2026-08-21: "se lo scopo è
-          ;; posizionare un mark, quindi un punto, serve il centro del foglietto".
-          ;; Once the plane is a pose the user places by hand, that placement IS
-          ;; the answer to "where is this shape's origin" — and a centroid that
-          ;; shifts every time another point is added is not an origin anyone can
-          ;; aim. The polyline is written in the plane's own frame so shape and
-          ;; mark stay coincident: (turtle (:mark q) (extrude (:shape q) …)) puts
-          ;; the outline back exactly where it was traced.
-          origin-obj (:position (plane-pose plane))
-          f3 (fn [x] (.toFixed x 3))
-          coords (mapcat (fn [p] (let [d (m/v- p origin-obj)]
-                                   [(f3 (m/dot d u-obj)) (f3 (m/dot d v-obj))]))
-                         points)]
-      (str ":" (uniq name)
-           " {:shape (poly " (str/join " " coords) ")"
-           " :mark {:position " (fmt-vec (bridge/local->world pose origin-obj))
-           " :heading " (fmt-vec (obj-dir->world pose normal-obj))
-           " :up " (fmt-vec (obj-dir->world pose v-obj)) "}}"))))
+(defn- anchor-mark
+  "One anchor → \":id {:position :heading :up}\", its plane's pose lifted through
+   `pose` (the emitted proxy's anchor pose).
 
-(defn- shapes-entries
-  "\":id {:shape (poly …) :mark {…}}\" strings for every ricalco with ≥3 points,
-   names keywordized and uniquified (a map can't hold duplicate keys)."
-  [pose]
-  (let [seen (atom #{})
-        uniq (fn [nm] (loop [n (if (seq nm) nm "ancora")]
+   It used to emit \":id {:shape (poly …) :mark {…}}\" under :shapes, because the
+   gesture used to be a TRACE and the polyline was its product. It isn't any
+   more: what you place is an anchor, and the outline is drawn afterwards with
+   `edit-path-2d` on the anchor's own plane. So it belongs in :marks, which is
+   already the home of named poses — `(turtle (:ancora-1 (:marks A)) …)` — and
+   :shapes stops being written at all.
+
+   Points already traced are NOT emitted here. They were only ever a way to say
+   where the plane was, and the plane now says that itself."
+  [{:keys [name plane]} pose uniq]
+  (let [{:keys [position heading up]} (plane-pose plane)]
+    (str ":" (uniq (if (seq name) name "ancora"))
+         " {:position " (fmt-vec (bridge/local->world pose position))
+         " :heading " (fmt-vec (obj-dir->world pose heading))
+         " :up " (fmt-vec (obj-dir->world pose up)) "}")))
+
+(defn- anchor-entries
+  "\":id {:position :heading :up}\" strings for every anchor, names keywordized
+   and uniquified (a map can't hold duplicate keys)."
+  [pose seen]
+  (let [uniq (fn [nm] (loop [n (if (seq nm) nm "ancora")]
                         (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
-    (vec (keep #(ricalco-shape+mark % pose uniq) (ricalchi)))))
+    (vec (map #(anchor-mark % pose uniq) (ricalchi)))))
 
 ;; ============================================================
 ;; Panel (numbered filmstrip + focal-length field + Chiudi — no badges/
@@ -4772,10 +4753,10 @@
             b (.createElement js/document "button")]
         (set! (.-className actions) "eaq-pnp-actions")
         (set! (.-type pv) "button")
-        (set! (.-textContent pv) (if (:hide-proxy? @session) "Mostra proxy (v)" "Nascondi proxy (v)"))
+        (set! (.-textContent pv) (if (:hide-proxy? @session) "Show proxy (v)" "Hide proxy (v)"))
         (.addEventListener pv "click" (fn [_] (toggle-proxy!)))
         (set! (.-type b) "button")
-        (set! (.-textContent b) "Aggiungi ancora (d)")
+        (set! (.-textContent b) "Add anchor (d)")
         (.addEventListener b "click" (fn [_] (start-retrace!)))
         (.appendChild actions pv)
         (.appendChild actions b)
@@ -4821,23 +4802,23 @@
             info (.createElement js/document "div")
             list-el (.createElement js/document "div")
             faces (.createElement js/document "div")
-            {:keys [row]} (ui/create-slider-row {:label "Offset piano (mm)"
+            {:keys [row]} (ui/create-slider-row {:label "Plane offset (mm)"
                                                  :value offset
                                                  :range-fn retrace-offset-range
                                                  :on-input on-retrace-offset-change!})
             actions (.createElement js/document "div")]
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
-              (str "Ancora attiva: " (or (:name (get rs active-idx)) "—") " — "
+              (str "Active anchor: " (or (:name (get rs active-idx)) "—") " — "
                    ;; naming a face is only honest where the six faces mean
                    ;; something: on a cage the plane is wherever the gizmo put it,
                    ;; and calling it "Sopra" would name the bounding cube's face
                    (if-let [lbl (and (not (plate-proxy?)) (retrace-face-labels [axis sign]))]
-                     (str "piano " lbl)
-                     "piano libero (trascinalo e ruotalo col gizmo)")
-                   ". Posala e orientala col gizmo: la pallina bianca è il punto"
-                   " dell'ancora. '[' / ']' per controllarla dalle altre viste."
-                   (when (pos? npts) (str " (" npts " punti tracciati)"))))
+                     (str lbl " plane")
+                     "free plane")
+                   ". Place and orient it with the gizmo — the white ball is the"
+                   " anchor's point. '[' / ']' to check it from the other views."
+                   (when (pos? npts) (str " (" npts " traced points)"))))
         (.appendChild box info)
         ;; one row per ricalco: ● active / ○ pick-active, editable id, ✕ delete
         (set! (.-className list-el) "eaq-mark-list")
@@ -4893,18 +4874,18 @@
               clr (.createElement js/document "button")
               exit (.createElement js/document "button")]
           (set! (.-type nw) "button")
-          (set! (.-textContent nw) "Nuovo ricalco (n)")
+          (set! (.-textContent nw) "New anchor (n)")
           (.addEventListener nw "click" (fn [_] (new-ricalco!)))
           (set! (.-type undo) "button")
-          (set! (.-textContent undo) "Annulla ultimo (⌫)")
+          (set! (.-textContent undo) "Undo last (⌫)")
           (set! (.-disabled undo) (zero? npts))
           (.addEventListener undo "click" (fn [_] (undo-retrace-point!)))
           (set! (.-type clr) "button")
-          (set! (.-textContent clr) "Azzera")
+          (set! (.-textContent clr) "Clear")
           (set! (.-disabled clr) (zero? npts))
           (.addEventListener clr "click" (fn [_] (clear-retrace!)))
           (set! (.-type exit) "button")
-          (set! (.-textContent exit) "Esci (d)")
+          (set! (.-textContent exit) "Exit (d)")
           (.addEventListener exit "click" (fn [_] (stop-retrace!)))
           (.appendChild actions nw)
           (.appendChild actions undo)
@@ -4974,7 +4955,7 @@
               clr (.createElement js/document "button")
               exit (.createElement js/document "button")]
           (set! (.-type undo) "button")
-          (set! (.-textContent undo) "Annulla ultimo (⌫)")
+          (set! (.-textContent undo) "Undo last (⌫)")
           (set! (.-disabled undo) (zero? (count ms)))
           (.addEventListener undo "click" (fn [_] (undo-mark!)))
           (set! (.-type clr) "button")
@@ -6541,11 +6522,10 @@
    the anchor machinery. :heading = the face normal, :up = an in-plane box axis;
    object-frame position/normal lifted to world through the SAME pose the box is
    emitted at, so marks and proxy stay coincident. Names keywordized + uniquified."
-  [pose]
+  [pose seen]
   (let [{:keys [ex ey ez]} (bridge/box-basis pose)
         world-dir (fn [[nx ny nz]]
                     (m/normalize (m/v+ (m/v* ex nx) (m/v+ (m/v* ey ny) (m/v* ez nz)))))
-        seen (atom #{})
         uniq (fn [nm] (loop [n (if (seq nm) nm "mark")]
                         (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
     (mapv (fn [{:keys [name position normal]}]
@@ -6650,12 +6630,20 @@
          ;; :shapes/:marks are MERGED with what the marker already holds rather
          ;; than regenerated wholesale: this session owns the ricalchi and the
          ;; 'k' marks it can see, and nothing else in those maps is its business.
-         i3 ":shapes " (fmt-map-block ":shapes"
-                                      (merge-entries (preserved-entries ":shapes")
-                                                     (shapes-entries anchor-pose)) i3) "\n"
+         ;; :shapes is no longer WRITTEN — an anchor is a pose and lives in
+         ;; :marks. It is still emitted when the marker already carried some, so
+         ;; a form produced before this keeps its traced shapes instead of losing
+         ;; them on the next confirm; a session that has none omits the key.
+         (let [kept (preserved-entries ":shapes")]
+           (if (seq kept)
+             (str i3 ":shapes " (fmt-map-block ":shapes" kept i3) "\n")
+             ""))
          i3 ":marks " (fmt-map-block ":marks"
-                                     (merge-entries (preserved-entries ":marks")
-                                                    (marks-entries anchor-pose)) i3) "\n"
+                                     (let [seen (atom #{})]
+                                       (merge-entries (preserved-entries ":marks")
+                                                      (into (anchor-entries anchor-pose seen)
+                                                            (marks-entries anchor-pose seen))))
+                                     i3) "\n"
          ;; :edges is emitted EMPTY (this session measures none — edges are the
          ;; stage's Spigolo gesture, which runs after registration is over) but it
          ;; is emitted, so the gesture finds its slot instead of having to insert
