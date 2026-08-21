@@ -3875,21 +3875,43 @@
    plane indicator, so which face you're tracing is obvious) plus the trace on
    top of it."
   []
-  (into [(active-face-quad) (plane-origin-marker)] (trace-items)))
+  ;; The proxy is DRAWN here now, as a wireframe. Placing a plane in space from a
+  ;; single photograph is guessing at depth, and the cheapest depth cue there is
+  ;; is occlusion: a plane that disappears BEHIND a ring says where it is better
+  ;; than any number (Vincenzo, 2026-08-21). Wireframe rather than solid so the
+  ;; photo underneath stays readable, and under the same 'v' toggle as everywhere
+  ;; else for when the rings get in the way.
+  ;;
+  ;; The quad is deliberately NOT on-top: drawn over everything it would never be
+  ;; occluded, and the cue this exists for would be gone.
+  (into (cond-> [(active-face-quad) (plane-origin-marker)]
+          (not (:hide-proxy? @session))
+          (conj {:type :wireframe :data (:proxy-mesh @session)}))
+        (trace-items)))
+
+(declare redraw-retrace!)
 
 (defn- toggle-proxy!
   "Show/hide the SOLID proxy in the main (gizmo) view so the photo underneath is
-   readable while registering. A gizmo-mode control ('v' / panel button); :retrace
-   never draws the proxy anyway, so it isn't offered there. The state persists, so
-   leaving :retrace returns to whatever was chosen here."
+   readable while registering. Available in :gizmo and in :retrace — in the
+   latter the proxy is the depth cue for placing a plane, and occasionally the
+   thing standing in front of what you are trying to see. The state persists
+   across modes.
+
+   Mode-aware on purpose: in :retrace the gizmo belongs to the PLANE, so hiding
+   the proxy must not close it (you would lose the handles you are working with)
+   and the preview to rebuild is the anchor's, not the proxy's."
   []
   (swap! session update :hide-proxy? not)
-  ;; Hide the gizmo together with the solid proxy (install-gizmo! now no-ops while
-  ;; hidden); re-install it when the proxy comes back.
-  (if (:hide-proxy? @session)
-    (gizmo/close!)
-    (install-gizmo! (:current-idx @session)))
-  (viewport/show-preview! (proxy-preview-items))
+  (if (= :retrace (:mode @session))
+    (redraw-retrace!)
+    (do
+      ;; Hide the gizmo together with the solid proxy (install-gizmo! now no-ops
+      ;; while hidden); re-install it when the proxy comes back.
+      (if (:hide-proxy? @session)
+        (gizmo/close!)
+        (install-gizmo! (:current-idx @session)))
+      (viewport/show-preview! (proxy-preview-items))))
   (update-panel!))
 
 (defn- redraw-retrace! [] (viewport/show-preview! (retrace-preview-items)))
@@ -4870,10 +4892,14 @@
         (.appendChild box row)
         (set! (.-className actions) "eaq-pnp-actions")
         (let [nw (.createElement js/document "button")
+              pxy (.createElement js/document "button")
               undo (.createElement js/document "button")
               clr (.createElement js/document "button")
               exit (.createElement js/document "button")]
           (set! (.-type nw) "button")
+          (set! (.-type pxy) "button")
+          (set! (.-textContent pxy) (if (:hide-proxy? @session) "Show cage (v)" "Hide cage (v)"))
+          (.addEventListener pxy "click" (fn [_] (toggle-proxy!)))
           (set! (.-textContent nw) "New anchor (n)")
           (.addEventListener nw "click" (fn [_] (new-ricalco!)))
           (set! (.-type undo) "button")
@@ -4888,6 +4914,7 @@
           (set! (.-textContent exit) "Exit (d)")
           (.addEventListener exit "click" (fn [_] (stop-retrace!)))
           (.appendChild actions nw)
+          (.appendChild actions pxy)
           (.appendChild actions undo)
           (.appendChild actions clr)
           (.appendChild actions exit))
@@ -5229,9 +5256,10 @@
           (do (.preventDefault e) (.stopPropagation e) (undo-mark!))
 
         ;; 'v' hides/shows the solid proxy in the main (gizmo) view so the photo
-        ;; is readable while registering — meaningless in :retrace (no proxy) and
-        ;; :pnp (already a see-through wireframe), so gizmo-only.
-          (and (= :gizmo (:mode @session)) (= key "v"))
+        ;; is readable while registering. :pnp draws its own see-through wireframe
+        ;; and doesn't need it; :retrace DOES since 2026-08-21, where the proxy is
+        ;; the depth cue for placing a plane and sometimes the thing in the way.
+          (and (#{:gizmo :retrace} (:mode @session)) (= key "v"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-proxy!))
 
         ;; 'm' arms the blindato marker-click (pin the Klein branch by the
