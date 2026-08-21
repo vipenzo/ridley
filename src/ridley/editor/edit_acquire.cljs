@@ -1039,6 +1039,8 @@
       start-pose)
     (camera-pose-for idx)))
 
+(declare install-retrace-gizmo!)
+
 (defn- enter-photo!
   "Close/reopen the gizmo for photo `idx` — simpler to reason about than
    special-casing the 0↔1+ boundary, since :nudge-mesh? can only be set at
@@ -1055,7 +1057,11 @@
     ;; just move the camera onto this photo and re-show the (unchanged) world-space
     ;; polyline from the new angle — never tear down the retrace to install a gizmo.
     (case (:mode @session)
-      :retrace (redraw-retrace!)
+      ;; the plane gizmo is built AT a pose and has no mutator, so navigating —
+      ;; which closes every gizmo above — has to put it back, or it survives only
+      ;; on the photo the retrace was started from (Vincenzo, 2026-08-21: 'sulla
+      ;; prima foto il gizmo si vede, sulle altre no')
+      :retrace (do (redraw-retrace!) (install-retrace-gizmo!))
       ;; :mark is a live-reprojection mode too — the named marks are world/object
       ;; space, so navigating just re-shows them (and their labels) from this
       ;; photo's camera; never tear it down to install a gizmo.
@@ -3845,7 +3851,9 @@
 ;; the cursor stays on its photo feature); the '-pnp-' state keys are shared
 (defn- retrace-on-pointermove [^js e]
   (when (and @session (= :retrace (:mode @session)))
-    (update-loupe! e)))
+    ;; no magnifier over a handle — there the pointer's job is to grab, and a
+    ;; loupe there reads as "this is still about clicking the photo"
+    (if (gizmo/over-handle? e) (hide-pnp-loupe!) (update-loupe! e))))
 
 (defn- retrace-on-wheel [^js e]
   (when (and @session (= :retrace (:mode @session)))
@@ -3856,7 +3864,12 @@
       (update-loupe! e))))
 
 (defn- retrace-on-pointerdown [^js e]
-  (when (and @session (= :retrace (:mode @session)) (zero? (.-button e)))
+  ;; The gizmo gets first refusal: this listener is on the CAPTURE phase and the
+  ;; gizmo's is on the bubble phase, so without this test every press is consumed
+  ;; here and the plane can never be dragged — the handles draw, hover, and do
+  ;; nothing.
+  (when (and @session (= :retrace (:mode @session)) (zero? (.-button e))
+             (not (gizmo/over-handle? e)))
     (when-let [[iw ih] (backdrop/image-size)]
       (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
         (.preventDefault e) (.stopPropagation e)
@@ -4653,8 +4666,14 @@
             actions (.createElement js/document "div")]
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
-              (str "Ricalco attivo: " (or (:name (get rs active-idx)) "—") " — piano "
-                   (retrace-face-labels [axis sign]) ", clicca il contorno sulla foto ("
+              (str "Ricalco attivo: " (or (:name (get rs active-idx)) "—") " — "
+                   ;; naming a face is only honest where the six faces mean
+                   ;; something: on a cage the plane is wherever the gizmo put it,
+                   ;; and calling it "Sopra" would name the bounding cube's face
+                   (if-let [lbl (and (not (plate-proxy?)) (retrace-face-labels [axis sign]))]
+                     (str "piano " lbl)
+                     "piano libero (trascinalo e ruotalo col gizmo)")
+                   ", clicca il contorno sulla foto ("
                    npts " punti). '[' / ']' per rivederli dalle altre viste."))
         (.appendChild box info)
         ;; one row per ricalco: ● active / ○ pick-active, editable id, ✕ delete
@@ -4682,7 +4701,13 @@
             (.appendChild list-el rrow)))
         (.appendChild box list-el)
         (set! (.-className faces) "eaq-pnp-corners")
-        (doseq [[a s] retrace-face-order]
+        ;; The six faces are the proxy BOUNDING BOX's faces. On a box proxy that
+        ;; box is the part, so they are the part's own faces and the fastest way
+        ;; to say "this one". On a cage the proxy is the reference AROUND the
+        ;; part and the box is a cube enclosing it — 'sarebbero facce di cosa?'
+        ;; (Vincenzo, 2026-08-20). Offering them there is offering six wrong
+        ;; answers, so they are simply not built.
+        (doseq [[a s] (if (plate-proxy?) [] retrace-face-order)]
           (let [b (.createElement js/document "button")
                 st (.-style b)
                 cur? (and (= a axis) (= s sign))]

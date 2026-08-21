@@ -679,6 +679,19 @@
     (into {} (remove (fn [[k _]] (#{:stretch-f :stretch-rt :stretch-u} k))) hitzones)
     hitzones))
 
+(defn over-handle?
+  "True when the pointer is over one of the gizmo's live handles right now.
+
+   Exists so a host that listens in the CAPTURE phase can give the gizmo first
+   refusal instead of swallowing the event. The gizmo's own listeners are on the
+   bubble phase, so anything capturing above it wins by default — which is how
+   edit-acquire's retrace made the plane gizmo completely un-draggable while
+   looking perfectly normal on screen (Vincenzo, 2026-08-21: 'non si riesce a
+   interagire col gizmo')."
+  [^js e]
+  (boolean (when-let [{:keys [hitzones mode]} @gstate]
+             (seq (viewport/raycast-objects e (vals (live-hitzones hitzones (= mode :origin))))))))
+
 (defn- on-pointer-down [^js e]
   (when-let [{:keys [hitzones pose mode on-drag-start]} @gstate]
     (let [origin? (= mode :origin)
