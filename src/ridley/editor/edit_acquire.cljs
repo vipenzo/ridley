@@ -1044,7 +1044,7 @@
       start-pose)
     (camera-pose-for idx)))
 
-(declare install-retrace-gizmo! reset-view-zoom!)
+(declare install-retrace-gizmo! reset-view-zoom! refresh-retrace-gizmo!)
 
 (defn- enter-photo!
   "Close/reopen the gizmo for photo `idx` — simpler to reason about than
@@ -3717,10 +3717,15 @@
 
 (defn- next-ricalco-name []
   (let [nums (keep (fn [{:keys [name]}]
-                     (when-let [m (re-matches #"ricalco-(\d+)" (or name ""))]
+                     (when-let [m (re-matches #"(?:ricalco|ancora)-(\d+)" (or name ""))]
                        (js/parseInt (second m) 10)))
                    (ricalchi))]
-    (str "ricalco-" (inc (reduce max 0 nums)))))
+    ;; "ancora", not "ricalco": what this gesture produces is an ANCHOR — a pose
+    ;; you place — and the outline that used to justify the old name is now drawn
+    ;; afterwards with edit-path-2d on that anchor's plane (Vincenzo, 2026-08-21).
+    ;; The old names still parse, so a session recorded before this keeps
+    ;; numbering from where it left off instead of colliding.
+    (str "ancora-" (inc (reduce max 0 nums)))))
 
 (defn- ensure-active-ricalco!
   "Guarantee an active ricalco to draw into (on entering retrace): create the
@@ -3854,7 +3859,13 @@
                   (cond-> [{:type :lines
                             :data (mapv (fn [a b] {:from a :to b :color trace-color}) loop-pts (rest loop-pts))
                             :on-top true}]
-                    (and editing? active?)
+                    ;; The vertex dots belonged to the tracing gesture. This mode
+                    ;; places an ANCHOR — a pose — and the outline is drawn later
+                    ;; with edit-path-2d on that anchor's plane, so the dots are
+                    ;; clutter over the one thing that matters, the white origin
+                    ;; ball (Vincenzo, 2026-08-21). Points already recorded keep
+                    ;; their line, so nothing traced is lost from view.
+                    false
                     (conj {:type :dots :data (mapv (fn [w] {:pos w :radius retrace-dot-radius
                                                             :color trace-color :opacity 0.75}) wpts)}))))))
           (range) (ricalchi)))))
@@ -3892,11 +3903,13 @@
     (.preventDefault e)))
 
 (defn- retrace-on-pointermove [^js e]
+  ;; No magnifier at all here. It was a tracing aid — it enlarged the pixels you
+  ;; were about to click — and this mode has stopped being about clicking pixels:
+  ;; it places an ANCHOR (Vincenzo, 2026-08-21). Appearing over some parts of the
+  ;; image and not others, it now reads as a glitch rather than a tool.
   (retrace-on-pan e)
   (when (and @session (= :retrace (:mode @session)))
-    ;; no magnifier over a handle — there the pointer's job is to grab, and a
-    ;; loupe there reads as "this is still about clicking the photo"
-    (if (gizmo/over-handle? e) (hide-pnp-loupe!) (update-loupe! e))))
+    (hide-pnp-loupe!)))
 
 (def ^:private view-zoom-max 8.0)
 
@@ -3946,8 +3959,7 @@
   [^js e]
   (when (and @session (#{:retrace :pnp} (:mode @session)))
     (.preventDefault e) (.stopPropagation e)
-    (zoom-view-at! e (if (pos? (.-deltaY e)) -1.0 1.0))
-    (when (= :retrace (:mode @session)) (update-loupe! e))))
+    (zoom-view-at! e (if (pos? (.-deltaY e)) -1.0 1.0))))
 
 (defn- retrace-on-pan
   "Right-button drag pans the zoomed window. Only meaningful while zoomed in, and
@@ -4042,6 +4054,13 @@
     (swap! session update-in (active-r-path :plane)
            merge {:base (world-pose->obj moved) :offset 0.0})
     (redraw-retrace!)
+    ;; and the gizmo FOLLOWS. It is built at a pose and has no mutator, so
+    ;; leaving it where it was means the next gesture is computed against a stale
+    ;; basis: grab a ring and the plane swings somewhere unrelated to the handle
+    ;; (Vincenzo, 2026-08-21: "giri un anello e il piano va in direzioni che non
+    ;; c'entrano"). The first gesture looks right, every one after it is wrong,
+    ;; which is exactly what made it read as the mapping being scrambled.
+    (refresh-retrace-gizmo!)
     (save-acquire-state!)
     (update-panel!)))
 
@@ -4443,7 +4462,7 @@
    names keywordized and uniquified (a map can't hold duplicate keys)."
   [pose]
   (let [seen (atom #{})
-        uniq (fn [nm] (loop [n (if (seq nm) nm "ricalco")]
+        uniq (fn [nm] (loop [n (if (seq nm) nm "ancora")]
                         (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
     (vec (keep #(ricalco-shape+mark % pose uniq) (ricalchi)))))
 
@@ -4756,7 +4775,7 @@
         (set! (.-textContent pv) (if (:hide-proxy? @session) "Mostra proxy (v)" "Nascondi proxy (v)"))
         (.addEventListener pv "click" (fn [_] (toggle-proxy!)))
         (set! (.-type b) "button")
-        (set! (.-textContent b) "Ricalca su un piano (d)")
+        (set! (.-textContent b) "Aggiungi ancora (d)")
         (.addEventListener b "click" (fn [_] (start-retrace!)))
         (.appendChild actions pv)
         (.appendChild actions b)
@@ -4809,15 +4828,16 @@
             actions (.createElement js/document "div")]
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
-              (str "Ricalco attivo: " (or (:name (get rs active-idx)) "—") " — "
+              (str "Ancora attiva: " (or (:name (get rs active-idx)) "—") " — "
                    ;; naming a face is only honest where the six faces mean
                    ;; something: on a cage the plane is wherever the gizmo put it,
                    ;; and calling it "Sopra" would name the bounding cube's face
                    (if-let [lbl (and (not (plate-proxy?)) (retrace-face-labels [axis sign]))]
                      (str "piano " lbl)
                      "piano libero (trascinalo e ruotalo col gizmo)")
-                   ", clicca il contorno sulla foto ("
-                   npts " punti). '[' / ']' per rivederli dalle altre viste."))
+                   ". Posala e orientala col gizmo: la pallina bianca è il punto"
+                   " dell'ancora. '[' / ']' per controllarla dalle altre viste."
+                   (when (pos? npts) (str " (" npts " punti tracciati)"))))
         (.appendChild box info)
         ;; one row per ricalco: ● active / ○ pick-active, editable id, ✕ delete
         (set! (.-className list-el) "eaq-mark-list")
