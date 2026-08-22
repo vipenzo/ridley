@@ -12,6 +12,7 @@ status: experimental
 `(registration-cage :d 176)`
 `(registration-cage :d 176 :marks 12 :disc 2.5 :h 3)`
 `(registration-cage :d 176 :phases {:x 2.5})`
+`(registration-cage :d 176 :index-phase 0)`   ; a cage printed before 2026-08-22
 
 ## Description
 
@@ -236,6 +237,32 @@ zero-index says which.
 
 Printing is unaffected — `acquire-cage` always prints the nominal cage. `:phases`
 describes the one you built.
+
+## The zero-index is off-axis, and that is what tells the two faces apart
+
+Each marked face carries a thirteenth disc, the zero-index, sitting radially
+inside the crown. It is **not** on mark 0's axis: it is turned a third of a mark
+step (10° at twelve marks) toward mark 1.
+
+That offset is the difference between a cage that works and one that cannot. With
+the index on the axis, a crown is mirror-symmetric about it — and because both
+faces of a ring are the *same discs seen through the plastic*, the two faces then
+present an identical figure. Nothing in a photograph can say which face you are
+looking at, the numbering runs the opposite way on each, and a mark named as its
+mirror twin produces a **rotated pose with a perfectly low residual**. The error
+is invisible exactly where you would look for it.
+
+Off the axis the figure is **chiral**: no rotation reproduces its mirror image. So
+the face is legible, and with it the direction the numbers run.
+
+Read it like this: find the disc with the small inner one beside it — that is
+mark 0 — and count **toward** the inner disc's side. A third of a step keeps it
+unmistakably nearer mark 0 (10°) than mark 1 (20°). Half a step would sit exactly
+between them and be symmetric again, which is why the constant is a third.
+
+> **A cage printed before 2026-08-22** has its index on the axis. Model it with
+> `(registration-cage :d 176 :index-phase 0)`, or the solver looks for marks where
+> they are not.
 
 ## Reading the marks: let the editor name them
 

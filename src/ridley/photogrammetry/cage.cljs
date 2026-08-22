@@ -109,6 +109,31 @@
    pallino next to mark 0' at the same imaged size."
   (/ 6.0 176.0))
 
+(def default-index-phase
+  "How far round from mark 0 the zero-index sits, in MARK STEPS. A third of a
+   step — 10° at twelve marks — and the whole point is that it is not zero.
+
+   With the index exactly on mark 0's axis the crown is MIRROR-SYMMETRIC about
+   that axis, and since both faces of a ring carry the same discs through the
+   plastic, the two faces present an identical figure. Nothing in the photograph
+   can then say which face you are looking at, and the numbering runs the opposite
+   way on each — so a mark gets named as its mirror twin, the solve compensates
+   with a rotated pose, and the residual stays low while the cage sits wrong.
+   That is not a hypothesis: on 2026-08-22 Vincenzo read it straight off a photo —
+   the disc labelled ym11 had the index pair under it, so it was ym00, and the
+   face was the other one.
+
+   Off the axis, the figure is CHIRAL: its mirror image cannot be produced by any
+   rotation, so which face you are looking at is legible, and with it the
+   direction the numbers run. A third of a step keeps the index unmistakably
+   nearer mark 0 (10°) than mark 1 (20°), so 'whose index is this' stays obvious.
+   Half a step would sit exactly between the two and be symmetric again.
+
+   A cage PRINTED BEFORE 2026-08-22 has its index on the axis: model it with
+   `(registration-cage :d … :index-phase 0)`, or the marks will be looked for
+   where they are not."
+  (/ 1.0 3.0))
+
 (def ^:private disc-frac
   "Disc diameter as a fraction of :d (2.5mm on the reference 176)."
   (/ 2.5 176.0))
@@ -527,16 +552,18 @@
    Both faces of a ring take the SAME `phase-off`, and must: the two crowns are
    the same physical discs seen through 3mm of plastic, so a ring that was glued
    turned is turned on both its sides at once."
-  [axis s crown-r index-r n h phase-off]
+  [axis s crown-r index-r n h phase-off index-phase]
   (let [off (* s (/ h 2.0))
         heading (axis-unit axis s)
         step (/ (* 2.0 Math/PI) n)
         phase (+ (crown-phase n) phase-off)
+        ;; the index is turned off mark 0's axis — see `default-index-phase`
+        ipos (+ phase (* index-phase step))
         at (fn [r a] (place axis [(* r (Math/cos a)) (* r (Math/sin a)) off]))
         radial (fn [a] (place axis [(Math/cos a) (Math/sin a) 0.0]))]
-    (into {(index-id axis s) {:position (at index-r phase)
+    (into {(index-id axis s) {:position (at index-r ipos)
                               :heading heading
-                              :up (radial phase)}}
+                              :up (radial ipos)}}
           (for [i (range n)]
             (let [a (+ phase (* i step))]
               [(mark-id axis s i) {:position (at crown-r a)
@@ -630,8 +657,8 @@
    The anchors are non-coplanar, so `pnp/solve-pnp` routes them to the general
    DLT rather than the planar homography — pick marks on TWO rings and the pose
    is conditioned on all six degrees of freedom with no mirror twin to reject."
-  [& {:keys [d marks disc h seg phases]
-      :or {h default-h seg 64}}]
+  [& {:keys [d marks disc h seg phases index-phase]
+      :or {h default-h seg 64 index-phase default-index-phase}}]
   (when-not (and (number? d) (pos? d))
     (throw (js/Error.
             (str "registration-cage: dimmi il diametro della gabbia — quello "
@@ -656,8 +683,8 @@
         phase-off (fn [axis] (deg->rad (or (get phases axis) 0.0)))
         anchors (reduce (fn [acc {:keys [axis crown index]}]
                           (let [po (phase-off axis)]
-                            (into acc (concat (face-anchors axis 1 crown index n h po)
-                                              (face-anchors axis -1 crown index n h po)))))
+                            (into acc (concat (face-anchors axis 1 crown index n h po index-phase)
+                                              (face-anchors axis -1 crown index n h po index-phase)))))
                         {}
                         rings)]
     {:type :mesh
@@ -683,6 +710,7 @@
      :cage-marks n
      :cage-h h
      :cage-phases phases
+     :cage-index-phase index-phase
      :rings rings
      ;; Fabrication rides on the proxy for the same reason the marks do: the
      ;; `acquire-cage` library must not restate any of this, or the printed cage

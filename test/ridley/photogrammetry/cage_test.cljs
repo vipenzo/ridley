@@ -680,3 +680,57 @@
             "col soccorso il fit torna utilizzabile")
         (is (= :planar-seeded (:method sol))
             "e passa dal piano che i più condividono, non per fortuna")))))
+
+;; --- la corona chirale ------------------------------------------------------
+
+(deftest the-crown-tells-its-two-faces-apart
+  (testing "Con l'indice sull'asse del mark 0 la corona è simmetrica per
+            riflessione, e siccome le due facce portano gli stessi dischetti
+            attraverso la plastica presentano una figura IDENTICA: niente, nella
+            fotografia, può dire quale faccia stai guardando. Fuori asse la figura
+            è chirale, e la sua immagine speculare non si ottiene da nessuna
+            rotazione. Il 2026-08-22 Vincenzo lo ha letto da una foto: il
+            dischetto etichettato ym11 aveva sotto la coppia dell'indice, quindi
+            era ym00, e la faccia era l'altra."
+    (println "\n=== gabbia: la corona distingue le sue due facce ===")
+    (let [n 12
+          step (/ 360.0 n)
+          ;; la figura di UNA faccia, come angoli: le n della corona più l'indice
+          figura (fn [iph] (conj (mapv #(* % step) (range n)) (* iph step)))
+          ;; l'immagine speculare, riportata in [0,360)
+          specchio (fn [angs] (mapv #(mod (- %) 360.0) angs))
+          ;; esiste una rotazione che porta `b` su `a`?
+          sovrapponibile?
+          (fn [a b]
+            (let [key (fn [angs] (sort (mapv #(Math/round (* 100.0 (mod % 360.0))) angs)))
+                  ka (key a)]
+              (boolean (some (fn [r] (= ka (key (mapv #(+ % r) b))))
+                             (map #(* % (/ 360.0 720)) (range 720))))))]
+      (let [sull-asse (figura 0.0)
+            fuori-asse (figura (/ 1.0 3.0))]
+        (println (str "  indice sull'asse  → speculare sovrapponibile: "
+                      (sovrapponibile? sull-asse (specchio sull-asse))))
+        (println (str "  indice a 1/3 passo → speculare sovrapponibile: "
+                      (sovrapponibile? fuori-asse (specchio fuori-asse))))
+        (is (sovrapponibile? sull-asse (specchio sull-asse))
+            "sull'asse la corona è achirale — ed è esattamente il difetto")
+        (is (not (sovrapponibile? fuori-asse (specchio fuori-asse)))
+            "fuori asse dev'essere CHIRALE, o le due facce restano gemelle")
+        ;; e mezzo passo non va: torna simmetrica
+        (is (sovrapponibile? (figura 0.5) (specchio (figura 0.5)))
+            "mezzo passo sarebbe di nuovo achirale — per questo il default è 1/3"))
+      ;; l'indice resta inequivocabilmente il vicino del mark 0
+      (is (< (* (/ 1.0 3.0) step) (- step (* (/ 1.0 3.0) step)))
+          "l'indice sta più vicino al mark 0 che al mark 1"))))
+
+(deftest the-index-moved-and-nothing-else-did
+  (testing "cambiare la fase dell'indice non deve spostare un solo mark di corona"
+    (let [a (cage/registration-cage :d 176 :index-phase 0)
+          b (cage/registration-cage :d 176)
+          crown-of (fn [c] (into {} (remove (fn [[k _]] (bridge/index-anchor? k))
+                                            (:anchors c))))]
+      (is (= (crown-of a) (crown-of b))
+          "le corone sono identiche: si è mosso solo l'indice")
+      (is (not= (get-in a [:anchors :zero-yp :position])
+                (get-in b [:anchors :zero-yp :position]))
+          "…e l'indice sì"))))
