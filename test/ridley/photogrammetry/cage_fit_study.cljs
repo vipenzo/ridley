@@ -127,10 +127,21 @@
      :median (if (seq ds) (nth (sort ds) (quot (count ds) 2)) js/Infinity)}))
 
 (defn ^:export main [& _]
-  (let [proxy (cage/registration-cage :d 176)
+  (let [;; `default-index-phase`'s own docstring: a cage PRINTED BEFORE 2026-08-22
+        ;; has its zero-index ON mark 0's axis, and must be modelled with
+        ;; :index-phase 0 "or the marks will be looked for where they are not".
+        ;; Vincenzo's cage was glued on 18-19 August, so that was the first thing
+        ;; to try — and it is WRONG for this one: with :index-phase 0 the clicked
+        ;; index lands 149px out and the solve throws it away, while at the default
+        ;; third of a step it fits at 4.1px. The cage on the bench has the chiral
+        ;; index. Kept as a knob because the next cage may not.
+        iph (js/parseFloat (or (aget (.-env js/process) "CAGE_INDEX_PHASE")
+                               (str (/ 1.0 3.0))))
+        d (js/parseFloat (or (aget (.-env js/process) "CAGE_D") "176"))
+        proxy (cage/registration-cage :d d :index-phase iph)
         anchors (:anchors proxy)
         obj (into {} (for [[id pose] anchors] [id (:position pose)]))]
-    (println (str "\n=== gabbia ⌀176: " (count anchors) " bersagli ==="))
+    (println (str "\n=== gabbia ⌀" d " index-phase " iph ": " (count anchors) " bersagli ==="))
     (-> (decode photo)
         (.then
          (fn [res]
@@ -199,7 +210,7 @@
                  (println "\n  -- la curva dell'anello passa dai mark veri? --")
                  (doseq [k (range cage/ring-count)]
                    (let [axis (cage/ring-axis k)
-                         r (:crown (cage/ring-radii 176.0 k))
+                         r (:crown (cage/ring-radii d k))
                          curve (keep (fn [i]
                                        (let [a (* i (/ (* 2 Math/PI) 720))]
                                          (cam/project intr pose
@@ -227,7 +238,7 @@
                        (let [p2 (:pose s2)
                              curves (for [k (range cage/ring-count)]
                                       (let [axis (cage/ring-axis k)
-                                            r (:crown (cage/ring-radii 176.0 k))]
+                                            r (:crown (cage/ring-radii d k))]
                                         (keep (fn [i]
                                                 (let [a (* i (/ (* 2 Math/PI) 720))]
                                                   (cam/project in2 p2
@@ -250,7 +261,7 @@
                                        (fn [r] (reduce + (map #(nearest (curve-at r axis) %) inner-truth)))
                                        (map #(* 0.5 %) (range 60 200)))]
                        (println (str "  anello " (name axis) " · raggio nominale "
-                                     (fmt (:crown (cage/ring-radii 176.0 (if (= axis :y) 1 2))) 1)
+                                     (fmt (:crown (cage/ring-radii d (if (= axis :y) 1 2))) 1)
                                      "mm · raggio che meglio passa dai 4: " (fmt best 1) "mm · distanze "
                                      (mapv (fn [px] (fmt (nearest (curve-at best axis) px) 0)) inner-truth)))))
                    ;; and DRAW them, because a number that surprising has to be
@@ -293,7 +304,7 @@
                            tops (->> prof (filter #(>= (second %) (max 3 (- peak 1))))
                                      (map first))]
                        (println (str "  piano " (name axis)
-                                     " · nominale " (fmt (:crown (cage/ring-radii 176.0
+                                     " · nominale " (fmt (:crown (cage/ring-radii d
                                                                                   (case axis :x 0 :y 1 :z 2))) 1)
                                      "mm · picco " peak " candidati"
                                      " a r≈" (if (seq tops)
@@ -330,7 +341,38 @@
                      (println (str "   rot " (:rot r) " mirror " (:mirror? r)
                                    " faccia-girata " (:flip-face? r)
                                    " · rms " (fmt (:rms r) 2) "px · spiega " (:hits r) "/78"
-                                   " · ai 4 interni " (mapv #(fmt % 0) (:inner r))))))
+                                   " · ai 4 interni " (mapv #(fmt % 0) (:inner r)))))
+                     ;; ── the ring phases, on the winning reading ─────────────────
+                   ;; What is left after the crown is read right is 17-23px, and the
+                   ;; named suspect is each ring's glued-in rotation about its own
+                   ;; axis: nothing constrains it, and it slides that ring's marks
+                   ;; ALONG the ring — which is the shape of what is left. Take the best
+                   ;; reading's pose and sweep each inner ring's phase.
+                     (let [best (first ranked)
+                         bp (:pose best)
+                         turn (fn [axis phi p]
+                                (let [[u v n] (cage/unplace axis p)
+                                      c (Math/cos phi) s (Math/sin phi)]
+                                  (cage/place axis [(- (* u c) (* v s)) (+ (* u s) (* v c)) n])))
+                         ring-ids (fn [axis] (filter #(= axis (ring-of %)) (keys obj)))]
+                     (println (str "\n  -- le fasi degli anelli, sulla lettura rot "
+                                   (:rot best) " --"))
+                     (doseq [axis [:x :y :z]]
+                       (let [ids (ring-ids axis)
+                             prof (for [deg (range -150 151)
+                                        :let [phi (* 0.1 deg (/ Math/PI 180.0))
+                                              hits (count (filter (fn [id]
+                                                                    (when-let [px (cam/project intr bp (turn axis phi (obj id)))]
+                                                                      (< (nearest cands px) 12.0)))
+                                                                  ids))]]
+                                    [(* 0.1 deg) hits])
+                             peak (apply max (map second prof))
+                             at (map first (filter #(= peak (second %)) prof))]
+                         (println (str "  anello " (name axis) " · picco " peak
+                                       " mark su " (count ids)
+                                       " a fase " (fmt (first at) 1) "°…" (fmt (last at) 1) "°"
+                                       " (nominale 0°, a 0° ne spiega "
+                                       (second (first (filter #(= 0.0 (first %)) prof))) ")"))))))
                  ;; ── the same fact from the other side ───────────────────────
                  ;; The peaks above say 85.5 on the X plane (nominal), 53.5 on the Y
                  ;; and ~69.5 on the Z: the two inner rings look SWAPPED. They are

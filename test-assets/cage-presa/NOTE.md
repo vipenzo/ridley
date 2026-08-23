@@ -32,3 +32,24 @@ sono tutti e tre `proposed?`, cioè predizioni accettate, non click:
   (2071, 2853), **143px più in là**.
 
 Gli altri undici sono centrati sui dischetti entro un paio di pixel.
+
+## Il diametro, misurato
+
+Vincenzo, 2026-08-24, **metro a nastro**: «leggermente meno di 176, direi 175.5».
+Cioè lo 0.3% — dentro il rumore di un metro a nastro, e comunque **la scala non
+si osserva dalla registrazione**: un diametro sbagliato viene assorbito dalla
+distanza della camera, i residui restano ottimi e sono le MISURE del pezzo a
+uscire scalate. Il modo di dichiararla, quando la si misura col calibro, è
+`(acquire-cage/measured 176 175.5)` come `:proxy` della sessione.
+
+Con un metro a nastro l'incertezza (±1mm) è più grande della correzione (0.5mm),
+quindi applicarla non è meglio che lasciare 176.
+
+## L'anello di mezzo non è perfettamente piano
+
+Vincenzo, 2026-08-24, guardando il pezzo: «il ring Y non è perfettamente planare
+(di poco comunque)». Lo si tenga presente leggendo i residui: a questa
+inquadratura l'anello di mezzo sta a ~16 px/mm, quindi i **17-23px** che restano
+dopo la rilettura corretta valgono **circa 1.1-1.4mm** sul pezzo — la taglia
+giusta per una svergolatura «di poco», e qualcosa che nessuna `:phase` (che è una
+rotazione rigida) può correggere.
