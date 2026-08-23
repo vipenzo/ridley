@@ -144,7 +144,7 @@ più difficile del fotogramma.
 candidati in JSON, da disegnare sulla foto. Il test `real-cage-photo-detect`
 (protetto, salta senza le foto) fissa 13/13 e i tetti sui candidati.
 
-#### Tre punti della «verità» qui sopra erano sbagliati
+#### Quattro punti della «verità» qui sopra erano sbagliati
 
 Guardando le foto a 4× — la regola della sezione «Trappole», applicata prima di
 ragionare — tre dei quattordici pick di `acquire-state.json` non sono dischetti:
@@ -154,8 +154,13 @@ ragionare — tre dei quattordici pick di `acquire-state.json` non sono dischett
   «verificati», sta su **banda bianca vuota**: il mark che nomina è a
   **(2071, 2853)**, 143px più in là. Il rilevatore lo trova a 0.5px.
 
-Tutti e tre sono `proposed?`, cioè predizioni accettate, non click — la prima
-constatazione del documento (i click sono impeccabili) resta in piedi. Ma
+E un quarto, trovato dal fit il 2026-08-24: `9` (304.6, 2235.1) **è** un
+dischetto, ma non quello: il pixel cliccato sta a 21.6px da `xm10`, e chiamandolo
+`xm09` il fit lo scarta a 270px.
+
+I primi tre sono `proposed?`, cioè predizioni accettate, non click — la prima
+constatazione del documento (i click sono impeccabili) resta in piedi quanto alla
+MANO; il nome, no. Ma
 **l'affermazione che con quei nove punti la posa chiude a 5.15px non può stare
 in piedi con uno di essi fuori di 143px**: chi riprende quel numero lo rifaccia
 prima di fidarsene. La verità ripulita è la fixture `cage-9014-truth` in
@@ -163,17 +168,60 @@ prima di fidarsene. La verità ripulita è la fixture `cage-9014-truth` in
 
 ### Fetta 2 — abbinamento posa + identità
 
-Sopra i candidati. Due strade, la prima più semplice e probabilmente
-sufficiente:
+**Il meccanismo è stato trovato e verificato sui dati veri il 2026-08-24**, e non
+è quello che il piano prevedeva. Banco: `node out/cage-fit.js` (build
+`:cage-fit`, ns `ridley.photogrammetry.cage-fit-study`), che porta i numeri qui
+sotto e li rifà in un secondo.
 
-- **Con seme**: l'utente clicca 4+ mark di UN anello (cosa che sa fare bene, e
-  chiude a 5px) più il suo zero-indice se lo vede. Da lì si campiona un
-  intorno della posa — la direzione debole è fuori dal piano della corona — e
-  si tiene la posa che spiega più candidati. Poi assegnazione, PnP, guardia.
-- **Senza seme**: RANSAC sulle ellissi. I tre anelli proiettano tre ellissi;
-  cinque punti definiscono una conica. Trovata un'ellisse e i suoi inlier, il
-  raggio noto del cerchio dà la posa (due soluzioni), e la seconda ellisse le
-  disambigua. Più lavoro, ma nessun click.
+**Quello che il piano prevedeva non funziona.** «Con seme: si campiona un intorno
+della posa e si tiene quella che spiega più candidati» presuppone che ci sia un
+intorno. Non c'è. Partendo l'LM da 91 pose sparse su ±150° attorno a nove assi si
+torna sempre allo **stesso unico minimo**; e scuotendo la posa attorno a quel
+minimo — 900 pose per giro, sei giri, con l'rms dell'anello cliccato tenuto sotto
+8px — i quattro mark interni noti passano da 92-157px a **97-162px**. Nessuna posa
+che spieghi l'anello cliccato spiega gli altri due. Cercare nell'intorno non può
+funzionare perché l'intorno non esiste.
+
+**Quello che funziona lo ha reso possibile la fetta 1.** Le 48 riletture della
+corona cliccata spiegano l'anello *in sé* in modo indistinguibile — 5.3-5.4px
+tutte, che è esattamente la seconda constatazione di questo documento — ma
+**pesate sui candidati degli ALTRI DUE anelli non sono affatto equivalenti**:
+
+```
+rot 3  mirror no  faccia-girata no  · rms 5.41px · ai 4 interni noti 23 17 17 17
+rot 9  mirror no  faccia-girata no  · rms 5.41px · ai 4 interni noti 23 17 17 17
+rot 2  mirror sì  faccia-girata sì  · rms 5.41px · ai 4 interni noti 23 17 17 17
+rot 8  mirror sì  faccia-girata sì  · rms 5.41px · ai 4 interni noti 23 17 17 17
+rot 0  (la lettura dell'utente)     · rms 5.32px · ai 4 interni noti 157 127 92 139
+```
+
+Le 48 collassano a 4, che sono **2 pose fisiche** (rot 3 e rot 9 differiscono di
+180°; le altre due sono la stessa coppia letta dalla faccia opposta) — e scegliere
+fra due facce è precisamente il mestiere di `bridge/camera-sees-marks?`.
+
+Cioè: **la simmetria della corona non si rompe cliccando di più, si rompe col
+RESTO della gabbia**. Ed è per questo che il rilevatore doveva venire prima.
+
+Da cui la forma della fetta 2:
+
+1. rileva i candidati (fatto);
+2. l'utente clicca 4+ mark di UN anello più il suo zero-indice — cosa che sa fare
+   bene, e che il documento ha già misurato chiudere a 5px;
+3. si provano tutte e 48 le riletture, ciascuna punteggiata da **quanto della
+   gabbia intera** la sua posa spiega contro i candidati;
+4. restano due facce, e decide la guardia fisica, non il residuo.
+
+**Resta da capire i 17-23px**, e c'è un indiziato con nome e cognome: le
+`:phases`, la rotazione con cui ciascun anello è stato incollato, che i documenti
+della gabbia dicono di MISURARE e non di dare per nominale — ed è un errore che
+fa scivolare i mark LUNGO il proprio anello, che è la forma giusta per quel che
+resta. `cage/phase-from-residuals` esiste già.
+
+**Senza seme** (nessun click) resta la strada lunga: RANSAC sulle ellissi — i tre
+anelli proiettano tre ellissi, cinque punti definiscono una conica, il raggio noto
+dà la posa a meno di due soluzioni e la seconda ellisse disambigua. Da valutare
+dopo, perché il passo 3 qui sopra potrebbe bastare a partire da un seme molto
+piccolo.
 
 ### Fetta 3 — cablaggio
 

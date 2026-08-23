@@ -70,9 +70,17 @@ tentativo dava 10 veri su 89 candidati e nulla sugli anelli interni. Tre cose:
 riferimento chiaro = MASSIMO locale (una media su finestra larga è quasi tutta
 fondo e scende sotto i mark), risoluzione PIENA (i mark interni stanno a 4-6px dal
 bordo della banda e mezzo giro di media a blocchi li salda al fondo), e un test di
-forma sui pixel veri (`enclosed-frac`, 16 raggi). Restano fetta 2 (posa +
-identità) e fetta 3 (il tasto). Entry point
-`dev-docs/HANDOVER-cage-auto-detect.md`; banco `node out/cage-study.js`.
+forma sui pixel veri (`enclosed-frac`, 16 raggi). **E la fetta 2 ha trovato il suo
+meccanismo** (2026-08-24, verificato sui dati veri, non ancora costruito): le 48
+riletture di una corona spiegano l'anello *in sé* in modo indistinguibile — 5.3-5.4px
+tutte — ma pesate sui candidati degli ALTRI due anelli collassano a 2 pose fisiche,
+e fra due facce decide la guardia fisica. La simmetria della corona non si rompe
+cliccando di più: si rompe col resto della gabbia, ed è per questo che il
+rilevatore doveva venire prima. Cade invece il piano precedente («si campiona un
+intorno della posa»): l'intorno non esiste, l'LM da 91 pose torna sempre allo
+stesso minimo. Restano i 17-23px residui (indiziato: le `:phases` incollate) e
+fetta 3 (il tasto). Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
+`node out/cage-study.js` e `node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già

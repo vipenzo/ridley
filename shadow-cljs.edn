@@ -26,6 +26,10 @@
           :cage-study {:target :node-script
                        :output-to "out/cage-study.js"
                        :main ridley.photogrammetry.cage-detect-study/main}
+          ;; …and for fetta 2 (posa + identità), the same idea one stage later.
+          :cage-fit {:target :node-script
+                     :output-to "out/cage-fit.js"
+                     :main ridley.photogrammetry.cage-fit-study/main}
           ;; Test build for turtle core tests
           :test {:target :node-test
                  :output-to "out/test.js"
