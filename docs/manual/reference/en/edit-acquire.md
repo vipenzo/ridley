@@ -74,6 +74,7 @@ If you printed the plate on paper, correct it for what the printer actually did:
 | `d` | **add an anchor** — place and orient a plane, which becomes a named mark |
 | `1` `2` `3` | (cage) put the anchor at the cage centre, in that ring's plane |
 | `n` | write every visible mark's **name** on the photograph |
+| `F` | offer **every** mark, including the faces the current pose thinks are turned away |
 | `k` | place a named point · `m` arm the physical marker |
 | `v` | hide the proxy to read the photograph under it |
 | wheel | zoom the photograph · right-drag pans it |
@@ -91,6 +92,13 @@ zero-index; a cage has six crowns and no `:zero`, and they refuse it saying so.
 `p` is the route: four marks on ONE ring are enough to fix a pose, and the
 editor then blob-snaps the rest across all three rings. Measured on a real
 session: four hand clicks, twenty-five marks found, 11.8px.
+
+**When the editor offers the wrong face, say so with `F`.** Which marks are
+offered is decided by the proxy's pose — and the pose is what the picking is
+trying to establish, so the default is circular: get it wrong and you are offered
+`ym00…` while plainly looking at the `yp` face, with no way to place the marks
+that would correct it. `F` drops the cull and offers all seventy-two. Click the
+discs you can SEE: a disc in front of you is a fact, the pose is still a guess.
 
 **Check the cage against the photograph before trusting anything.** Press `n` and
 step through the views with `[` / `]`. Where the names sit on the printed discs,

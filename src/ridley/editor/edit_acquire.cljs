@@ -1323,13 +1323,25 @@
   (get-in @session [:pnp-batch (:current-idx @session)] []))
 
 (defn- visible-corner-set
-  "Indices of the targets actually visible at the current pose (pnp-targets'
-   :visible?) — the only ones offered for picking, so the user is never asked to
-   point at a box vertex hidden behind the part, or a plate mark turned away from
-   the camera (Vincenzo, 2026-07-23). Recomputed from the live camera↔proxy
-   relation, so it tracks as the pose is refined."
+  "Indices of the targets offered for picking: those facing the camera at the
+   current pose, so the user is never asked to point at a box vertex hidden
+   behind the part or a mark turned away (Vincenzo, 2026-07-23).
+
+   UNLESS `:show-all-marks?` is set, and that escape exists because the default
+   is CIRCULAR. Which face is 'visible' is decided by the proxy's pose — and the
+   pose is exactly what the picking is trying to establish. Get it wrong and the
+   editor offers `ym00…` while the user is plainly looking at the `yp` face, with
+   no way to say so: the marks that would correct the pose are the ones the wrong
+   pose has hidden (Vincenzo, 2026-08-23: 'non ho modo di mettere i punti yp0').
+
+   So the cull is a default, not a prison. With it off, every mark is offered and
+   the user's eyes arbitrate — which is the right authority, since a disc they can
+   see is a fact and the pose is still a guess."
   []
-  (into #{} (keep-indexed (fn [i t] (when (:visible? t) i)) (pnp-targets))))
+  (let [ts (pnp-targets)]
+    (if (:show-all-marks? @session)
+      (into #{} (range (count ts)))
+      (into #{} (keep-indexed (fn [i t] (when (:visible? t) i)) ts)))))
 
 (defn- pnp-preview-items
   "Proxy as a WIREFRAME (not a solid — the real part must show through so the
@@ -1555,6 +1567,18 @@
             :when (and cx cy)]
       (append-overlay-dot! ov rect cx cy "rgba(255,255,255,0.35)" (str (inc i))))
     (draw-mark-names! ov rect)))
+
+(defn- toggle-all-marks! []
+  (swap! session update :show-all-marks? not)
+  (redraw-pnp-preview!)
+  (redraw-overlay-dots!)
+  (update-panel!)
+  (set-status-message!
+   (if (:show-all-marks? @session)
+     (str "ogni mark è ora selezionabile, anche quelli che il modello crede girati "
+          "dall'altra parte — clicca quelli che VEDI: è la posa a essere in dubbio, "
+          "non i tuoi occhi")
+     "di nuovo solo i mark rivolti verso di te")))
 
 (defn- toggle-mark-names! []
   (swap! session update :show-names? not)
@@ -4812,6 +4836,7 @@
         (let [solve (.createElement js/document "button")
               clr (.createElement js/document "button")
               names (.createElement js/document "button")
+              faces (.createElement js/document "button")
               batchb (when (plate-proxy?) (.createElement js/document "button"))
               exit (.createElement js/document "button")]
           (set! (.-type solve) "button")
@@ -4822,8 +4847,14 @@
           (set! (.-textContent clr) "Azzera")
           (.addEventListener clr "click" (fn [_] (clear-pnp-picks!)))
           (set! (.-type names) "button")
-          (set! (.-textContent names) (if (:show-names? @session) "Nomi: sì (n)" "Nomi (n)"))
+          (set! (.-textContent names) (if (:show-names? @session) "Names: on (n)" "Names (n)"))
           (.addEventListener names "click" (fn [_] (toggle-mark-names!)))
+          (set! (.-type faces) "button")
+          (set! (.-textContent faces) (if (:show-all-marks? @session)
+                                        "Both faces (F)" "Facing marks (F)"))
+          (set! (.-title faces)
+                "Offer every mark, including the ones the current pose believes are turned away")
+          (.addEventListener faces "click" (fn [_] (toggle-all-marks!)))
           ;; a plate can register identity-free (fetta B) — offer the toggle
           (when batchb
             (set! (.-type batchb) "button")
@@ -4835,6 +4866,7 @@
           (.appendChild actions solve)
           (.appendChild actions clr)
           (.appendChild actions names)
+          (.appendChild actions faces)
           (when batchb (.appendChild actions batchb))
           (.appendChild actions exit))
         (.appendChild box actions)))))
@@ -5380,6 +5412,9 @@
         ;; Armed flow only (batch has no armed target).
           (and pnp? (not (batch-mode?)) (= key "o"))
           (do (.preventDefault e) (.stopPropagation e) (skip-armed-corner!))
+
+          (and pnp? (= key "F"))
+          (do (.preventDefault e) (.stopPropagation e) (toggle-all-marks!))
 
           (and (#{:pnp :retrace :gizmo} (:mode @session)) (= key "n"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-mark-names!))
