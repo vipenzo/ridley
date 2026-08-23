@@ -245,12 +245,20 @@
 
 (defn- targets-of [c pose] (bridge/pnp-target-points c pose))
 
-(deftest zero-indices-are-not-pickable
-  (let [c (cage/registration-cage :d 176)
-        ts (targets-of c (:creation-pose c))]
-    (is (= 72 (count ts)) "72 crown marks offered, the six zero-indices withheld")
-    (is (not-any? #(bridge/index-anchor? (:id %)) ts))
-    (is (every? :normal ts) "each target carries its printed face's normal")))
+(deftest zero-indices-ARE-pickable-on-a-cage
+  (testing "e sono il bersaglio più prezioso: una corona di dodici mark uguali è
+            invariante per rotazione e dall'altra faccia si legge specchiata, per
+            cui i suoi stessi punti non possono dire quale mark è quale — misurato
+            su una foto vera, tutte e 48 le riletture di una corona danno lo stesso
+            32.5px. Lo zero-indice rompe le due simmetrie insieme."
+    (let [c (cage/registration-cage :d 176)
+          ts (targets-of c (:creation-pose c))
+          idx (filter #(bridge/index-anchor? (:id %)) ts)]
+      (is (= 78 (count ts)) "72 mark di corona PIÙ i sei zero-indici")
+      (is (= 6 (count idx)) "uno per faccia marcata")
+      (is (every? :index? idx) "…e si dichiarano come tali")
+      (is (not-any? :index? (remove #(bridge/index-anchor? (:id %)) ts)))
+      (is (every? :normal ts) "each target carries its printed face's normal"))))
 
 (deftest culling-halves-the-dots-and-never-empties-them
   (testing "from any vantage about half the marks face you — and never zero, which is
@@ -263,13 +271,14 @@
                    (* 400 (Math/sin (* el (/ Math/PI 180))))]
               ts (targets-of c {:position eye :heading [0 0 1] :up [0 1 0]})
               vis (count (filter :visible? ts))]
-          (println (str "  az " az "° el " el "° → " vis "/72 mark davanti"))
+          (println (str "  az " az "° el " el "° → " vis "/" (count ts) " mark davanti"))
           (is (pos? vis) "una gabbia non gira MAI tutti i mark dall'altra parte")
           (is (< vis (count ts)) "…né li mostra tutti"))))))
 
 (defn- ring-of
-  "Which ring a target belongs to, from its id — :zp07 → \"z\"."
-  [t] (subs (name (:id t)) 0 1))
+  "Which ring a target belongs to — :zp07 → \"z\", and :zero-xp → \"x\", which
+   reading the first letter would call \"z\"."
+  [t] (name (cage/anchor-axis (:id t))))
 
 (defn- solve-from
   "Everything one synthetic viewpoint yields: the marks it really sees (front-

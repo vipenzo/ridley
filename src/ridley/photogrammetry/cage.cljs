@@ -359,6 +359,15 @@
   [axis s]
   (keyword (str "zero-" (name axis) (face-tag s))))
 
+(defn index-parts
+  "A zero-index id like :zero-ym → {:axis :y :sign -1}; nil for anything else,
+   crown marks included. The mirror of `index-id`."
+  [id]
+  (let [s (name id)]
+    (when (and (= 7 (count s)) (= "zero-" (subs s 0 5)))
+      {:axis (keyword (subs s 5 6))
+       :sign (if (= "p" (subs s 6 7)) 1 -1)})))
+
 (defn mark-parts
   "A crown id like :yp07 → {:axis :y :sign 1 :index 7}; nil for a zero-index or
    anything that is not a crown mark."
@@ -388,13 +397,22 @@
     {:flip-face? flip-face? :mirror? mirror? :rot rot}))
 
 (defn relabel
-  "`id` re-read under one of `crown-misreadings`' entries; nil if `id` is not a
-   crown mark. `n` is marks per crown."
+  "`id` re-read under one of `crown-misreadings`' entries; nil if `id` is neither
+   a crown mark nor a zero-index. `n` is marks per crown.
+
+   A ZERO-INDEX travels differently from a crown mark, and correctly so: there
+   is exactly one per face, so a rotation or a mirror leaves it where it is and
+   only a change of face moves it — to the index of the other face. Without this
+   an index pick made every candidate in the per-ring search collapse (the
+   search drops a reading it cannot map for EVERY pick), so clicking the one
+   disc that identifies a crown would have disabled the machinery that uses it."
   [id {:keys [rot mirror? flip-face?]} n]
-  (when-let [{:keys [axis sign index]} (mark-parts id)]
+  (if-let [{:keys [axis sign index]} (mark-parts id)]
     (mark-id axis
              (if flip-face? (- sign) sign)
-             (mod (+ rot (if mirror? (- index) index)) n))))
+             (mod (+ rot (if mirror? (- index) index)) n))
+    (when-let [{:keys [axis sign]} (index-parts id)]
+      (index-id axis (if flip-face? (- sign) sign)))))
 
 (defn crown-phase
   "The angle (rad) every crown is turned by, and it is not decoration.

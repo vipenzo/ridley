@@ -147,11 +147,14 @@
    on a plate, `:zero-zp` … on a cage's six marked faces.
 
    Index marks ride in :anchors so they transport rigidly with the geometry for
-   free (see plate-detect), but they are not marks to PICK — offering them would
-   invite a correspondence against a disc whose whole job is to be the tiebreak
-   that identifies the others. The name is the carrier because :anchors is a flat
+   free (see plate-detect). The name is the carrier because :anchors is a flat
    map with no room for a second kind of key, and a prefix survives the rigid
-   transports and the calibration rewrites that replace the values."
+   transports and the calibration rewrites that replace the values.
+
+   Whether one may be PICKED depends on the proxy. On a plate, no: the index is
+   what plate-detect orients the whole plate by and what the auto-detector
+   assigns identities from, so it is machinery, not a target. On a cage, yes,
+   and it is the most valuable target there is — see pnp-target-points."
   [id]
   (= 0 (.indexOf (name id) "zero")))
 
@@ -187,11 +190,29 @@
         ;; the picture. Occlusion of a mark BY THE PART stays the user's 'o' key.
         cull? (boolean (:anchor-culling? proxy-mesh))
         cam-pos (:position camera-pose)]
-    (if-let [marks (seq (sort-by key (remove (comp index-anchor? key)
-                                             (:anchors proxy-mesh))))]
+    (if-let [marks (seq (sort-by key (cond->> (:anchors proxy-mesh)
+                                       ;; …on a CAGE. A plate's index is a
+                                       ;; different animal — plate-detect reads
+                                       ;; it to orient the whole plate, and the
+                                       ;; auto-detector assigns identities from
+                                       ;; it — so there it stays out of the
+                                       ;; picking gesture, as before. The proxy
+                                       ;; declares which it is, same as culling.
+                                       (not cull?) (remove (comp index-anchor? key)))))]
       (mapv (fn [[id pose]]
               (let [world (:position pose)]
                 {:id id
+                 ;; the ZERO-INDEX is offered too, and it is the most valuable
+                 ;; disc on the proxy. A crown of n equal marks is invariant
+                 ;; under rotation and looks the same mirrored from its other
+                 ;; face, so ITS OWN picks can never say which mark is which:
+                 ;; measured on a real photograph, all 48 readings of one crown
+                 ;; fit to the same 32.5px. The index is the single disc that
+                 ;; breaks both symmetries at once, so one click on it pins the
+                 ;; ring's numbering AND its face. Withholding it — the rule
+                 ;; until 2026-08-23 — kept the one printed feature that answers
+                 ;; the question out of the only gesture that could ask it.
+                 :index? (index-anchor? id)
                  :obj (world->local proxy-pose world)
                  :world world
                  ;; the mark's own printed-face normal in the OBJECT frame, so a

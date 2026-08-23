@@ -95,7 +95,8 @@ through the material — and which face is being looked at is never ambiguous,
 because the camera must be on the side of the face it can see. Mark ids say so:
 `:zp07` is mark 7 on the +Z face of the ring whose normal is Z, `:xm00` is mark 0
 on the −X face of the X ring. Each marked face also carries its own zero-index,
-`:zero-zp` and friends, which are not offered as pick targets.
+`:zero-zp` and friends — offered as pick targets like any other disc, and the
+most useful ones on the cage. See *One click on the index pins the ring*.
 
 ## The one degenerate family, and it is known
 
@@ -263,6 +264,28 @@ between them and be symmetric again, which is why the constant is a third.
 > **A cage printed before 2026-08-22** has its index on the axis. Model it with
 > `(registration-cage :d 176 :index-phase 0)`, or the solver looks for marks where
 > they are not.
+
+## One click on the index pins the ring
+
+The index is a pick target, and clicking it is worth more than clicking three
+crown marks.
+
+A crown of twelve equal marks is invariant under rotation, and from its other
+face it reads mirrored. So its own picks can never say which mark is which:
+measured on a real photograph, **all 48 readings of one crown fit to the same
+32.5px**. There is nothing to choose between them, and the offered numbers are
+guesses from wherever the proxy happens to sit.
+
+Add one click on that ring's index and the 48 collapse to **2** — the truth and
+its face twin, both at the same residual. The remaining pair differ only by the
+3mm of plastic between the two faces, which no residual can see and the physical
+guard settles: those discs were photographed, so the camera was in front of them.
+
+Practically: on a fresh photo, click the double dot of whichever ring shows it
+clearly, then three or four crown marks of the same ring. The index is drawn in
+white and labelled `⊙xm`, `⊙yp` and so on. When no ring shows its index — it is
+often hidden on at least one — fall back to marks on two rings and let the
+per-ring search work, which is weaker but usually enough.
 
 ## Reading the marks: let the editor name them
 

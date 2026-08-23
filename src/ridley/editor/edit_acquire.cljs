@@ -1248,6 +1248,16 @@
 
 (defn- target-color [i] (nth target-colors (mod i (count target-colors))))
 
+(def ^:private index-target-color
+  "One colour for all six zero-indices, and deliberately not from the rotating
+   palette: the index is not one target among many. It is the only disc on a
+   cage that says WHICH mark is which — a crown of twelve equal marks fits
+   equally well under all 48 readings of itself (measured on a real photograph:
+   every one of them at 32.5px), and a single click on the index cuts that to
+   two, the remaining pair differing only by the 3mm of plastic between the two
+   faces, which the physical guard settles. Worth its own colour."
+  0xffffff)
+
 (defn- pnp-targets
   "The indexed PnP targets for the current photo: bridge/pnp-target-points (the
    8 box corners, OR a proxy plate's named marks when it carries :anchors)
@@ -1257,8 +1267,12 @@
   []
   (vec (map-indexed
         (fn [i t]
-          (assoc t :color (target-color i)
-                 :label (if (keyword? (:id t)) (name (:id t)) (str (inc i)))))
+          (assoc t :color (if (:index? t) index-target-color (target-color i))
+                 ;; the index reads as the thing it is on the print — the double
+                 ;; dot of one face — not as an id with a prefix
+                 :label (cond (:index? t) (str "⊙" (subs (name (:id t)) 5))
+                              (keyword? (:id t)) (name (:id t))
+                              :else (str (inc i)))))
         (bridge/pnp-target-points (:proxy-mesh @session) (current-camera-pose)))))
 
 (defn- pnp-count [] (count (pnp-targets)))
@@ -2197,12 +2211,16 @@
                         ;; the normal way to start a photograph — it bails, and
                         ;; the session refused instead of trying the one thing
                         ;; that was wrong (Vincenzo, 2026-08-23).
+                        ;; through cage/relabel, which knows that a ZERO-INDEX
+                        ;; changes face like everything else on its ring but does
+                        ;; not move round the crown — there is one per face
                         flip-face (fn [ci]
-                                    (let [{:keys [axis sign index]} (cage/mark-parts
-                                                                     (:id (nth targets ci)))]
-                                      (when axis
-                                        (get (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
-                                             (cage/mark-id axis (- sign) index)))))
+                                    (when-let [flipped (cage/relabel
+                                                        (:id (nth targets ci))
+                                                        {:rot 0 :mirror? false :flip-face? true}
+                                                        (cage-crown-count))]
+                                      (get (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
+                                           flipped)))
                         flipped (when (every? some? (map (comp flip-face :ci) correspondences))
                                   (mapv (fn [c] (let [j (flip-face (:ci c))]
                                                   (assoc c :ci j :world (:obj (nth targets j)))))
