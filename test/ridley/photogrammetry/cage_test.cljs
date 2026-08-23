@@ -734,3 +734,66 @@
       (is (not= (get-in a [:anchors :zero-yp :position])
                 (get-in b [:anchors :zero-yp :position]))
           "…e l'indice sì"))))
+
+;; --- una corona sola, letta dalla faccia sbagliata ---------------------------
+;;
+;; Il caso di Vincenzo del 2026-08-23: sulla prima foto mette i punti di UN
+;; anello, e la sessione gli offre i nomi della faccia che NON sta guardando.
+;; La domanda che ne è nata — «non nasconde un errore geometrico? l'algoritmo
+;; dovrebbe avere tutti gli elementi per capire che facce sono quelle rivolte
+;; verso di me» — ha una risposta precisa, ed è questo test: il RESIDUO non ha
+;; quegli elementi (i 3mm di plastica se li mangia la camera spostandosi di
+;; 3mm), la GUARDIA FISICA sì. Quindi la faccia non si sceglie col residuo, si
+;; sceglie con la guardia — e provarla costa un solve.
+
+(deftest a-crown-read-from-the-wrong-face-is-caught-by-the-camera-not-the-residual
+  (testing "una corona intera cliccata giusta ma etichettata sulla faccia opposta
+            dà lo STESSO residuo (la faccia non si vede nei pixel) e una posa che
+            mette la camera dietro i dischetti fotografati (la faccia si vede nel
+            mondo). È il caso di una foto appena cominciata: un anello solo, che
+            è troppo poco perché la rilettura per-anello si fidi di qualcosa."
+    (println "\n=== gabbia: una corona sola, faccia sbagliata ===")
+    (let [c (cage/registration-cage :d 176)
+          ts (targets-of c (:creation-pose c))
+          idx (into {} (map-indexed (fn [i t] [(:id t) i]) ts))
+          k (k*)
+          truth (synth/viewpoint 40 30 420.0)
+          eye (cam/camera-center truth)
+          ;; la corona X che la camera ha DAVVERO davanti
+          sign (let [t (nth ts (idx (cage/mark-id :x 1 0)))]
+                 (if (pos? (dot (:normal t) (v- eye (:obj t)))) 1 -1))
+          shown (mapv #(cage/mark-id :x sign %) [0 2 4 6 8 10])
+          hidden (mapv #(cage/mark-id :x (- sign) %) [0 2 4 6 8 10])
+          obj-of (fn [id] (:obj (nth ts (idx id))))
+          ;; i click cadono sui dischetti VERI; cambiano solo i nomi sotto cui
+          ;; vengono registrati
+          fit (fn [ids] (pnp/solve-pnp (mapv (fn [s id] {:world (obj-of id)
+                                                         :px (cam/project k truth (obj-of s))})
+                                             shown ids)
+                                       k {}))
+          guard (fn [ids sol] (bridge/camera-sees-marks? ts (mapv idx ids) (:pose sol)))
+          right (fit shown)
+          wrong (fit hidden)
+          flip (fn [id] (let [{:keys [axis sign index]} (cage/mark-parts id)]
+                          (cage/mark-id axis (- sign) index)))]
+      (println (str "  faccia giusta " (name (first shown))
+                    "…: rms " (.toFixed (:rms-px right) 2) "px"))
+      (println (str "  faccia sbagliata " (name (first hidden))
+                    "…: rms " (.toFixed (:rms-px wrong) 2) "px"))
+      (is (< (:rms-px right) 0.5) "la faccia giusta chiude a zero")
+      (is (< (:rms-px wrong) 0.5)
+          "e ANCHE quella sbagliata: il residuo non porta informazione di faccia")
+      ;; …perché la camera se n'è andata indietro di uno spessore d'anello
+      (let [d (norm (v- (cam/camera-center (:pose right))
+                        (cam/camera-center (:pose wrong))))]
+        (println (str "  la camera si sposta di " (.toFixed d 2) "mm"
+                      " (spessore anello " (:cage-h c) "mm) per pareggiare i conti"))
+        (is (> d 1.0) "lo scarto di faccia si scarica sulla posizione della camera"))
+      (is (guard shown right) "la faccia giusta passa la guardia fisica")
+      (is (not (guard hidden wrong))
+          "quella sbagliata no: quei dischetti erano fotografati, la camera non
+           può stargli dietro — ed è l'unico elemento che distingue le due facce")
+      ;; e la correzione è a costo zero: gli stessi click, i nomi ribaltati
+      (is (= shown (mapv flip hidden)) "ribaltare la faccia riporta i nomi veri")
+      (is (guard shown (fit (mapv flip hidden)))
+          "il ribaltamento rimette la camera davanti ai dischetti"))))

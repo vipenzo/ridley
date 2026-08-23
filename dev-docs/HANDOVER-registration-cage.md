@@ -224,6 +224,49 @@ verso di rotazione — che era invece uno dei due colpevoli. Il segnale c'era ed
 leggibile: un pick a y=6118 in un'immagine alta 6048. **Prima di escludere una
 causa, controllare che l'immagine sia quella che si crede.**
 
+## La faccia si sceglie con la GUARDIA, non col residuo (2026-08-23)
+
+Vincenzo mette i punti dell'anello X sulla prima foto della gabbia nuova, chiede
+il fit, e vuole aggiustare gli altri anelli — ma le facce non corrispondono:
+«quello che vedo io del ring Y è la faccia p (lo dico perché vedo i mark andare
+CCW), mentre lui mi presenta ym0, ym1…, non ho modo di mettere i punti yp0,
+yp1». La sua domanda, che è quella giusta: **non nasconde un errore geometrico?
+L'algoritmo dovrebbe avere tutti gli elementi per capire che facce sono quelle
+rivolte verso di me.**
+
+Ha ragione a metà, ed è la metà che conta. Misurato su dati sintetici, sei
+dischetti di una corona fotografati da davanti:
+
+| etichette | rms | guardia fisica |
+|---|---|---|
+| faccia giusta (`xp`) | 0.00px | passa |
+| faccia sbagliata (`xm`) | 0.00px | **fallisce** |
+
+**Il residuo non ha quegli elementi**: i 3mm di plastica fra le due facce se li
+mangia la camera spostandosi di 3mm, e i pixel tornano identici. Non è un
+difetto del solutore, è una degenerazione vera — nessun raffinamento la toglie.
+
+**La guardia fisica ce li ha**: quei dischetti erano *fotografati*, quindi la
+camera stava davanti a ciascuno. Una posa che la mette dietro non è improbabile,
+è impossibile. `bridge/camera-sees-marks?` lo sa da sempre.
+
+Quello che mancava è che quando la guardia sparava, il codice **non provava il
+ribaltamento di faccia**: `cage-relabel-rescue` esce subito con meno di due
+anelli, perché per fidarsi di un anello ne vuole un altro con cui confrontarlo —
+e una corona sola è il modo NORMALE di cominciare una foto. Risultato: la
+sessione rifiutava invece di provare l'unica cosa che era sbagliata.
+
+Ora il ribaltamento di faccia è la **prima** ipotesi del ramo gabbia di
+`solve-and-apply!`, prima della ripresa dal seed e prima del soccorso caro: gli
+stessi click, i nomi ribaltati (`mark-parts` → `mark-id` col segno opposto), un
+solve, e si adotta solo se la guardia passa. Costa un solve; il soccorso per-anello
+ne costa 4n. Verificato dal vivo sulla copia della sessione: sei dischetti `xp`
+registrati come `xm` si rinominano da soli, rms 9.91px, e l'aggancio automatico
+attacca altri quattro mark. Test: `a-crown-read-from-the-wrong-face-is-caught-by-the-camera-not-the-residual`.
+
+Resta vero, e va detto all'utente: **la faccia non si legge nella foto.** Il
+messaggio spiega che i due nomi sono lo stesso dischetto attraverso la plastica.
+
 ## Il caso "una corona intera più due punti" (2026-08-20)
 
 Le prime quattro foto della sessione a 48mm sono andate a 11.8 / 11.7 / 11.9 /

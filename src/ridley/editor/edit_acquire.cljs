@@ -2152,9 +2152,36 @@
                   ;; solver again, mirror twin again. A few degrees off the axis
                   ;; brings the others back.
                   (and per-mark-faces? first-try (not (sees-marks? first-try)))
-                  (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
-                        retry (pnp/solve-pnp correspondences k
-                                             {:method :seeded :seed seed})
+                  (let [;; FIRST the cheapest hypothesis, and the one that was
+                        ;; missing: the picks are on the OTHER FACE of their rings.
+                        ;; Both faces carry the same discs through the plastic, so
+                        ;; the clicks stay valid and only the names change — and
+                        ;; the residual cannot arbitrate (measured: 0.00px either
+                        ;; way, the 3mm absorbed by moving the camera 3mm) while
+                        ;; the physical guard can, which is what just fired.
+                        ;; `cage-relabel-rescue` covers this too but needs picks on
+                        ;; two rings to trust one of them; with a single crown —
+                        ;; the normal way to start a photograph — it bails, and
+                        ;; the session refused instead of trying the one thing
+                        ;; that was wrong (Vincenzo, 2026-08-23).
+                        flip-face (fn [ci]
+                                    (let [{:keys [axis sign index]} (cage/mark-parts
+                                                                     (:id (nth targets ci)))]
+                                      (when axis
+                                        (get (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
+                                             (cage/mark-id axis (- sign) index)))))
+                        flipped (when (every? some? (map (comp flip-face :ci) correspondences))
+                                  (mapv (fn [c] (let [j (flip-face (:ci c))]
+                                                  (assoc c :ci j :world (:obj (nth targets j)))))
+                                        correspondences))
+                        flip-sol (when flipped (pnp/solve-pnp flipped k {}))
+                        flip-ok? (and flip-sol
+                                      (bridge/camera-sees-marks?
+                                       targets (mapv :ci flipped) (:pose flip-sol)))
+                        seed (bridge/editor->solver-pose camera-pose proxy-pose)
+                        retry (when-not flip-ok?
+                                (pnp/solve-pnp correspondences k
+                                               {:method :seeded :seed seed}))
                         ;; Before blaming the geometry, suspect the NAMES. On a
                         ;; cage the offered labels come from where the proxy sits,
                         ;; not from the photograph, and the two faces of a ring
@@ -2162,10 +2189,18 @@
                         ;; produces clicks that are all correct and labels that
                         ;; are not. Ring by ring, because they are not all wrong
                         ;; the same way.
-                        rescue (when-not (sees-marks? retry)
+                        rescue (when-not (or flip-ok? (sees-marks? retry))
                                  (cage-relabel-rescue correspondences targets k
                                                       (:rms-px first-try)
                                                       (keep :pose [first-try retry])))]
+                    (if flip-ok?
+                      (do (relabel-picks! idx #(or (flip-face %) %))
+                          (assoc flip-sol :note
+                                 (str "erano sull'ALTRA FACCIA dei loro anelli: stessi dischetti "
+                                      "(le due facce sono gli stessi attraverso la plastica), "
+                                      "nomi corretti. Il residuo non poteva accorgersene — è "
+                                      "identico nei due casi — ma la camera finiva dietro i "
+                                      "dischetti che avevi fotografato")))
                     (if (and rescue (not (sees-marks? retry)))
                       (do (relabel-picks! idx (:flip rescue))
                           (assoc (:sol rescue) :note
@@ -2196,7 +2231,7 @@
                                 "anello diverso da quello che dice l'etichetta. Intanto lascio "
                                 "la posa che hai adesso."))
                           (swap! session assoc :last-solve ::refused)
-                          ::refused))))
+                          ::refused)))))
 
                   :else first-try))]
       ;; A refusal must not reach the apply body: (:pose ::refused) is nil, and
