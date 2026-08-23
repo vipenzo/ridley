@@ -6935,7 +6935,22 @@
   [dir]
   (-> (js/Promise.all
        #js [(-> (stl/desktop-read-file (str dir "/NOTE.md")) (.catch (fn [_] nil)))
-            (-> (stl/desktop-list-dir dir) (.catch (fn [_] #js [])))])
+            (-> (stl/desktop-list-dir dir)
+                ;; NOT swallowed. A rejection here means the file service did not
+                ;; answer — and an unanswered question is not the answer "the
+                ;; folder is empty", which is what swallowing it said: the session
+                ;; then opened EMPTY on a folder full of photos and invited the
+                ;; user to grab a frame (2026-08-23, and it read as "the app lost
+                ;; my photos" in both the desktop and the browser). An empty folder
+                ;; resolves to [] and still lands in the live-grab branch below;
+                ;; only silence gets reported.
+                (.catch (fn [err]
+                          (if (str/includes? (str (.-message err))
+                                             stl/service-unreachable)
+                            (throw err)
+                            ;; the service answered, it just could not list this
+                            ;; folder — same as an empty one, as before
+                            #js []))))])
       (.then (fn [^js results]
                (let [note-txt (aget results 0)
                      files (->> (array-seq (aget results 1))
@@ -6984,6 +6999,9 @@
                       " — la costruisco dalla cartella"))
                 (-> (build-session-json-from-note dir)
                     (.catch (fn [err]
+                              ;; an unreachable file service is not an empty folder
+                              (when (str/includes? (str (.-message err)) stl/service-unreachable)
+                                (throw err))
                               (state/capture-println
                                (str "edit-acquire: nessun NOTE.md leggibile in " dir
                                     " (" err ") — apro una sessione VUOTA: riempila"
@@ -7126,6 +7144,17 @@
                 ;; cost a long hunt to see an error that had been raised all along)
                 (js/console.error "edit-acquire: couldn't load session —" err)
                 (state/capture-println (str "edit-acquire: couldn't load session — " err))
+                ;; capture-println writes into a buffer nobody flushes any more at
+                ;; this point (see the note above); the REPL panel is the one
+                ;; surface that still reaches the user after evaluation returned
+                (auto-log!
+                 (if (str/includes? (str (.-message err)) stl/service-unreachable)
+                   (str "edit-acquire: the file service is not answering, so the photos in "
+                        session-dir " cannot be read. That service is Ridley Desktop's own "
+                        "local server (127.0.0.1:12321), and it serves a browser tab too. "
+                        "It does not start when another Ridley already holds the port: quit "
+                        "every Ridley window and open ONE.")
+                   (str "edit-acquire: couldn't load session — " err)))
                 (modal/release!)))))
 
 (defn ^:export enter!

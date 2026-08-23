@@ -274,6 +274,13 @@
   (let [buffer (meshes->stl-binary meshes)]
     (js/Blob. #js [buffer] #js {:type "application/octet-stream"})))
 
+(def service-unreachable
+  "Tag carried by the error a desktop file call rejects with when NOBODY answered
+   — the local geo-server is not running. Untagged it arrives as an empty answer,
+   and an empty answer is indistinguishable from an empty folder: on 2026-08-23 a
+   folder of photos opened as an empty session because of exactly that."
+  "FILE-SERVICE-DOWN")
+
 (def ^:private geo-server-url "http://127.0.0.1:12321")
 
 (defn desktop-pick-save-path
@@ -429,8 +436,15 @@
                (if (= 200 (.-status xhr))
                  (resolve (js/JSON.parse (.-responseText xhr)))
                  (reject (js/Error. (.-responseText xhr))))))
+       ;; TRANSPORT failure — nobody answered at all — which is a different fact
+       ;; from "the server answered with an error", and the caller must be able to
+       ;; tell them apart: one means the service is not there, the other means the
+       ;; request was bad. Tagged, because it crosses a promise boundary as a
+       ;; plain Error.
        (set! (.-onerror xhr)
-             (fn [_] (reject (js/Error. "read-dir request failed"))))
+             (fn [_] (reject (js/Error. (str service-unreachable
+                                             ": read-dir got no answer from "
+                                             geo-server-url)))))
        (.send xhr (js/JSON.stringify #js {:path dir}))))))
 
 (defn- pick-and-write

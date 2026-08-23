@@ -457,6 +457,26 @@ viste, i ricalchi no.
 - `box` prende **(destra, su, avanti)**, non (x, y, z): le linguette uscivano
   ruotate di 90°, e a dirlo è stato misurare l'ingombro del pezzo prodotto, non
   rileggere il codice.
+- **Due finestre Ridley = niente file, in silenzio (2026-08-23).** Il servizio
+  che legge le cartelle è il geo-server Rust dentro il processo Tauri, uno solo,
+  su `127.0.0.1:12321` — e serve ANCHE la scheda del browser: `localhost:9000`
+  funziona soltanto perché da qualche parte c'è un Ridley desktop aperto. Se ne
+  apri un secondo mentre il primo tiene la porta, il `bind` falliva su un thread
+  staccato con `.expect(...)`: il thread moriva da solo, la finestra si apriva
+  normale, e per tutto il resto della sessione ogni operazione sui file tornava
+  vuota. `edit-acquire` annunciava «Empty session: open the camera and grab a
+  frame» su una cartella piena di foto, identico a «l'app ha perso le mie foto».
+  Diagnosi in un comando: `lsof -nP -iTCP:12321 -sTCP:LISTEN` — niente in ascolto
+  con un `ridley-desktop` vivo è esattamente questo. Ora lo dicono entrambe le
+  metà: il Rust stampa invece di morire, e `stl/service-unreachable` marca il
+  guasto di TRASPORTO (nessuna risposta) distinguendolo da un errore HTTP (una
+  richiesta sbagliata), così la sessione lo scrive nel pannello REPL invece di
+  inventarsi una cartella vuota. La causa CLJS era un `(.catch (fn [_] #js []))`
+  sulla lettura della cartella: silenzio trasformato in «vuota».
+- **`shadow-cljs release app` calpesta il watcher**: scrive lo stesso
+  `public/js/main.js` che serve `localhost:9000`. Dopo aver costruito il DMG,
+  rimettere il bundle di sviluppo con `(shadow.cljs.devtools.api/compile :app)`
+  passando dall'nREPL già connesso, e controllare la dimensione del file.
 - **Le mesh ruotano attorno al proprio centroide**: ruotare l'anello e i suoi
   dischetti separatamente li disallinea. Per questo `printable-ring` cambia
   frame con `unplace` invece di ruotare le mesh.

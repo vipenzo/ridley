@@ -299,8 +299,23 @@ fn handle_write_file(request: &mut tiny_http::Request) -> Result<String, String>
 
 pub fn start() {
     thread::spawn(|| {
-        let server =
-            Server::http(format!("127.0.0.1:{}", PORT)).expect("Failed to start geo server");
+        // NOT expect(). This thread is detached: a panic here killed it alone,
+        // the window opened as usual, and every file operation returned nothing
+        // for the rest of the run — a folder of photos read as an empty session
+        // (2026-08-23). Binding fails for one reason in practice, and it is one
+        // the user can act on: another Ridley already holds the port.
+        let server = match Server::http(format!("127.0.0.1:{}", PORT)) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("geo-server: cannot listen on 127.0.0.1:{}: {}", PORT, e);
+                eprintln!(
+                    "geo-server: another Ridley is probably already open. THIS window \
+                     will not be able to read or write files — quit the other one and \
+                     reopen it."
+                );
+                return;
+            }
+        };
         eprintln!("geo-server: listening on http://127.0.0.1:{}", PORT);
 
         let cors = Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap();
