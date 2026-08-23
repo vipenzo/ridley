@@ -1947,8 +1947,20 @@
 
 (defn- best-misreading
   "For ONE ring's picks, the entry of `cage/crown-misreadings` that puts them
-   closest to where `pose` says their discs are. Returns {:t :err :pairs} with
-   `pairs` as [correspondence new-ci], or nil when no candidate maps cleanly."
+   closest to where `pose` says their discs are — among the readings that are
+   PHYSICALLY POSSIBLE from that pose. Returns {:t :err :pairs :possible?} with
+   `pairs` as [correspondence new-ci], or nil when no candidate maps cleanly.
+
+   Possible-first, and it is the whole point. Reprojection error cannot see a
+   change of face: the two faces are the same discs 3mm apart through the
+   plastic, so swapping them moves a point by 3mm — about 19px at arm's length —
+   and ALWAYS uphill from a reading that already sits on the pixels. Ranking by
+   error alone therefore hands back the reading whose discs face away from the
+   camera, every time, and the guard downstream can then only refuse the whole
+   solve. Which is what a user saw: a ring offered on the wrong face, no way to
+   put the right names in, and a refusal at the end (Vincenzo, 2026-08-23).
+   So the guard chooses the candidate SET and the error picks within it. If no
+   reading is possible the ranking degrades to error alone, exactly as before."
   [group pose k targets id->ci n]
   (let [id-of (fn [ci] (:id (nth targets ci)))
         obj-of (fn [ci] (:obj (nth targets ci)))]
@@ -1961,6 +1973,8 @@
                    (when (every? some? pairs)
                      {:t t
                       :pairs pairs
+                      :possible? (boolean (bridge/camera-sees-marks?
+                                           targets (mapv second pairs) pose))
                       :err (/ (reduce + (map (fn [[c nci]]
                                                (if-let [q (pcamera/project k pose (obj-of nci))]
                                                  (Math/hypot (- (nth q 0) (nth (:px c) 0))
@@ -1968,7 +1982,13 @@
                                                  1e9))
                                              pairs))
                               (count pairs))}))))
-         (reduce (fn [a b] (if (or (nil? a) (< (:err b) (:err a))) b a)) nil))))
+         (reduce (fn [a b]
+                   (cond (nil? a) b
+                         ;; possible beats impossible, whatever the pixels say
+                         (not= (:possible? a) (:possible? b)) (if (:possible? b) b a)
+                         (< (:err b) (:err a)) b
+                         :else a))
+                 nil))))
 
 (defn- cage-relabel-rescue
   "Recover a solve whose picks are RIGHT and whose labels are misread, one ring
@@ -1991,9 +2011,19 @@
    and refit. Same clicks, better names (1007px → 18px on that photograph).
 
    Returns {:sol :flip :changed} — `flip` a ci→ci permutation for
-   `relabel-picks!` — or nil when nothing better was found. Deliberately
-   conservative: the result must both satisfy the physical guard and beat the
-   original rms substantially, or the user keeps what they had."
+   `relabel-picks!` — or nil when nothing better was found.
+
+   WHAT ADOPTS IT: the physical guard, and only the guard. The rms is a
+   non-regression check, not evidence. It used to be the evidence — the new
+   names had to beat HALF the old rms — and that quietly excluded the most
+   ordinary misreading of all. A ring assembled the other way round maps its
+   crown ONTO ITSELF: the discs are in the same places, only the identities and
+   the printed faces permute. So the fit was already perfect and could not
+   improve on itself. Measured on that exact case: first fit 0.000px, guard
+   failed, threshold demanded '< 0.000px', and the correct relabelling —
+   which the search HAD found — was thrown away, leaving the user with a
+   refusal and no way forward (Vincenzo, 2026-08-23). Asking a failure for
+   evidence it cannot produce is not conservatism."
   [correspondences targets k baseline-rms extra-poses]
   (let [n (cage-crown-count)
         id->ci (into {} (map-indexed (fn [i t] [(:id t) i])) targets)
@@ -2042,7 +2072,10 @@
                          nil candidates)]
         (when (and best
                    (pos? (:changed best))
-                   (< (:rms-px (:sol best)) (* 0.5 baseline-rms)))
+                   ;; no worse than what the user had, or good in absolute
+                   ;; terms — the guard above already established that this is
+                   ;; the physically possible reading and the old one was not
+                   (<= (:rms-px (:sol best)) (max baseline-rms pnp/accept-rms-px)))
           {:sol (:sol best)
            :changed (:changed best)
            :flip (fn [ci]
