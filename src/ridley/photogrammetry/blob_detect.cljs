@@ -49,6 +49,8 @@
    :max-aspect 2.8       ; bbox long/short ratio — a disc images to a near-round ellipse
    :min-fill 0.5         ; area / bbox-area — a filled disc fills its box; a stroke/edge does not
    :max-blobs 40         ; keep the best this-many by area·fill (bounds fit-crown's search)
+   :surround-bright nil  ; nil = off; else min bright fraction on the annulus (see bright-around)
+   :surround-lum 110.0   ; luminance above which an annulus sample counts as bright
    :snap? false})        ; sub-px refine each centroid with blob/snap-to-blob (caller usually re-snaps)
 
 (defn- downsample
@@ -184,6 +186,45 @@
               (recur (inc start) cur (conj! comps comp))))
           (recur (inc start) cur comps))))))
 
+(defn- bright-around
+  "Fraction of samples on an annulus around (cx,cy) that are BRIGHT — the test
+   that says a dark spot is a printed disc rather than a piece of the
+   background. Samples at 1.8/2.4/3.0 radii, 32 directions each, in DOWNSAMPLED
+   coordinates. Off-image samples do not count.
+
+   It exists because the local-mean threshold cannot serve a CAGE. Its window is
+   chosen `>> a disc, << mark spacing`, which on a plate is a wide flat white
+   field; on a cage the inner rings are thin bright bands against a dark
+   background, so a window that clears a disc also swallows the background, the
+   local mean goes dark, and a real disc is no longer darker than it. Measured
+   on a real photograph (2026-08-23): the big ring gave every disc, the two
+   inner rings gave NONE. Narrowing the window recovers them at the price of a
+   flood of background specks — 214 candidates for 10 true — and this filter
+   removes them by asking the one thing that separates the two: a disc has white
+   all round it. 214 -> 89 candidates, one true disc lost."
+  [^js data sw sh cx cy r lum]
+  (let [samples (for [k [1.8 2.4 3.0]
+                      i (range 32)
+                      :let [a (* i (/ (* 2.0 Math/PI) 32))
+                            x (Math/round (+ cx (* (Math/cos a) r k)))
+                            y (Math/round (+ cy (* (Math/sin a) r k)))]
+                      :when (and (>= x 0) (>= y 0) (< x sw) (< y sh))]
+                  (aget data (+ (* y sw) x)))
+        n (count samples)]
+    (if (zero? n) 0.0 (/ (count (filter #(> % lum) samples)) (double n)))))
+
+(def cage-opts
+  "detect-blobs options for a registration CAGE, as opposed to a plate. Two
+   differences, both forced by the same fact — a cage's marks live on thin
+   bright bands over a dark background, not on one wide white field:
+
+   a NARROW local-mean window, so the threshold stays inside the band, and the
+   `surround-bright` test to throw away what that narrowness lets in. Marks are
+   also seen at every obliquity, so a disc images as a considerably longer
+   ellipse than on a plate: max-aspect goes up with it."
+  {:win 6 :max-aspect 6.0 :min-area 10 :max-blobs 400
+   :target-long-edge 2000 :surround-bright 0.5})
+
 (defn detect-blobs
   "Detect dark disc candidates in the whole frame. `lum-at` (fn [x y] -> 0-255 | nil)
    samples the photo, `[w h]` its pixel size. `opts` overrides `default-opts`; pass
@@ -198,7 +239,8 @@
   ([lum-at size] (detect-blobs lum-at size nil))
   ([lum-at [w h] opts]
    (let [{:keys [target-long-edge win margin min-area max-area max-aspect
-                 min-fill max-blobs snap? rgba]} (merge default-opts opts)
+                 min-fill max-blobs snap? rgba surround-bright surround-lum]}
+         (merge default-opts opts)
          d (max 1 (Math/round (/ (max w h) (double target-long-edge))))
          {:keys [data sw sh]} (if rgba (downsample-rgba rgba w h d) (downsample lum-at w h d))
          integ (integral-image data sw sh)
@@ -213,7 +255,12 @@
                                         (<= aspect max-aspect) (>= fill min-fill))
                                {:center [(+ (* cx d) half) (+ (* cy d) half)]
                                 :radius-px (* d (Math/sqrt (/ area Math/PI)))
-                                :area area :fill fill :score (* area fill)}))))
+                                :area area :fill fill :score (* area fill)
+                                :bright-around (bright-around data sw sh cx cy
+                                                              (Math/sqrt (/ area Math/PI))
+                                                              surround-lum)}))))
+                   (filter (fn [b] (or (nil? surround-bright)
+                                       (>= (:bright-around b) surround-bright))))
                    (sort-by :score >)
                    (take max-blobs)
                    vec)]
