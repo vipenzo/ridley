@@ -19,6 +19,13 @@
           :paq {:target :node-script
                 :output-to "out/paq.js"
                 :main ridley.photogrammetry.cli/main}
+          ;; Bench for the cage detector, run against real photographs:
+          ;;   node out/cage-study.js ~/Pictures/RidleyScan/Presa
+          ;; The test suite asserts; this MEASURES (candidate counts, recall per
+          ;; ring, and a candidate dump to draw on the photo). See its ns docstring.
+          :cage-study {:target :node-script
+                       :output-to "out/cage-study.js"
+                       :main ridley.photogrammetry.cage-detect-study/main}
           ;; Test build for turtle core tests
           :test {:target :node-test
                  :output-to "out/test.js"

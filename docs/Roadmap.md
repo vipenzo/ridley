@@ -59,6 +59,21 @@ raffinamento) — su gabbia sintetica legge 3.00° ±0.00 sul colpevole e 0.00 s
 innocenti. La difficoltà si sposta dal costruire al misurare, come per
 `plate-calib`.
 
+*Gate manuale PASSATO e riconoscitore automatico avviato (2026-08-23/24)*: il
+gesto a mano si è dimostrato chiuso — una corona da sola è invariante per
+rotazione e specchiata dall'altra faccia (48 riletture, stesso rms), e sopra un
+disegno fuori di 150px l'utente non riesce ad appaiare i nomi. Quindi
+l'identificazione si toglie dalle mani dell'utente. **Fetta 1 (il RILEVATORE)
+FATTA**: su foto vera 32 candidati di cui ~29 veri e 13 mark noti su 13 — corona,
+zero-indice e i quattro degli anelli INTERNI, che prima erano zero. Il primo
+tentativo dava 10 veri su 89 candidati e nulla sugli anelli interni. Tre cose:
+riferimento chiaro = MASSIMO locale (una media su finestra larga è quasi tutta
+fondo e scende sotto i mark), risoluzione PIENA (i mark interni stanno a 4-6px dal
+bordo della banda e mezzo giro di media a blocchi li salda al fondo), e un test di
+forma sui pixel veri (`enclosed-frac`, 16 raggi). Restano fetta 2 (posa +
+identità) e fetta 3 (il tasto). Entry point
+`dev-docs/HANDOVER-cage-auto-detect.md`; banco `node out/cage-study.js`.
+
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già
 registrato. Entry point `dev-docs/HANDOVER-grab-and-register.md`; complemento

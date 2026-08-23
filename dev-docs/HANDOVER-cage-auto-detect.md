@@ -22,7 +22,9 @@ EXIF Orientation 6, quindi **3024×4032 in coordinate di visualizzazione**, che
 3. **La posa da un anello solo non colloca gli altri.** Nove punti di una
    corona (indice compreso) chiudono a 5.15px e mettono i mark degli altri due
    anelli a **130–260px** dai dischetti veri: una corona è complanare, la posa
-   è precisa nel suo piano e vaga fuori.
+   è precisa nel suo piano e vaga fuori. *(Il 5.15px è da rifare: uno di quei
+   nove punti si è poi rivelato fuori di 143px — vedi fetta 1. La conclusione —
+   una corona sola non colloca le altre — non dipende da quel numero.)*
 4. **Un solo punto di un secondo anello fa esplodere il fit**: 5.15px →
    **1008px**. Dodici coplanari più uno: il punto fuori piano porta tutta la
    profondità e tutto il proprio errore. È la famiglia del guasto già
@@ -38,6 +40,10 @@ Quindi: l'identificazione va tolta dalle mani dell'utente. Non è una comodità,
 ## Cosa c'è già, e cosa fa
 
 ### Il rilevatore — `src/ridley/photogrammetry/blob_detect.cljs`
+
+> Questa sezione descrive lo stato **prima** della fetta 1. `bright-around` e le
+> vecchie `cage-opts` non esistono più: `enclosed-frac` fa lo stesso lavoro sui
+> pixel veri e meglio. Resta qui perché spiega da dove viene il problema.
 
 `detect-blobs` cerca componenti scure sotto la media locale, su immagine
 ridotta. Nato per il PIATTO e tarato per quello.
@@ -85,21 +91,75 @@ dello zero) → `pnp/solve-pnp` per foto, con fail-safe rms≤12 e corona≥8.
 
 ## Il piano
 
-### Fetta 1 — il rilevatore a risoluzione piena, con criterio di FORMA
+### Fetta 1 — FATTA il 2026-08-24, e misurata
 
-Il problema residuo è netto: **un bordo non è un dischetto, ma a risoluzione
-ridotta gli somiglia.** La soglia locale non sa distinguerli; la forma sì.
+Bersaglio: battere 89 candidati per 10 dischetti veri, con recall su tutti e tre
+gli anelli. **Risultato su `IMG_9014`: 32 candidati, di cui ~29 veri, e 13 mark
+noti su 13 — corona 8/8, zero-indice 1/1 e i quattro degli anelli INTERNI, che
+prima erano zero su quattro.** Sull'intera sessione più le gabbie vuote: 20-43
+candidati per foto, ~0.9s a fotogramma.
 
-Correlazione con un modello di disco (un kernel a cappello: positivo al centro,
-negativo su una corona attorno) alla risoluzione piena o quasi. Un bordo dà
-risposta bassa perché la corona negativa cade metà sul chiaro e metà sullo
-scuro; un dischetto dà risposta alta, e **anche schiacciato in ellisse** finché
-il kernel è abbastanza piccolo. I massimi locali della risposta sono i
-candidati.
+Tre cambiamenti, e ciascuno ripara un guasto misurato, non immaginato:
 
-Bersaglio da battere, sulla stessa foto: modo gabbia oggi = 89 candidati per 10
-dischetti veri noti. Serve arrivare a precisione ≫ e recall ≥ su TUTTI E TRE
-gli anelli.
+1. **Il riferimento chiaro è il MASSIMO locale, non la media** (`:reference
+   :max`, una cimasa morfologica). Una media presa su una finestra larga
+   abbastanza da scavalcare un dischetto è fatta quasi tutta di FONDO, e
+   scende sotto i mark degli anelli sottili: quelli smettono di essere «scuri»
+   e spariscono. Il massimo non si lascia trascinare giù — una finestra centrata
+   su un mark tocca comunque la banda su cui è stampato.
+
+   Quello che il massimo lascia entrare in cambio è un NASTRO di fondo largo
+   `:win` lungo ogni bordo di banda; ma quel nastro è *una sola* regione
+   connessa enorme, e il filtro d'area lo butta via in un pezzo solo. È
+   esattamente ciò che la media stretta non poteva fare: lei lo sbriciolava in
+   centinaia di macchioline, una per una plausibili.
+
+2. **Risoluzione piena, e non è una raffinatezza.** I mark degli anelli interni
+   stanno a 4-6px dal bordo della loro banda. Un solo giro di media a blocchi
+   chiude quel varco: i pixel del mark si saldano al nastro di fondo e vengono
+   portati via dentro il componente gigante. Misurato: a metà risoluzione 2 dei
+   4 mark interni noti spariscono, a risoluzione piena nessuno.
+
+3. **Il criterio di forma è `enclosed-frac`**, sui pixel VERI: da ogni candidato
+   partono 16 raggi e si chiede quanti incontrano un pixel abbastanza più chiaro
+   prima che il buio ricominci. Raggi e non una corona a raggio fisso, perché un
+   mark obliquo è un'ellisse tre volte più lunga che larga: una corona larga
+   abbastanza da scavalcarne l'asse lungo esce dalla banda lungo quello corto.
+
+   Attenzione a cosa fa davvero, perché è controintuitivo: a `0.35` **non**
+   chiede chiaro tutt'intorno — un mark appoggiato al bordo della banda arriva
+   al massimo a 0.5, e pretendere di più lo butta via. Chi si guadagna il pane è
+   il CONTRASTO che i raggi devono trovare (55 livelli): la grana della pelle è
+   piena di fossette circondate di chiaro, e su un fotogramma ben illuminato
+   (`IMG_9015`) davano 50 candidati su 80, finché ai raggi non è stato imposto
+   di trovare bianco vero. Con quello: 80 → 32.
+
+Le tarature stanno in mezzo all'altopiano misurato, non sul ciglio: recall pieno
+per `:margin` 55-60 (sotto, i mark si saldano al fondo; sopra, si assottigliano
+sotto `:min-area`) e per `:enclose-frac` fino a 0.44, che è il punteggio del mark
+più difficile del fotogramma.
+
+**Il banco**: `npx shadow-cljs compile cage-study && node out/cage-study.js
+~/Pictures/RidleyScan/Presa`. Stampa candidati e recall per anello e scrive i
+candidati in JSON, da disegnare sulla foto. Il test `real-cage-photo-detect`
+(protetto, salta senza le foto) fissa 13/13 e i tetti sui candidati.
+
+#### Tre punti della «verità» qui sopra erano sbagliati
+
+Guardando le foto a 4× — la regola della sezione «Trappole», applicata prima di
+ragionare — tre dei quattordici pick di `acquire-state.json` non sono dischetti:
+
+- `28` (1390.0, 2523.2) e `30` (931.3, 2474.6) stanno **sul fondo nero**;
+- `7` (1949.7, 2776.5), che questo stesso documento riporta fra i dischetti
+  «verificati», sta su **banda bianca vuota**: il mark che nomina è a
+  **(2071, 2853)**, 143px più in là. Il rilevatore lo trova a 0.5px.
+
+Tutti e tre sono `proposed?`, cioè predizioni accettate, non click — la prima
+constatazione del documento (i click sono impeccabili) resta in piedi. Ma
+**l'affermazione che con quei nove punti la posa chiude a 5.15px non può stare
+in piedi con uno di essi fuori di 143px**: chi riprende quel numero lo rifaccia
+prima di fidarsene. La verità ripulita è la fixture `cage-9014-truth` in
+`test/ridley/photogrammetry/blob_detect_test.cljs`.
 
 ### Fetta 2 — abbinamento posa + identità
 
@@ -125,7 +185,9 @@ come per il piatto.
 ### Dati veri
 
 - **`~/Pictures/RidleyScan/Presa`** — cinque foto della sessione, fondo NERO,
-  più `acquire-state.json` con i pick veri. La foto 0 è `IMG_9014.jpeg`.
+  più `acquire-state.json` con i pick veri (tre dei quali NON sono dischetti:
+  vedi fetta 1). La foto 0 è `IMG_9014.jpeg`. Le copie di lavoro delle foto 0 e 1
+  stanno in `test-assets/cage-presa/` — si prova su quelle, mai sulla sessione.
 - **`~/Pictures/RidleyScan/GabbieVuote`** — gabbia sola: `IMG_9019` su carta
   bianca (la più pulita), `IMG_9021`/`IMG_9022` contro la scrivania (fondo
   disordinato, molti falsi), `IMG_9020` come 9021 ma con ritaglio digitale a
@@ -133,19 +195,24 @@ come per il piatto.
 
 ### Verità note su `IMG_9014` (coordinate di visualizzazione 3024×4032)
 
-Dischetti veri, verificati disegnandoli sulla foto — otto dell'anello grande
-più il suo zero-indice:
+Ricontrollata a 4× il 2026-08-24; la versione corretta vive come fixture
+`cage-9014-truth` in `test/ridley/photogrammetry/blob_detect_test.cljs`.
 
 ```
-xm00 (494.0,1005.8)  xm01 (992.3,578.5)   xm02 (1631.4,422.0)
-xm03 (2261.8,573.9)  xm04 (2728.4,1022.3) xm06 (2648.0,2362.9)
-xm07 (1949.7,2776.5) xm09 (304.6,2235.1)  zero-xm (693.9,890.8)
+corona  (494.0,1005.8) (992.3,578.5)  (1631.4,422.0) (2261.8,573.9)
+        (2728.4,1022.3)(2648.0,2362.9)(2071.0,2853.0)(304.6,2235.1)
+zero    (693.9,890.8)
+interni (2274.1,2116.5)(1898.9,2047.2)(1021.4,1711.0)(661.1,1491.7)
 ```
 
-Con questi nove la posa chiude a **5.15px**, e `zero-xm` riproietta a **3px**:
-è il seme di riferimento. Altri quattro dischetti veri (anelli interni, identità
-NON affidabile): (1390.0,2523.2) (1021.4,1711.0) (661.1,1491.7) (931.3,2474.6)
-(1898.9,2047.2).
+Rispetto a com'era scritto qui prima: `xm07` era (1949.7,2776.5) — banda vuota,
+il mark vero è 143px più in là — e fra gli «interni» comparivano (1390.0,2523.2)
+e (931.3,2474.6), che stanno sul fondo nero, mentre mancava (2274.1,2116.5).
+L'identità (quale mark è quale) resta NON stabilita per gli anelli interni: è il
+lavoro della fetta 2.
+
+Il **5.15px** citato più sotto è stato ottenuto includendo `xm07`: non
+riutilizzarlo senza rifarlo.
 
 ### Le facce, dette da Vincenzo guardando il pezzo
 
