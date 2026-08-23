@@ -438,6 +438,70 @@ viste, i ricalchi no.
   ogni anello in due metà da 1.5mm, ciascuna coi mark verso il piano, incollate
   schiena contro schiena.
 
+## Il gesto manuale non chiude, e il perché è misurato (2026-08-23)
+
+Giornata di collaudo sui dati veri di Vincenzo (`~/Pictures/RidleyScan/Presa`,
+`IMG_9014`, gabbia nuova ⌀176). Tutto quanto segue è misurato, non dedotto.
+
+**I suoi click sono impeccabili.** Dodici su dodici centrati sui dischetti,
+ritrovati dal rilevatore entro 0.7–1.9px. I gruppi (grande=X, medio=Y,
+piccolo=Z) sono giusti. Il problema non è mai stato la mano.
+
+**Una corona da sola non può identificarsi.** Dodici mark equidistanti sono
+invarianti per rotazione e dall'altra faccia si leggono specchiati: **tutte e
+48 le riletture della corona X danno lo stesso rms, 32.5px**. I numeri offerti
+sono congetture ricavate da dove sta il proxy.
+
+**Lo zero-indice rompe la simmetria, ed è stato reso cliccabile** (`234fe89`).
+Senza: 48 letture su 48 restano entro il doppio della migliore, e la migliore è
+sbagliata. Con un click sull'indice: **2**, che differiscono solo per i 3mm fra
+le facce — cioè la degenerazione che la guardia fisica scioglie. Sui dati veri
+il click su `⊙xm` riproietta a **3px**.
+
+**Due difetti nella ricerca per anello, corretti** (`ea42a63`):
+`best-misreading` ordinava le riletture per solo errore di riproiezione, che è
+cieco al cambio di faccia (3mm ≈ 19px, sempre in salita) — quindi restituiva
+*sistematicamente* la faccia rivolta dall'altra parte. E l'adozione pretendeva
+che l'rms si dimezzasse, cosa impossibile quando i click sono giusti e sbagliano
+solo i nomi (misurato: soglia richiesta «< 0.000px»). Ora la guardia sceglie
+l'insieme dei candidati e l'errore sceglie dentro; l'rms fa solo da
+non-regressione.
+
+**E nonostante tutto questo il gesto manuale NON chiude.** Il numero che lo
+dice: la posa dai soli punti di un anello (nove punti, rms 5.15px) colloca i
+mark degli **altri due anelli a 130–260px** dai dischetti veri — una corona è
+complanare, la posa è precisa nel suo piano e vaga fuori. Peggio: aggiungere
+UN punto di un secondo anello, anche corretto, porta il fit da 5.15px a
+**1008px** (dodici coplanari più uno: il singolo punto fuori piano porta tutta
+la profondità e tutto il proprio errore — è la famiglia del guasto già
+documentata sopra). Nel frattempo l'utente deve appaiare i nomi ai dischetti a
+occhio sopra un disegno fuori di 150px, e tre volte su sei prende un dischetto
+dell'anello piccolo credendolo del medio, cosa che vicino agli incroci **non
+si può** distinguere. Il circolo non si apre dall'interno.
+
+Da qui il via libera al **riconoscimento automatico**, che era «deliberatamente
+rinviato a dopo il gate»: il gate ha risposto.
+
+### Il rilevatore, primo mattone (`c14733a`)
+
+Sulla foto vera: trova TUTTI i dischetti dell'anello grande, NESSUNO dei due
+interni. Causa: la finestra della media locale è scelta «≫ un dischetto, ≪ la
+distanza fra due», che su un piatto è campo bianco largo; sugli anelli interni
+è una banda sottile su fondo scuro, la finestra si riempie di fondo, la media
+va a nero. Stringerla li ritrova con 214 candidati per 10 buoni; `bright-around`
+(un dischetto è scuro ED è circondato di bianco) taglia a 89 perdendone uno.
+`cage-opts` raccoglie le tarature.
+
+Su una foto su **carta bianca** il guasto della media locale sparisce e resta
+scoperto quello sotto: a risoluzione ridotta il **bordo** della plastica
+somiglia a un dischetto quanto un dischetto (modo piatto: 26 rilevazioni quasi
+tutte vere ma poche; modo gabbia: 104 con una fila di falsi sul bordo).
+
+**Prossimo passo, e adesso è preciso**: cercare i dischetti a risoluzione piena
+con un criterio di FORMA — correlazione con un modello di disco. Un bordo non
+correla con un disco; un dischetto sì, anche schiacciato in ellisse. Poi
+l'abbinamento posa+identità sopra i candidati.
+
 ## Trappole del banco di prova (costate mezza giornata)
 
 - **Playwright MCP e il browser dell'utente possono essere LO STESSO**, e
