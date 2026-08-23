@@ -44,8 +44,9 @@ consistent set. The manual routes are there for the frames that resist.
   you intend to fill by grabbing frames from a live camera starts with no
   photographs at all. Otherwise the folder holds the images, and `session.json`
   is built on first open from `NOTE.md`.
-- `opts` — the same map `acquire` carries (`:proxy`, `:pose`, `:shapes`,
-  `:marks`, `:edges`). On a first open you usually give only `:proxy`.
+- `opts` — the same map `acquire` carries (`:proxy`, `:pose`, `:marks`,
+  `:edges`, and `:shapes` for forms written before anchors moved to `:marks`).
+  On a first open you usually give only `:proxy`.
 
 ## The proxy is a promise about the real world
 
@@ -70,11 +71,50 @@ If you printed the plate on paper, correct it for what the printer actually did:
 | `R` | refine one focal and every pose **together** — do this once you have four |
 | `C` | measure the plate itself — once per plate, after `R` |
 | `g` | grab a frame from a live camera and register it on the spot |
-| `d` | trace an outline on a declared face |
-| `k` | place a named mark · `m` arm the physical marker |
+| `d` | **add an anchor** — place and orient a plane, which becomes a named mark |
+| `1` `2` `3` | (cage) put the anchor at the cage centre, in that ring's plane |
+| `n` | write every visible mark's **name** on the photograph |
+| `k` | place a named point · `m` arm the physical marker |
 | `v` | hide the proxy to read the photograph under it |
+| wheel | zoom the photograph · right-drag pans it |
 | `[` `]` | previous / next photograph |
 | `Esc` | leave the current mode, then the session |
+
+## With a cage instead of a plate
+
+`(registration-cage :d 176)` as the `:proxy` changes what the session can and
+cannot do, and it is worth knowing which is which.
+
+**Registration is by hand.** `a` (find the crown and solve with no clicks) and
+`C` (measure the target itself) are built on the plate's single crown plus its
+zero-index; a cage has six crowns and no `:zero`, and they refuse it saying so.
+`p` is the route: four marks on ONE ring are enough to fix a pose, and the
+editor then blob-snaps the rest across all three rings. Measured on a real
+session: four hand clicks, twenty-five marks found, 11.8px.
+
+**Check the cage against the photograph before trusting anything.** Press `n` and
+step through the views with `[` / `]`. Where the names sit on the printed discs,
+that view is registered; where they sit beside them, it is not — and a view can
+be wrong while its residual looks fine, so this is not a formality. On one real
+session four photographs put the cage exactly on the discs and the fifth did not,
+which the 98px residual had also said, but the eye settles it in a second.
+
+**Anchors, not outlines.** `d` no longer traces a contour. It places a plane —
+position and orientation, set with the gizmo — and that plane is emitted as a
+named entry in `:marks`. The outline is drawn afterwards, outside the session,
+with the full path editor on the anchor's own plane:
+
+```clojure
+(let [q (:ancora-1 (:marks A))]
+  (turtle q (edit-path-2d)))
+```
+
+The six face presets are the proxy bounding box's faces, which mean something for
+a box and nothing for a cage — so on a cage they are not offered. Use `1`/`2`/`3`
+instead: they put the anchor at the cage **centre** in each ring's plane, which is
+a known starting point and a useful one, since the part sits at the centre by
+construction. The white ball is the anchor's point; the solid cage around it is
+there so a plane passing **behind** a ring tells you its depth.
 
 ## Reading the numbers
 
@@ -87,6 +127,12 @@ building on — but read it knowing what it cannot tell you:
   Only the zero-index — the disc set inside the crown — says which way the plate
   faces. If it is covered by the object, the session says so and asks you to turn
   the plate; that refusal is the feature.
+- **On a cage, a low residual does not prove the FACE either.** Both faces of a
+  ring carry the same discs seen through the plastic, so a mark named as its
+  mirror twin produces a rotated pose that reprojects perfectly. Cages printed
+  from 2026-08-22 carry the zero-index off mark 0's axis, which makes the figure
+  chiral and the face legible; an older cage must be declared
+  `(registration-cage :d … :index-phase 0)` and read with care.
 - **A joint refine that changes nothing is accusing the measurements**, not the
   poses. If `R` moves the residual by a few percent, the picks themselves are
   wrong somewhere, and the per-photograph lines it prints will say which one.
@@ -171,4 +217,6 @@ constrained fit comes back at 1.91px held out against the free fit's 2.06px.
 - `registration-plate` — the usual `:proxy`
 - `acquire-plate/save-sheet` — printing a plate to stand the object on
 - `edit-edge-mark` — measuring an edge once the cameras are registered
+- `registration-cage` — the `:proxy` for when depth is the problem
+- `edit-path-2d` — where an anchor's outline actually gets drawn
 - `acquire-union` — fusing two shooting sessions of the same object
