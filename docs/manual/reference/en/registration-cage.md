@@ -181,6 +181,27 @@ The face against the build plate comes out sharper than the other one, and there
 is no way to have both in a single print. That is expected: what the printer gets
 wrong is measured afterwards, not chased beforehand.
 
+## The assembly key: una tacca e una spina
+
+Cages printed after 2026-08-24 carry a key: a small **pin** on one of the middle
+ring's tabs, and a matching **notch** in the largest ring's rim. Sliding the
+largest ring in, the pin meets its rim and the ring will not seat — at *any*
+wrong rotation, and flipped face-for-face too — until the notch admits it. Push
+until it clicks home, glue, done: the one rotation no joint used to impose is now
+imposed.
+
+It exists because that rotation was found *glued wrong* on the reference cage —
+a quarter turn, invisible to the eye because at whole steps the tabs land neatly
+between marks again — and because the error is silent in the photographs until
+the zero-index contradicts them (see above). The key was Vincenzo's proposal,
+verbatim: "una tacca e una spina". It costs nothing to print: the pin sits at
+the tab's bed end and prints as first-layer footprint; the notch is a cut in a
+flat part.
+
+A cage glued **before** the key exists is not wrong — its turn is a property of
+the part, measured once and declared forever: `:phases {:x 90}` (the reference
+cage's own number).
+
 ## The rotation you cannot impose
 
 Concentricity and squareness are imposed by the tabs and their stops. So is the

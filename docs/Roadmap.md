@@ -96,8 +96,14 @@ mio «rot 3» era la fase travestita da rinominazione (scartava lo zero-indice i
 silenzio). Ora `match-cage` non mette lo zero ai voti e DIAGNOSTICA l'anello
 girato (`:phase-suspect` + `phase-probe`, con messaggio che dà la forma da
 copiare); la gabbia di riferimento si modella `:phases {:x 90}` (facce verificate
-x=m y=p z=m, come Vincenzo le ha lette sul pezzo). Resta il collaudo umano del
-giro completo con la fase dichiarata. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
+x=m y=p z=m, come Vincenzo le ha lette sul pezzo). Il collaudo col quarto di giro
+dichiarato è PASSATO (r: 8.7px in dlt — multi-anello, tutti e sei i gradi di
+libertà; a: conferma i nomi, 10.8px; Y/Z e facce giuste). E per le gabbie future
+la fase non serve: su proposta di Vincenzo («una tacca e una spina») i giunti ora
+portano la CHIAVE DI MONTAGGIO — spina su una linguetta dell'anello di mezzo,
+tacca passante nel bordo del grande — che rifiuta ogni rotazione e ribaltamento
+sbagliato dell'anello grande all'assemblaggio. Il fronte gabbia è CHIUSO salvo
+collaudo di stampa della chiave. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
 `node out/cage-study.js` e `node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come

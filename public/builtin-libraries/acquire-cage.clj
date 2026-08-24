@@ -118,12 +118,18 @@
         ;; quest'ordine. Passarle così com'erano dava linguette girate di 90°, e
         ;; la prova non è stata leggere il codice: è stato misurare l'ingombro
         ;; del pezzo uscito.
-        tabs (map (fn [t]
-                    (let [sz (:size t)]
-                      (mesh-translate (box (nth sz 1) (nth sz 2) (nth sz 0))
-                                      (:center t))))
-                  tabs-boxes)
-        solid (if (empty? tabs) annulus (mesh-union (cons annulus tabs)))]
+        as-box (fn [t]
+                 (let [sz (:size t)]
+                   (mesh-translate (box (nth sz 1) (nth sz 2) (nth sz 0))
+                                   (:center t))))
+        ;; una scatola è o materiale dell'anello (linguette, battute, la SPINA
+        ;; della chiave di montaggio) o un TAGLIO (la tacca che la riceve):
+        ;; lo dice il suo :kind, e la tacca è l'unico taglio della famiglia
+        cuts (map as-box (filter (fn [t] (= :key-notch (:kind t))) tabs-boxes))
+        tabs (map as-box (remove (fn [t] (= :key-notch (:kind t))) tabs-boxes))
+        solid (as-> annulus m
+                (if (empty? tabs) m (mesh-union (cons m tabs)))
+                (if (empty? cuts) m (mesh-difference (cons m cuts))))]
     ;; :export-group lega le due mesh in UN oggetto con due parti. Senza,
     ;; lo slicer le tratta come corpi indipendenti: appoggia ciascuno sul
     ;; piatto per conto suo e mette i supporti sotto i dischetti della faccia

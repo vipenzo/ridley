@@ -270,6 +270,23 @@
    by peeling the tab, shallow enough to stay clear of the crown."
   0.7)
 
+(def ^:private key-pin-azim
+  "The assembly key's azimuthal width (mm) — how wide the pin is along the rim it
+   blocks."
+  2.0)
+
+(def ^:private key-pin-radial
+  "How far (mm) the pin reaches radially INTO the largest ring's band. Enough
+   that a mis-rotated ring stands on it visibly; little enough that the notch
+   removing it leaves the rim's strength alone."
+  3.0)
+
+(def ^:private key-pin-block
+  "How far (mm) the pin reaches across the partner's plane — the depth of the
+   slide it blocks. A mis-rotated ring seats this far proud of its tabs, which no
+   one glues past by accident."
+  2.5)
+
 (defn joint-tabs
   "The boxes that hold a cage of diameter `d` and thickness `h` together:
    {:owner :partner :along :sign :kind :center [x y z] :size [dx dy dz]}.
@@ -287,7 +304,14 @@
             normal — so any lip lying in that path stops the ASSEMBLY, not the
             ring. The four small-ring lips sit outside the partner's outer radius
             and are never swept through; the middle ring's would sit exactly where
-            the largest ring's rim passes on its way in, so they are not made."
+            the largest ring's rim passes on its way in, so they are not made;
+     :key-pin, :key-notch
+            the assembly key — the spina on one middle-ring tab and the tacca it
+            needs cut in the largest ring's rim (the ONE box here that is a CUT
+            in its owner, not an addition). Together they refuse every rotation
+            and flip of the largest ring but the nominal one — the rotation no
+            other joint imposes, and the one that was found glued 90° round on
+            the reference cage (2026-08-24)."
   [d h]
   (let [band (* d band-frac)
         root (* band tab-root-frac)
@@ -340,7 +364,63 @@
                        :center (mapv first parts)
                        :size (mapv second parts)}))]
           (cond-> [(box :lap lap)]
-            stopped? (conj (box :stop stop)))))
+            stopped? (conj (box :stop stop))
+            ;; ── the assembly key ────────────────────────────────────────────
+            ;; ONE pin on ONE of the middle ring's tabs, and a matching notch in
+            ;; the largest ring's rim. It exists because the largest ring is the
+            ;; one part of the cage whose rotation no joint imposes — it is held
+            ;; by the others pressing on its face and can turn while staying
+            ;; seated — and because at a whole number of steps the tabs land
+            ;; between marks again, so a quarter-turn glue-up LOOKS nominal and
+            ;; is invisible until the photographs disagree with the zero-index
+            ;; (which is how it was found: Vincenzo's reference cage, 2026-08-24,
+            ;; 90° — proposed by him as 'una tacca e una spina', and that is
+            ;; exactly what this is).
+            ;;
+            ;; The pin protrudes from the tab across the partner's plane, inside
+            ;; its rim: sliding in, the rim meets the pin and the ring cannot
+            ;; seat — at ANY wrong rotation, not just wrong steps — unless the
+            ;; notch admits it. One key, asymmetric, so it also refuses the ring
+            ;; flipped face-for-face. It costs nothing to print: the pin sits at
+            ;; the tab's bed end and prints as first-layer footprint; the notch
+            ;; is a cut in a flat part.
+            ;;
+            ;; On the middle↔largest joint and not a small-ring one, because the
+            ;; small ring's own tabs already impose its rotation — the middle
+            ;; and small rings key each other by construction; only the largest
+            ;; is free, and it is the middle ring's tabs that hold it without
+            ;; stops.
+            (and (= q-axis :y) (= p-axis :x) (pos? sign))
+            (into (let [;; pin, radially: from half a mm inside the rim, reaching
+                        ;; key-pin-radial into the band
+                        pin-r-hi (- p-outer 0.5)
+                        pin-r-lo (- pin-r-hi key-pin-radial)
+                        ;; notch, radially: the pin with clearance, open past the rim
+                        cut-r-lo (- pin-r-lo tab-clearance)
+                        cut-r-hi (+ p-outer 1.0)
+                        ;; pin, across the partner's plane: from 1mm INSIDE the tab
+                        ;; (an exact touch would be a pair of coincident faces, the
+                        ;; known CSG-artifact recipe) inward by key-pin-block past
+                        ;; the glue face
+                        pin-p-hi (+ (/ h 2.0) tab-clearance 1.0)
+                        mid (fn [lo hi] [(/ (+ lo hi) 2.0) (- hi lo)])
+                        pin (fn [axis]
+                              (condp = axis
+                                shared (let [[c sz] (mid pin-r-lo pin-r-hi)] [(* sign c) sz])
+                                p-axis (mid (- (+ (/ h 2.0) tab-clearance) key-pin-block)
+                                            pin-p-hi)
+                                ;; at the tab's BED end, off-centre — asymmetric on
+                                ;; purpose, so the flipped ring is refused too
+                                q-axis (mid (/ h -2.0) (+ (/ h -2.0) key-pin-azim))))
+                        notch (fn [axis]
+                                (condp = axis
+                                  shared (let [[c sz] (mid cut-r-lo cut-r-hi)] [(* sign c) sz])
+                                  ;; a through cut — the ring slides past the pin
+                                  p-axis [0.0 (+ h 2.0)]
+                                  q-axis (mid (- (/ h -2.0) tab-clearance)
+                                              (+ (/ h -2.0) key-pin-azim tab-clearance))))]
+                    [(box :key-pin pin)
+                     (assoc (box :key-notch notch) :owner p-axis :partner q-axis)])))))
       (for [pr pairs sign [1 -1]] [pr sign])))))
 
 ;; --- anchors ----------------------------------------------------------------
@@ -777,5 +857,6 @@
                           :position (unplace axis (:position a))
                           :heading (unplace axis (:heading a))}))
            :tabs (vec (for [t (:tabs cage) :when (= axis (:owner t))]
-                        {:center (unplace axis (:center t))
+                        {:kind (:kind t)
+                         :center (unplace axis (:center t))
                          :size (unplace axis (:size t))})))))

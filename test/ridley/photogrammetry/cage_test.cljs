@@ -112,8 +112,15 @@
             (is (not (every? true? (map #(overlap? (span tab %) (nth (ring-slab d h (axis-i third)) %))
                                         [0 1 2])))
                 (str "a tab must not run into the " (name third) " ring")))))
-      (doseq [[a b] (for [i (range (count boxes)) j (range (inc i) (count boxes))]
-                      [(nth boxes i) (nth boxes j)])
+      ;; collisions are checked among MATERIAL boxes of different joints. The
+      ;; assembly key is exempt twice over, by design and not by leniency: the
+      ;; notch is a CUT (its box overlapping anything removes nothing but its
+      ;; owner's material), and the pin OVERLAPS the notch because that is what
+      ;; a key does — it also overlaps its own tab by 1mm, an exact touch being
+      ;; the coincident-faces CSG recipe.
+      (doseq [[a b] (let [material (filterv #(#{:lap :stop} (:kind %)) boxes)]
+                      (for [i (range (count material)) j (range (inc i) (count material))]
+                        [(nth material i) (nth material j)]))
               :when (not= [(:owner a) (:partner a) (:along a) (:sign a)]
                           [(:owner b) (:partner b) (:along b) (:sign b)])]
         (is (not (every? true? (map #(overlap? (span a %) (span b %)) [0 1 2])))
@@ -194,6 +201,69 @@
                       "° → il mark più vicino a un asse sta a " (.toFixed worst 1) "°"))
         (is (> worst 5.0)
             (str n " mark: nessun mark deve cadere sotto una linguetta"))))))
+
+(deftest assembly-key-refuses-every-wrong-rotation
+  ;; The key Vincenzo asked for after gluing the reference cage 90° round
+  ;; ('una tacca e una spina', 2026-08-24): one pin on one middle-ring tab, one
+  ;; notch in the largest ring's rim. Pure geometry checks: the pin must BLOCK
+  ;; the largest ring's slide at any rotation, the notch must admit exactly the
+  ;; pin (with clearance), and the pair must be asymmetric enough to refuse the
+  ;; ring flipped face-for-face.
+  (println "\n=== gabbia: la chiave di montaggio (tacca e spina) ===")
+  (let [d 176.0 h 3.0
+        boxes (cage/joint-tabs d h)
+        pins (filterv #(= :key-pin (:kind %)) boxes)
+        notches (filterv #(= :key-notch (:kind %)) boxes)
+        x (cage/ring-radii d 0)
+        axis-i {:x 0 :y 1 :z 2}]
+    (is (= 1 (count pins)) "UNA spina — una chiave, non una serratura per faccia")
+    (is (= 1 (count notches)) "e UNA tacca")
+    (let [pin (first pins) notch (first notches)]
+      (is (= :y (:owner pin)) "la spina sta su una linguetta dell'anello di MEZZO")
+      (is (= :x (:owner notch)) "la tacca si taglia nell'anello GRANDE")
+      (let [ish (axis-i (:along pin))
+            ip (axis-i (:partner pin))
+            iq (axis-i (:owner pin))
+            [pr-lo pr-hi] (span pin ish)
+            [pp-lo pp-hi] (span pin ip)
+            [pq-lo pq-hi] (span pin iq)
+            [nr-lo nr-hi] (span notch ish)
+            [np-lo np-hi] (span notch ip)
+            [nq-lo nq-hi] (span notch iq)]
+        (println (str "  spina: R" (.toFixed pr-lo 2) "…" (.toFixed pr-hi 2)
+                      " · attraverso il piano " (.toFixed pp-lo 2) "…" (.toFixed pp-hi 2)
+                      " · azimut " (.toFixed pq-lo 2) "…" (.toFixed pq-hi 2)))
+        (println (str "  tacca: R" (.toFixed nr-lo 2) "…" (.toFixed nr-hi 2)
+                      " · attraverso " (.toFixed np-lo 2) "…" (.toFixed np-hi 2)
+                      " · azimut " (.toFixed nq-lo 2) "…" (.toFixed nq-hi 2)))
+        ;; blocks: radially inside the big ring's band, reaching across its slab
+        (is (and (> pr-lo (:inner x)) (< pr-hi (:outer x)))
+            "la spina pesca DENTRO la fascia dell'anello grande")
+        (is (< pp-lo (/ h 2.0))
+            "e attraversa il suo piano: entrando, il bordo la incontra")
+        ;; admitted: the notch clears the pin all round, and cuts through
+        (is (and (< nr-lo pr-lo) (> nr-hi (:outer x)))
+            "la tacca copre la spina e resta aperta oltre il bordo")
+        (is (and (< np-lo (- (/ h 2.0))) (> np-hi (/ h 2.0)))
+            "la tacca taglia TUTTO lo spessore: l'anello ci scorre attraverso")
+        (is (and (< nq-lo pq-lo) (> nq-hi pq-hi))
+            "e lascia gioco in azimut")
+        ;; asymmetric: the ring FLIPPED (its q-interval negated) must not fit
+        (let [[fq-lo fq-hi] [(- pq-hi) (- pq-lo)]]
+          (is (not (and (< nq-lo fq-lo) (> nq-hi fq-hi)))
+              "girato faccia-per-faccia, la spina cade fuori dalla tacca: rifiutato"))
+        ;; and the notch stays clear of every mark on the big ring
+        (let [c (cage/registration-cage :d d)
+              margin (reduce min
+                             (for [[id a] (:anchors c)
+                                   :when (= :x (cage/anchor-axis id))
+                                   :let [[_ py pz] (:position a)]]
+                               ;; point-to-box distance in the ring's own plane (y,z)
+                               (let [dy (max 0.0 (- nq-lo py) (- py nq-hi))
+                                     dz (max 0.0 (- nr-lo pz) (- pz nr-hi))]
+                                 (Math/hypot dy dz))))]
+          (println (str "  margine minimo tacca→mark: " (.toFixed margin 1) " mm"))
+          (is (> margin 5.0) "la tacca sta larga dai dischetti"))))))
 
 (deftest builds-a-cage-with-six-crowns
   (let [c (cage/registration-cage :d 176)
@@ -374,9 +444,11 @@
         (let [p (cage/printable-ring c k)
               zs (map #(nth (:position %) 2) (:marks p))
               rs (map #(let [[x y _] (:position %)] (Math/hypot x y)) (:marks p))
+              ;; the rises-upward check is about MATERIAL: the key notch is a
+              ;; CUT, and a through cut necessarily crosses both faces
               tab-z (mapcat #(let [cz (nth (:center %) 2) sz (nth (:size %) 2)]
                                [(- cz (/ sz 2)) (+ cz (/ sz 2))])
-                            (:tabs p))]
+                            (remove #(= :key-notch (:kind %)) (:tabs p)))]
           (println (str "  anello " (name (:axis p)) ": " (count (:marks p))
                         " mark su z=±" (.toFixed (apply max (map Math/abs zs)) 2)
                         ", raggi " (.toFixed (apply min rs) 1) "…" (.toFixed (apply max rs) 1)

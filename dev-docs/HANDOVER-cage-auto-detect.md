@@ -294,6 +294,26 @@ verificano le facce.
 `(registration-cage :d 176 :phases {:x 90})`. Non è un difetto da rifare: è una
 proprietà del pezzo, misurata, e dichiarata funziona al pari del nominale.
 
+**Esito col quarto di giro dichiarato (2026-08-24, Vincenzo)**: gate PASSATO.
+`r` da solo registra a 8.7px in **dlt** — non più planar: le corrispondenze
+attraversano più anelli, cioè la posa è vincolata su tutti e sei i gradi di
+libertà, che è il motivo per cui la gabbia esiste — e `a` conferma («i nomi che
+avevi dato erano giusti»), piazza altri mark, 10.8px. Y e Z giusti, facce giuste.
+
+**E per le gabbie future la fase non serve più: c'è la CHIAVE DI MONTAGGIO**
+(proposta di Vincenzo, «una tacca e una spina», implementata lo stesso giorno).
+`joint-tabs` ora emette `:key-pin` (spina su una linguetta dell'anello di mezzo,
+al livello del piatto di stampa: zero sbalzi) e `:key-notch` (tacca passante nel
+bordo dell'anello grande — l'UNICA scatola della famiglia che è un TAGLIO nel suo
+owner, non materiale). Infilando l'anello grande, la spina incontra il bordo e
+l'anello non si posa — a QUALSIASI rotazione sbagliata, e anche girato
+faccia-per-faccia (la spina è asimmetrica apposta) — finché la tacca non la
+riceve. La spina affonda 1mm nella linguetta (un contatto esatto = facce
+complanari, la ricetta nota degli artefatti CSG). `printable-ring` porta il
+`:kind`; `acquire-cage` unisce il materiale e sottrae il taglio. Verificato coi
+test geometrici (margine tacca→mark 20.4mm) e DAL VIVO nel browser: le mesh
+stampabili contengono spina e tacca alle coordinate calcolate.
+
 ### Fetta 3 — cablaggio: FATTA il 2026-08-24
 
 Tasto **`a`** (e bottone «Auto — leggi la gabbia») su una gabbia →
