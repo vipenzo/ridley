@@ -308,6 +308,10 @@ Which gives the order of work that avoids the whole difficulty:
 3. The names now land on the right discs on **every** ring, including rings with
    no picks at all, and the editor auto-places the marks it can find.
 
+Step 3 is the one that can fail quietly, and `a` (below) is what checks it: the
+names land right only if the crown was read right, and the ring you clicked
+cannot say whether it was.
+
 Measured on a real session (2026-08-20, ⌀176 cage, 48mm-equivalent phone shots):
 four hand clicks on the largest ring, twenty-five marks found automatically
 across all three rings, **11.8px** with two rejected. The same photograph, worked
@@ -319,6 +323,49 @@ If a ring's numbers really do have to be read by hand, the sense is fixed:
 **`xp`/`yp`/`zp` run counter-clockwise, `xm`/`ym`/`zm` run clockwise**, each seen
 from the side it is printed on. Mark 0 is the one with the zero-index disc just
 inside it, toward the ring's centre.
+
+## When the clicks are right and the names are not — `a`
+
+Press **`a`** (or **Auto — leggi la gabbia**) after clicking four marks on one
+ring, and the editor decides how that crown should be read, then places every
+other mark it can account for and solves on all of them.
+
+It exists for a failure that is *silent*, which is the only kind worth a key of
+its own. Start counting three marks late and every click is on a real disc, every
+label is wrong, the residual comes out at 5px, and the camera genuinely is in
+front of every disc you clicked — so no guard fires and the session records a
+success. Measured on a real photograph: that reading leaves the other two rings'
+marks **92–157px** from the discs actually in the frame, while the right reading
+leaves them at 4–21px. Nothing in the ring you clicked can tell the two apart —
+all 48 readings fit it to 5.3–5.4px, which is the whole difficulty — and nothing
+you can see can either, because the numbers you would judge by are the ones in
+question.
+
+What settles it is the rest of the cage. The detector finds the dark discs across
+the whole frame, and each of the 48 readings is scored not on the ring it came
+from but on **how much of the whole cage its pose explains** against those discs.
+On the same photograph that collapses the 48 to two poses differing by a half
+turn, and between those the physical guard decides: the discs were photographed,
+so the camera was in front of them.
+
+So the order of work is:
+
+1. Click **four marks on ONE ring**, plus its zero-index if you can see it.
+2. Press **`a`**.
+3. Read what it says. `i nomi che avevi dato erano giusti` means your counting was
+   right. `i tuoi click erano giusti, i NOMI no` means it was not, and it has been
+   fixed without touching a single click.
+
+If it answers that it cannot read the cage, the usual cause is a frame that shows
+**one ring only** — straight down an axis, the other two are edge-on and have
+nothing to say. A few degrees off the axis brings them back. If instead it warns
+that several readings explain the cage equally well, believe it: that photograph
+does not contain the answer, and another one will.
+
+`a` is **seeded**, not zero-click, and that is not a shortcut left unfinished. A
+crown of equal marks cannot say which of them is mark zero — no photograph can —
+so four clicks are what the automatic path stands on. Everything after them is
+the machine's job.
 
 ## Tracing on a plane you place yourself
 

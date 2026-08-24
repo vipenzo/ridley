@@ -248,15 +248,43 @@ dà la posa a meno di due soluzioni e la seconda ellisse disambigua. Da valutare
 dopo, perché il passo 3 qui sopra potrebbe bastare a partire da un seme molto
 piccolo.
 
-### Fetta 3 — cablaggio
+### Fetta 3 — cablaggio: FATTA il 2026-08-24
 
-Tasto `a` per la gabbia (oggi rifiuta), messaggio, e i risultati nel pannello
-come per il piatto. Ora c'è tutto quello che serve: `blob-detect/cage-opts` per i
-candidati e `match-cage/read-crown` per la lettura e la posa. Quel che manca è il
-gesto: da dove vengono i `picks` di UN anello (i click che l'utente già fa con
-`p`), dove finiscono le correspondenze, e cosa dire quando `read-crown` torna nil
-o con `:ties` non vuoto — che è il caso onesto di una foto che mostra un anello
-solo, e va detto, non nascosto.
+Tasto **`a`** (e bottone «Auto — leggi la gabbia») su una gabbia →
+`edit-acquire/cage-read-and-place!`. Clicchi 4 dischetti su UN anello, premi `a`,
+e: rileva i candidati in tutta la foto, legge la corona con
+`match-cage/read-crown`, **rinomina i tuoi pick senza toccarne i pixel**, piazza
+come proposti tutti i mark che la lettura spiega, e chiama il solve normale.
+
+La scelta che conta: quello che finisce in sessione è **ordinario**. I mark
+piazzati sono `:proposed?` come quelli della fetta A del piatto, quindi il
+pannello, i residui, i pallini rossi degli outlier e il report delle fasi
+funzionano senza una riga di impianto nuovo, e una proposta che ha agganciato il
+dischetto sbagliato si presenta come un outlier rosso da ricliccare, come
+qualunque altro.
+
+È **seeded**, non zero-click, e va detto invece che nascosto: il rilevatore trova
+i dischetti, ma una corona di mark uguali non può dire quale sia il mark zero —
+nessuna fotografia può — quindi i quattro click sono ciò su cui l'automatico sta
+in piedi.
+
+Cosa dice quando non ce la fa: se `read-crown` torna nil, nomina la causa
+abituale (si vede UN anello solo — bastano pochi gradi fuori dall'asse); se torna
+con `:ties` non vuoto, **avvisa** che più riletture spiegano la gabbia
+altrettanto bene e che quella foto non basta a decidere.
+
+Il messaggio `no-auto-on-cage-msg` — che le altre vie automatiche (batch `r`,
+grab `g`, ancora costruite sulla corona unica del piatto) danno a una gabbia —
+non dice più «la gabbia non ha il rilevamento automatico», che era diventato
+falso: manda ad `a`.
+
+**Verificato dal vivo, non solo compilato**: bundle del browser ricaricato,
+`match-cage/read-crown` chiamato sui candidati veri di IMG_9014 dentro Chrome →
+`rot=3 explained=19 corr=19 fullRms=9.24px`, gli stessi numeri di node. E la
+chiamata a vuoto ha trovato un bug che né il compilatore né un test con sessione
+già aperta potevano vedere: `(nth (:photos @session) idx nil)` con `idx` nil
+lancia, perché in CLJS `nth` rifiuta un indice non numerico anche con default.
+Ora è `get` su un vettore.
 
 ## Il banco di prova, e usalo
 

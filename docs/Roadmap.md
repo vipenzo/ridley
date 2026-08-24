@@ -80,10 +80,16 @@ prima. Cade invece il piano precedente («si campiona un intorno della posa»):
 l'intorno non esiste, l'LM da 91 pose torna sempre allo stesso minimo. Sui pixel
 veri: legge `rot 3`, appaia 19 mark, la posa su tutti chiude a 9.13px, e i quattro
 mark interni noti passano da 157/127/92/139px a 21/8/4/4. I 17-23px residui NON
-erano le `:phases` (misurate: 1-2°, incollaggio buono) ma la planarità di un
-anello, che Vincenzo conferma guardando il pezzo. Resta **fetta 3** (il tasto).
-Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi `node out/cage-study.js`
-e `node out/cage-fit.js`.
+erano le `:phases` (misurate: 1-2°, incollaggio buono) ma la planarità dell'anello
+di MEZZO, che Vincenzo conferma guardando il pezzo. **Fetta 3 (il tasto) FATTA**
+lo stesso giorno: `a` su una gabbia rileva, legge, rinomina i pick senza toccarne
+i pixel, piazza il resto come proposte e chiama il solve normale — quel che entra
+in sessione è ordinario, quindi pannello/residui/outlier funzionano senza impianto
+nuovo. Verificata dal vivo nel bundle del browser (stessi numeri di node), e la
+verifica dal vivo ha trovato un bug che il compilatore non vedeva. **Il fronte
+gabbia è completo dal rilevamento alla registrazione**; manca il collaudo umano di
+Vincenzo. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
+`node out/cage-study.js` e `node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già

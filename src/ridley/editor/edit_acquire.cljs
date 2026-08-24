@@ -61,6 +61,7 @@
             [ridley.photogrammetry.bundle :as bundle]
             [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.blob-detect :as blob-detect]
+            [ridley.photogrammetry.match-cage :as match-cage]
             [ridley.photogrammetry.match-plate :as match-plate]
             [ridley.photogrammetry.plate-focal :as plate-focal]
             [ridley.photogrammetry.plate-calib :as plate-calib]
@@ -478,12 +479,22 @@
   (boolean (:cage-d (:proxy-mesh @session))))
 
 (defn- no-auto-on-cage-msg
-  "The one sentence every automatic path owes a cage session. The multi-ellipse
-   detector is deliberately unbuilt until the cage's gate says the cage is worth
-   keeping (dev-docs/brief-registration-ring.md)."
+  "The one sentence a PLATE-shaped automatic path owes a cage session — the batch
+   assignment and the live grab, both of which are built on the plate's single
+   crown and its zero-index.
+
+   It used to say the cage had no automatic recognition at all. It has one since
+   2026-08-24 ('a', see cage-read-and-place!), and it is seeded rather than
+   zero-click for a reason worth passing on rather than hiding: the detector finds
+   the discs, but a crown of twelve equal marks cannot say which of them is mark
+   zero — no photograph can — so four clicks on one ring are what the automatic
+   path is standing on. Sending the user to 'a' costs them four clicks; leaving
+   this sentence stale would cost them the feature."
   []
-  (str "La gabbia non ha ancora il rilevamento automatico: registra ogni foto "
-       "a mano con 'p' (arma un dischetto, clicca dov'è nella foto)."))
+  (str "Questa via automatica è fatta per la corona del piatto. Su una gabbia: "
+       "clicca 4 dischetti su UN anello con 'p' (lo zero-indice, se lo vedi, vale "
+       "doppio), poi premi 'a' — a dire come va letta la corona è il resto della "
+       "gabbia, non l'anello."))
 
 (defn- on-snap!
   "Photo 0: the gizmo just moved the PROXY, camera fixed — apply the refined
@@ -2492,6 +2503,114 @@
                   (min-pnp-picks) "?")))))))
   (update-panel!))
 
+(defn- cage-read-and-place!
+  "Cage 'a': the crown you clicked, read by the REST OF THE CAGE — then every
+   other mark it accounts for placed for you, and the pose solved on all of them.
+
+   The failure it exists for is SILENT, which is why it needs a key of its own and
+   could not be left to the solve's guards. A crown of twelve equal marks reads
+   the same rotated, so a user who starts counting three marks late produces picks
+   that are all correct, labels that are all wrong, a residual of 5px, and a camera
+   that IS in front of every disc they clicked — nothing fires. Measured on
+   Vincenzo's photograph: that reading leaves the other two rings' marks 92-157px
+   from the discs actually in the frame, and the session registers it as a success.
+
+   `match-cage/read-crown` settles it by scoring each of the 48 readings on how
+   much of the WHOLE cage its pose explains against the detector's candidates — the
+   information a single crown does not contain and more clicking cannot supply.
+
+   What lands in the session is ordinary: the picks are renamed (the pixels are
+   never touched — they were right), the marks the reading accounts for are added
+   as proposed picks exactly as fetta A does for a plate, and the normal solve runs
+   over all of them. So the panel, the residuals, the outlier dots and the phase
+   report all work with no new plumbing, and a proposal that grabbed the wrong disc
+   shows up as a red outlier to re-click, like any other."
+  []
+  (let [idx (:current-idx @session)
+        targets (pnp-targets)
+        marks (cage-crown-count)
+        placed (pnp-picks)
+        picks-by-id (into {} (keep (fn [[ci {:keys [px]}]]
+                                     (when-let [t (nth targets ci nil)] [(:id t) px]))
+                                   placed))
+        id->ci (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
+        ;; `get` and not `nth`: with no session open :current-idx is nil, and nth
+        ;; throws on a nil index even with a default. Found by calling this from
+        ;; the browser with nothing loaded (2026-08-24) — the compiler cannot see
+        ;; it, and neither can a test that always sets up a session first.
+        file (:file (get (vec (:photos @session)) idx))]
+    (cond
+      (nil? file)
+      (set-status-message! "Nessuna foto su cui leggere la gabbia.")
+
+      (< (count picks-by-id) 4)
+      (set-status-message!
+       (str "Per leggere la gabbia servono almeno 4 dischetti cliccati su UN anello "
+            "(ne hai " (count picks-by-id) "): arma un mark con 'p' e clicca dov'è nella foto. "
+            "Lo zero-indice, se lo vedi, vale doppio."))
+
+      :else
+      (do
+        (set-status-message! "Leggo la gabbia… (rilevo i dischetti in tutta la foto)")
+        (-> (backdrop/load-luminance-sampler (photo-path file))
+            (.then
+             (fn [{:keys [lum-at size data]}]
+               (let [[iw ih] size
+                     k (session-intrinsics iw ih)
+                     cands (blob-detect/detect-blobs lum-at size
+                                                     (assoc blob-detect/cage-opts :rgba data))
+                     res (match-cage/read-crown picks-by-id targets (mapv :center cands) k marks)]
+                 (cond
+                   (nil? res)
+                   (set-status-message!
+                    (str "Non riesco a leggere la gabbia da questa foto: dei "
+                         (count cands) " dischetti trovati, nessuna delle 48 riletture "
+                         "della corona ne spiega abbastanza. Di solito vuol dire che si vede "
+                         "UN anello solo — bastano pochi gradi fuori dall'asse perché "
+                         "ricompaiano gli altri."))
+
+                   :else
+                   (let [{:keys [reading corr]} res
+                         nominal? (= reading {:rot 0 :mirror? false :flip-face? false})
+                         flip (fn [ci] (or (some-> (nth targets ci nil) :id
+                                                   (cage/relabel reading marks)
+                                                   id->ci)
+                                           ci))
+                         canvas (viewport/get-canvas)]
+                     (when-not nominal? (relabel-picks! idx flip))
+                     ;; the marks the reading accounts for, minus the ones already
+                     ;; clicked — the user's own pixels always win over a proposal
+                     (let [kept (set (keys (get-in @session [:pnp-picks idx])))
+                           added (reduce (fn [n {:keys [ci px]}]
+                                           (let [j (id->ci ci)]
+                                             (if (or (nil? j) (contains? kept j))
+                                               n
+                                               (do (swap! session assoc-in [:pnp-picks idx j]
+                                                          {:px px
+                                                           :screen (backdrop/screen-of-pixel
+                                                                    canvas (viewport/get-camera) px)
+                                                           :proposed? true})
+                                                   (inc n)))))
+                                         0 corr)]
+                       (set-status-message!
+                        (str "Gabbia letta: "
+                             (if nominal?
+                               "i nomi che avevi dato erano giusti"
+                               (str "i tuoi click erano giusti, i NOMI no — la corona era "
+                                    "sfasata di " (:rot reading) " mark"
+                                    (when (:mirror? reading) ", letta al contrario")
+                                    (when (:flip-face? reading) ", e dall'altra faccia")
+                                    " (una corona di " marks " dischetti uguali si rilegge "
+                                    "identica ruotata: a dirlo è il resto della gabbia, non l'anello)"))
+                             " · " added " dischetti piazzati in automatico"
+                             (when (seq (:ties res))
+                               (str " · ATTENZIONE: " (count (:ties res))
+                                    " riletture spiegano la gabbia altrettanto bene — "
+                                    "questa foto non basta a decidere"))))
+                       (on-solve-pnp!)))))))
+            (.catch (fn [e]
+                      (set-status-message! (str "Lettura della gabbia fallita: " (str e))))))))))
+
 (def ^:private min-crown-assign
   "A batch (fetta B) assignment is accepted only if at least this many of the 12
    crown marks reproject onto real discs (on top of the zero-index, which fixes
@@ -3268,8 +3387,15 @@
           registered? (fn [idx] (:pnp? (get-in @session [:acquire-results idx])))
           pending (filterv #(not (registered? %)) (range n))]
       (cond
+        ;; A cage's automatic path is SEEDED, not zero-click, and deliberately so:
+        ;; the detector finds the discs but a crown cannot say which of its marks
+        ;; is mark zero — that is what the picks are for, and four on one ring is
+        ;; the whole cost. It works on the photo in front of you rather than the
+        ;; whole session, because the picks are per-photo and because applying a
+        ;; pose to photo 0 moves the PROXY, which is not something to do to five
+        ;; photos at once without looking.
         (cage-proxy?)
-        (set-status-message! (no-auto-on-cage-msg))
+        (cage-read-and-place!)
 
         (nil? (:zero-obj det))
         (set-status-message! "Questo piatto non espone lo zero-indice: usa (registration-plate :d <diametro>) come proxy e riapri.")
@@ -4810,17 +4936,30 @@
           (.addEventListener b "click" (fn [_] (start-pnp!)))
           (.appendChild box b)
           ;; a registration plate can register with ZERO clicks (fetta C): the
-          ;; detector finds the crown and fit-crown identifies it. Offer it here
-          ;; next to the manual entry, plate-only.
-          (when (plate-proxy?)
+          ;; detector finds the crown and fit-crown identifies it. A cage takes
+          ;; the same button and the same key, seeded by four clicks on one ring —
+          ;; the crown's own symmetry is what no photograph can resolve.
+          (when (or (plate-proxy?) (cage-proxy?))
             (let [a (.createElement js/document "button")]
               (set! (.-type a) "button")
-              (set! (.-textContent a) "Auto — rileva e registra (a)")
+              (set! (.-textContent a)
+                    (if (cage-proxy?)
+                      "Auto — leggi la gabbia (a)"
+                      "Auto — rileva e registra (a)"))
+              (when (cage-proxy?)
+                (set! (.-title a)
+                      (str "Clicca 4 dischetti su UN anello, poi premi qui. Una corona di "
+                           "dischetti uguali si rilegge identica ruotata, quindi i nomi che "
+                           "hai dato possono essere sfasati senza che nulla se ne accorga: "
+                           "a dirlo è il resto della gabbia, confrontato coi dischetti che "
+                           "il rilevatore trova in tutta la foto.")))
               (.addEventListener a "click" (fn [_] (on-auto-register!)))
               (.appendChild box a))
             ;; offered only once there is something to refine: with one photo the
-            ;; focal and the distance are the same unknown
-            (when (>= (count (filter #(>= (count (second %)) 4) (:pnp-picks @session))) 2)
+            ;; focal and the distance are the same unknown. Plate-only, as before —
+            ;; widening the button above to a cage must not silently widen this one.
+            (when (and (plate-proxy?)
+                       (>= (count (filter #(>= (count (second %)) 4) (:pnp-picks @session))) 2))
               (let [r (.createElement js/document "button")]
                 (set! (.-type r) "button")
                 (set! (.-textContent r) "Rifinisci insieme (R)")
@@ -4834,7 +4973,8 @@
             ;; Calibration reads the poses, so it is only worth offering once
             ;; there are enough of them to be worth reading — three is the
             ;; minimum plate-calib will accept, and three is already thin.
-            (when (>= (count (filter #(>= (count (second %)) 6) (:pnp-picks @session))) 3)
+            (when (and (plate-proxy?)
+                       (>= (count (filter #(>= (count (second %)) 6) (:pnp-picks @session))) 3))
               (let [c (.createElement js/document "button")]
                 (set! (.-type c) "button")
                 (set! (.-textContent c)
@@ -5541,13 +5681,17 @@
           (do (.preventDefault e) (.stopPropagation e)
               (if (plate-proxy?) (on-fit-ring!) (on-fit-turntable!)))
 
-        ;; 'a' (plate only) — Auto: detect + register every photo with zero clicks
-        ;; (fetta C). The box has no analogue; say so rather than silently no-op.
+        ;; 'a' — Auto. On a PLATE: detect + register every photo with zero clicks
+        ;; (fetta C). On a CAGE: read the crown you clicked against the whole cage
+        ;; and place the rest (cage-read-and-place!) — seeded, because a crown
+        ;; cannot say which of its equal marks is mark zero and no photograph can.
+        ;; The box has no analogue; say so rather than silently no-op.
           (and (not retrace?) (not mark?) (= key "a"))
           (do (.preventDefault e) (.stopPropagation e)
-              (if (plate-proxy?)
+              (if (or (plate-proxy?) (cage-proxy?))
                 (on-auto-register!)
-                (set-status-message! "Auto (a) è solo per il piatto di registrazione.")))
+                (set-status-message!
+                 "Auto (a) è per il piatto di registrazione e per la gabbia.")))
 
           ;; capital R: refining the whole session is not something to trip into
           ;; while reaching for 'r' (which re-solves THIS photo)
