@@ -482,3 +482,35 @@ un'app vecchia (l'installata è 3.5.1 del 2 agosto) può trovarsi a eseguire una
 libreria nuova che chiama binding che il suo bundle non ha, e l'errore è
 «Could not resolve symbol» a runtime. Il negozio di librerie non è versionato
 contro l'app: prima o poi servirà un minimo di gating.
+
+## Prossimo fronte proposto — il PORTAPEZZO a bastoncini (Vincenzo, 2026-08-24)
+
+L'idea, con le sue parole: «dei fermi con blocco a camma (4 su ogni anello) che
+permettano di bloccare bastoncini da spiedino o piccoli tubetti di fil di ferro
+o anche stick stampati in 3D. Lo scopo è tenere l'oggetto da ricalcare al centro
+della gabbia senza mollette o nastro adesivo: ingabbiato tra le punte dei
+bastoncini che escono dai diversi anelli — con quattro o cinque bastoncini si
+può bloccare qualsiasi oggetto.»
+
+È la chiusura giusta del cerchio: le mollette e gli steli verdi della sessione
+Presa sono ESATTAMENTE ciò che oggi copre dischetti e genera falsi candidati.
+
+Vincoli da rispettare, tutti già pagati altrove:
+
+- **La camma è la scelta giusta per una ragione precisa**: si autoadatta al
+  diametro (spiedino ~3mm, fil di ferro 1.5-2, stick stampati qualunque). Un
+  foro fisso o un collet no.
+- **Forma stampabile senza supporti**: canale radiale a V APERTO IN ALTO
+  (nessun foro chiuso) + leva eccentrica che preme il bastoncino nella V — lo
+  schema del cam-cleat. Stampa piatta con l'anello, come le linguette.
+- **Azimut liberi**: i mark stanno ai multipli DISPARI di 15° (15,45,75,…), le
+  linguette a 0/90/180/270. Per 4 fermi per anello: 30/120/210/300 — a 15° dal
+  mark più vicino e 30° dalle linguette. MAI coprire un dischetto.
+- **I bastoncini nelle foto**: attraversano l'inquadratura come oggi gli steli
+  — sceglierli CHIARI (il bambù va bene): il rilevatore cerca macchie scure, e
+  un bastoncino scuro gliene regala.
+- La generazione dei mesh senza export è verificata (make-cage-ring /
+  make-print-ring, chiave inclusa): si può prototipare nell'editor.
+
+Non ancora costruito: Vincenzo lo vuole «quando tutto sarà a posto». Resta
+prima il collaudo di stampa della chiave di montaggio.
