@@ -2593,20 +2593,36 @@
                                                    (inc n)))))
                                          0 corr)]
                        (set-status-message!
-                        (str "Gabbia letta: "
-                             (if nominal?
-                               "i nomi che avevi dato erano giusti"
-                               (str "i tuoi click erano giusti, i NOMI no — la corona era "
-                                    "sfasata di " (:rot reading) " mark"
-                                    (when (:mirror? reading) ", letta al contrario")
-                                    (when (:flip-face? reading) ", e dall'altra faccia")
-                                    " (una corona di " marks " dischetti uguali si rilegge "
-                                    "identica ruotata: a dirlo è il resto della gabbia, non l'anello)"))
-                             " · " added " dischetti piazzati in automatico"
-                             (when (seq (:ties res))
-                               (str " · ATTENZIONE: " (count (:ties res))
-                                    " riletture spiegano la gabbia altrettanto bene — "
-                                    "questa foto non basta a decidere"))))
+                        (if-let [ps (:phase-suspect res)]
+                          ;; The one assembly error nothing else can see, found by
+                          ;; the disagreement of two witnesses: the candidates say
+                          ;; the other rings sit k steps round, the clicked
+                          ;; zero-index says the numbering is right. Both are: the
+                          ;; ring was GLUED turned. Diagnosed live on Vincenzo's
+                          ;; cage (2026-08-24, 90° on the big ring).
+                          (str "I tuoi nomi sono GIUSTI (lo zero-indice li conferma), ma gli "
+                               "altri anelli stanno " (:steps ps) " dischetti più in là: l'anello "
+                               (str/upper-case (name (or (:axis ps) :x)))
+                               " sembra INCOLLATO girato di " (.toFixed (:deg ps) 0) "°. "
+                               "Riapri la sessione dichiarandolo nel proxy: (registration-cage :d "
+                               (or (:cage-d (:proxy-mesh @session)) "…")
+                               " :phases {:" (name (or (:axis ps) :x)) " " (.toFixed (:deg ps) 0)
+                               "}) — se le facce di Y/Z escono invertite, usa −"
+                               (.toFixed (:deg ps) 0) ". I click fatti restano validi.")
+                          (str "Gabbia letta: "
+                               (if nominal?
+                                 "i nomi che avevi dato erano giusti"
+                                 (str "i tuoi click erano giusti, i NOMI no — la corona era "
+                                      "sfasata di " (:rot reading) " mark"
+                                      (when (:mirror? reading) ", letta al contrario")
+                                      (when (:flip-face? reading) ", e dall'altra faccia")
+                                      " (una corona di " marks " dischetti uguali si rilegge "
+                                      "identica ruotata: a dirlo è il resto della gabbia, non l'anello)"))
+                               " · " added " dischetti piazzati in automatico"
+                               (when (seq (:ties res))
+                                 (str " · ATTENZIONE: " (count (:ties res))
+                                      " riletture spiegano la gabbia altrettanto bene — "
+                                      "questa foto non basta a decidere")))))
                        (on-solve-pnp!)))))))
             (.catch (fn [e]
                       (set-status-message! (str "Lettura della gabbia fallita: " (str e))))))))))

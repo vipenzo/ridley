@@ -140,6 +140,11 @@
            :picks p2
            :pose (:pose sol)
            :rms-px (:rms-px sol)
+           ;; which picks this reading could only fit by THROWING AWAY. Recorded
+           ;; because one of them can be the zero-index, and a reading that must
+           ;; discard the identity witness to score well is not winning the
+           ;; argument — it is changing the subject (see the glued-ring check).
+           :dropped (mapv :ci (:outliers sol))
            :explained (explained targets candidates intrinsics (:pose sol) tol-px)})))))
 
 (defn- sees-its-own-picks?
@@ -155,6 +160,46 @@
               (let [{:keys [normal obj]} (by-id id)]
                 (or (nil? normal) (pos? (la/v-dot normal (la/v-sub c obj))))))
             (keys picks))))
+
+(defn- picks-axis
+  "The ring the picks are on — :x, :y or :z."
+  [picks]
+  (some (fn [id] (:axis (or (cage/mark-parts id) (cage/index-parts id)))) (keys picks)))
+
+(defn- dropped-index?
+  "Did this reading's solve throw away a zero-index pick?"
+  [{:keys [dropped]}]
+  (boolean (some cage/index-parts dropped)))
+
+(defn- phase-probe
+  "The check for a ring GLUED A WHOLE NUMBER OF STEPS from nominal — the one
+   assembly error nothing else can see. `cage/phase-from-residuals` measures a
+   phase only mod one step (a crown is symmetric under a full step), and the
+   reading search absorbs whole steps into the labels; the only witness that
+   separates 'labels out by k' from 'ring glued k steps round' is the ZERO-INDEX,
+   and only when the caller clicked it.
+
+   Under `pose` (solved on the clicked ring, index kept), count how many targets
+   OFF that ring land on a candidate as-is, then again with those targets turned
+   about the clicked ring's axis by −k steps for every k — which is where they
+   would be if the clicked ring had been glued +k steps round. Returns
+   {:steps k :deg d :gain [n0 nk]} when some k beats nominal by a margin that
+   cannot be noise, else nil."
+  [targets candidates intrinsics pose axis marks tol-px]
+  (let [others (filterv #(not= axis (:axis (or (cage/mark-parts (:id %))
+                                               (cage/index-parts (:id %)))))
+                        targets)
+        step-deg (/ 360.0 marks)
+        count-at (fn [deg]
+                   (explained (mapv #(update % :obj
+                                             (fn [o] (cage/turn-about-axis axis o (- deg))))
+                                    others)
+                              candidates intrinsics pose tol-px))
+        n0 (count-at 0.0)
+        best (apply max-key second
+                    (for [k (range 1 marks)] [k (count-at (* k step-deg))]))]
+    (when (and (>= (second best) 6) (>= (- (second best) n0) 4))
+      {:steps (first best) :gain [n0 (second best)]})))
 
 (defn read-crown
   "Read the crown the user clicked, arbitrated by the rest of the cage.
@@ -195,12 +240,50 @@
              kept (let [k (filterv #(sees-its-own-picks? % by-id) top)]
                     (if (seq k) k top))
              winner (first (sort-by :rms-px kept))
-             corr (assign targets candidates intrinsics (:pose winner) tol-px)
+             ;; THE ZERO-INDEX CANNOT BE OUTVOTED. A candidate-scored winner that
+             ;; could only fit by throwing the clicked index away has not read the
+             ;; crown better — it has silently deleted the one disc that pins the
+             ;; numbering. When an index-keeping reading exists, IT is the answer,
+             ;; and the winner's higher score becomes the diagnosis: the clicked
+             ;; ring is GLUED that many steps round from nominal, which puts the
+             ;; other rings exactly where the discarding reading claimed and the
+             ;; index exactly where the keeping one does. Measured on Vincenzo's
+             ;; cage (2026-08-24): candidates said rot 3, his clicked zero said
+             ;; rot 0, and the part said `:phases {:x 90}` — both were right.
+             keeper (when (dropped-index? winner)
+                      (->> scored
+                           (remove dropped-index?)
+                           (filter #(some cage/index-parts (keys (:picks %))))
+                           (sort-by (comp - :explained))
+                           first))
+             result (or keeper winner)
+             axis (picks-axis picks)
+             ;; k steps and (marks − k) steps are the same quarter turn seen from
+             ;; the two senses — candidates cannot tell them apart (each crown is
+             ;; symmetric under half a turn), only the FACES can. So the suspect is
+             ;; reported canonically (the smaller of the two) and the sign is the
+             ;; caller's to try — which the message says.
+             canon (fn [k] (let [k (mod k marks)] (min k (- marks k))))
+             suspect (some-> (if keeper
+                               {:steps (- (:rot (:reading winner)) (:rot (:reading keeper)))
+                                :gain [(:explained keeper) (:explained winner)]}
+                               ;; index kept (or never clicked): probe for the glued
+                               ;; ring directly — with few picks the discarding
+                               ;; reading's pose is too loose to outscore, and the
+                               ;; failure would stay silent
+                               (when (and axis (some cage/index-parts (keys picks)))
+                                 (phase-probe targets candidates intrinsics (:pose winner)
+                                              axis marks tol-px)))
+                             (as-> ps (let [k (canon (:steps ps))]
+                                        (assoc ps :axis axis :steps k
+                                               :deg (* k (/ 360.0 marks))))))
+             corr (assign targets candidates intrinsics (:pose result) tol-px)
              full (when (>= (count corr) 6) (pnp/solve-pnp corr intrinsics {}))]
-         (when (>= best min-explained)
-           (assoc winner
+         (when (>= (:explained result) min-explained)
+           (assoc result
                   :corr corr
                   :full (when full (select-keys full [:pose :rms-px]))
                   :guard-rejected (- (count top) (count kept))
+                  :phase-suspect suspect
                   :ties (mapv #(select-keys % [:reading :explained :rms-px])
-                              (remove #(= % winner) kept)))))))))
+                              (remove #(= % result) kept)))))))))

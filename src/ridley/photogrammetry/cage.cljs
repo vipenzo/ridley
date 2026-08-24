@@ -661,8 +661,20 @@
              same move `plate-calib` makes, difficulty shifted off the
              fabrication and onto an instrument. One scalar per ring.
 
-             A 90° error is NOT one of these: with marks every 30° it only
-             renames which mark is number zero, and the zero-index says so.
+             A WHOLE-STEP error (90° is three steps at twelve marks) IS one of
+             these, and it is the sneaky one: the tabs land between marks again,
+             so the glued cage looks nominal, and every crown fits every
+             rotation of its own labels — the misfit shows up only as the OTHER
+             rings sitting k steps round from where the model puts them. The
+             zero-index is the sole witness that separates 'labels out by k'
+             from 'ring glued k steps round': it travels with its ring, so it
+             confirms the labels while the rings disagree — exactly the
+             signature match-cage/read-crown reports as :phase-suspect, telling
+             you to declare the phase here. Lived before it was written:
+             Vincenzo's reference cage has its big ring at 90°
+             (:phases {:x 90}), found live on 2026-08-24 after a day of the
+             candidates saying 'rot 3' and the clicked zero saying 'rot 0' —
+             both were right.
 
    Returns a three-ring mesh with, under :anchors, six crowns of `marks` plus six
    zero-indices — `:zp00`…, `:zm00`…, `:yp00`…, `:ym00`…, `:xp00`…, `:xm00`…,

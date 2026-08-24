@@ -367,6 +367,25 @@ crown of equal marks cannot say which of them is mark zero — no photograph can
 so four clicks are what the automatic path stands on. Everything after them is
 the machine's job.
 
+**Click the zero-index too, always.** It is not just a better pick: it is the one
+disc that can catch the one assembly error nothing else sees. If a ring was glued
+a whole number of steps round from nominal — 90° is three steps, and the tabs
+land neatly between marks again, so the glued cage *looks* right — then every
+crown fits every rotation of its own labels, and the misfit appears only as the
+other rings sitting k steps round. Scored on the photograph alone, the readings
+that explain most are the ones that quietly throw your index click away. `a`
+refuses that trade: the index cannot be outvoted. When the candidates and your
+clicked zero disagree, it keeps your names — the zero proves them — and reports
+the real culprit:
+
+> *l'anello X sembra INCOLLATO girato di 90°. Riapri la sessione dichiarandolo
+> nel proxy: `(registration-cage :d 176 :phases {:x 90})` — se le facce di Y/Z
+> escono invertite, usa −90. I click fatti restano validi.*
+
+Declare the phase, reopen, press `a` again: same clicks, whole cage. This
+happened on the reference cage itself — its big ring, the one whose rotation no
+joint imposes, is glued at 90° — and was found by exactly this disagreement.
+
 ## Tracing on a plane you place yourself
 
 The retrace (`d`) used to ask which of the proxy bounding box's **six faces** you

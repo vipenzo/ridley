@@ -87,8 +87,17 @@ i pixel, piazza il resto come proposte e chiama il solve normale — quel che en
 in sessione è ordinario, quindi pannello/residui/outlier funzionano senza impianto
 nuovo. Verificata dal vivo nel bundle del browser (stessi numeri di node), e la
 verifica dal vivo ha trovato un bug che il compilatore non vedeva. **Il fronte
-gabbia è completo dal rilevamento alla registrazione**; manca il collaudo umano di
-Vincenzo. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
+gabbia è completo dal rilevamento alla registrazione.** Il collaudo umano
+(2026-08-24) è FALLITO nel modo più fruttuoso: i candidati dicevano «rot 3», lo
+zero-indice cliccato «rot 0», e la conciliazione è che **l'anello grande della
+gabbia di riferimento è INCOLLATO girato di 90°** — l'unica rotazione che nessun
+giunto impone, invisibile a occhio perché le linguette ricadono fra i mark. Il
+mio «rot 3» era la fase travestita da rinominazione (scartava lo zero-indice in
+silenzio). Ora `match-cage` non mette lo zero ai voti e DIAGNOSTICA l'anello
+girato (`:phase-suspect` + `phase-probe`, con messaggio che dà la forma da
+copiare); la gabbia di riferimento si modella `:phases {:x 90}` (facce verificate
+x=m y=p z=m, come Vincenzo le ha lette sul pezzo). Resta il collaudo umano del
+giro completo con la fase dichiarata. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
 `node out/cage-study.js` e `node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come

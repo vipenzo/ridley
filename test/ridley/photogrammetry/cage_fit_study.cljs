@@ -60,6 +60,14 @@
    :xm03 [2261.8 573.9] :xm04 [2728.4 1022.3] :xm06 [2648.0 2362.9]
    :xm07 [2071.0 2853.0] :xm09 [304.6 2235.1] :zero-xm [693.9 890.8]})
 
+(def live-picks
+  "The five picks of Vincenzo's live gate (2026-08-24), exactly as clicked: four
+   crown marks 3 apart — {0,3,6,9}, the 4-fold-symmetric subset, invariant under
+   rot 3 — plus the zero-index. The subset that makes the reading search hardest
+   and the index most decisive."
+  {:xm00 [492.5 1004.4] :xm03 [2260.4 574.7] :xm06 [2648.4 2359.1]
+   :xm09 [697.2 2752.9] :zero-xm [693.9 890.8]})
+
 ;; The four inner-ring marks whose POSITION is known (identity is not — that is
 ;; exactly what fetta 2 has to work out).
 (def inner-truth
@@ -139,7 +147,10 @@
         iph (js/parseFloat (or (aget (.-env js/process) "CAGE_INDEX_PHASE")
                                (str (/ 1.0 3.0))))
         d (js/parseFloat (or (aget (.-env js/process) "CAGE_D") "176"))
-        proxy (cage/registration-cage :d d :index-phase iph)
+        phases (when-let [j (aget (.-env js/process) "CAGE_PHASES")]
+                 (js->clj (js/JSON.parse j) :keywordize-keys true))
+        use-picks (if (= "live" (aget (.-env js/process) "CAGE_PICKS")) live-picks seed-picks)
+        proxy (cage/registration-cage :d d :index-phase iph :phases phases)
         anchors (:anchors proxy)
         obj (into {} (for [[id pose] anchors] [id (:position pose)]))
         ;; the same shape bridge/pnp-target-points hands the editor: object-frame
@@ -151,7 +162,9 @@
                                       n (la/v-norm h)]
                                   (when (pos? n) (la/v-scale h (/ 1.0 n))))
                         :index? (some? (cage/index-parts id))}))]
-    (println (str "\n=== gabbia ⌀" d " index-phase " iph ": " (count anchors) " bersagli ==="))
+    (println (str "\n=== gabbia ⌀" d " index-phase " iph " phases " (pr-str phases)
+                  " picks " (if (identical? use-picks live-picks) "LIVE" "studio")
+                  ": " (count anchors) " bersagli ==="))
     (-> (decode photo)
         (.then
          (fn [res]
@@ -160,7 +173,7 @@
                        (cam/equiv-focal->hfov-deg 48.0 (/ w h)) w h)
                  cands (mapv :center (bd/detect-blobs lum-at [w h]
                                                       (assoc bd/cage-opts :rgba data)))
-                 corr (vec (for [[id px] seed-picks]
+                 corr (vec (for [[id px] use-picks]
                              {:ci id :world (obj id) :px px}))
                  sol (pnp/solve-pnp corr intr {})
                  keep-corr (mapv #(select-keys % [:world :px]) (:per-point sol))]
@@ -209,9 +222,9 @@
                                      inner-truth)))
                  ;; The seeded ring's own marks, for scale: this is what "registered"
                  ;; looks like.
-                 (println (str "  ai 9 punti del seme: "
+                 (println (str "  ai punti del seme: "
                                (mapv (fn [[id _]] (fmt (nearest cands (pred id)) 1))
-                                     seed-picks)))
+                                     use-picks)))
                  ;; Is the other rings' error TANGENTIAL (the ring's projected
                  ;; curve passes through the true marks, only the numbering slides
                  ;; along it — a glued-in phase) or RADIAL (the curve misses them,
@@ -334,7 +347,7 @@
                                       :let [c (vec (keep (fn [[id px]]
                                                            (when-let [id2 (cage/relabel id m 12)]
                                                              {:ci id2 :world (obj id2) :px px}))
-                                                         seed-picks))
+                                                         use-picks))
                                             sol2 (when (>= (count c) 6) (pnp/solve-pnp c intr {}))]
                                       :when sol2]
                                   (let [e (explains obj intr (:pose sol2) cands 14.0)]
@@ -391,7 +404,7 @@
                  ;; of them, which is where a one-ring planar fit finally becomes a
                  ;; pose conditioned on the whole cage.
                  (println "\n  == match-cage/read-crown ==")
-                 (let [r (mc/read-crown seed-picks targets cands intr 12)]
+                 (let [r (mc/read-crown use-picks targets cands intr 12)]
                    (if (nil? r)
                      (println "  nessuna lettura confermata")
                      (do
@@ -406,10 +419,36 @@
                        (println (str "  guardia fisica ha scartato " (:guard-rejected r)
                                      " letture · restano in parità " (count (:ties r))
                                      " " (mapv (comp :rot :reading) (:ties r))))
+                       (when-let [ps (:phase-suspect r)]
+                         (println (str "  SOSPETTO ANELLO INCOLLATO GIRATO: asse " (:axis ps)
+                                       " di " (:steps ps) " passi (" (fmt (:deg ps) 0) "°)"
+                                       " · spiegati " (pr-str (:gain ps)))))
                        (when-let [fp (:pose (:full r))]
                          (println (str "  ai 4 mark interni noti, con la posa piena: "
                                        (mapv (fn [px] (fmt (nearest (keep (fn [[_ q]] (cam/project intr fp q)) obj) px) 0))
-                                             inner-truth)))))))
+                                             inner-truth)))
+                         ;; the INDEX as witness: does the winning pose put the model
+                         ;; zero where Vincenzo clicked it?
+                         (when-let [zpx (cam/project intr fp (obj :zero-xm))]
+                           (let [[zu zv] (use-picks :zero-xm)]
+                             (println (str "  lo zero-indice riproietta a "
+                                           (fmt (Math/hypot (- (first zpx) zu) (- (second zpx) zv)) 1)
+                                           "px dal click dello zero"))))
+                         ;; the FACES as witness: Vincenzo, guardando il pezzo, foto 1:
+                         ;; X e Z sono m, Y è p. Count which faces are front-facing.
+                         (let [c (cam/camera-center fp)
+                               facing (fn [ax]
+                                        (let [ids (filter #(= ax (:axis (cage/mark-parts %))) (keys obj))
+                                              vis (for [id ids
+                                                        :let [t (first (filter #(= id (:id %)) targets))
+                                                              nrm (:normal t)
+                                                              q (obj id)]
+                                                        :when (and nrm (pos? (la/v-dot nrm (la/v-sub c q))))]
+                                                    (:sign (cage/mark-parts id)))]
+                                          (frequencies vis)))]
+                           (println (str "  facce davanti alla camera: x " (facing :x)
+                                         " y " (facing :y) " z " (facing :z)
+                                         "  (Vincenzo, guardando il pezzo: X e Z sono m, Y è p)")))))))
                  ;; ── the same fact from the other side ───────────────────────
                  ;; The peaks above say 85.5 on the X plane (nominal), 53.5 on the Y
                  ;; and ~69.5 on the Z: the two inner rings look SWAPPED. They are

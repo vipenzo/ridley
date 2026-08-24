@@ -248,6 +248,52 @@ dà la posa a meno di due soluzioni e la seconda ellisse disambigua. Da valutare
 dopo, perché il passo 3 qui sopra potrebbe bastare a partire da un seme molto
 piccolo.
 
+### Il gate umano — FALLITO il 2026-08-24, e il fallimento era la scoperta
+
+Vincenzo ha cliccato 4 mark ({0,3,6,9} — il sottoinsieme 4-simmetrico, il caso
+peggiore) più lo zero-indice e premuto `a`. L'app ha detto «i nomi che avevi dato
+erano giusti», ha registrato a 6.4px sull'anello X — e ha lasciato Y e Z
+scambiati, con Y chiamata `m` quando lui, guardando il pezzo, la sapeva `p`.
+
+**Tutti e due i verdetti erano giusti, ed è questo il punto.** I candidati
+dicevano «gli altri anelli stanno 3 passi più in là» (il rot 3 di tutta la
+sezione qui sopra); lo zero-indice cliccato diceva «i nomi sono giusti» (rot 0,
+5.4px). La conciliazione è l'errore di montaggio che nessuno dei due da solo può
+vedere: **l'anello grande è INCOLLATO girato di un quarto di giro** — la sua
+rotazione è l'unica che nessun giunto impone, e a 90° le linguette ricadono fra i
+mark, quindi a occhio è perfetto. Verificato sui suoi click con tre testimoni:
+
+- `:phases {:x 90}` → zero a 7.9px ✓, interni a 5-24px ✓, facce **x=m y=p z=m** —
+  esattamente come Vincenzo le aveva lette sul pezzo ✓;
+- `{:x -90}` → interni ok ma facce y=m/z=p ✗ (il segno lo decidono le FACCE, non i
+  candidati: ±90 mettono i piani degli anelli nello stesso posto).
+
+**Quindi il «rot 3» delle sezioni sopra era la fase travestita da rinominazione**:
+spiegava i candidati ma buttava via lo zero-indice come outlier senza dirlo — il
+`solve-pnp` dentro la ricerca può scartare 2 punti, e scartava proprio il
+testimone. I numeri (19 corr, 9.13px, interni 4-21) restano validi come geometria;
+i NOMI di quella lettura erano sbagliati, e le facce con loro.
+
+Da cui le due correzioni in `match-cage`, entrambe con test sintetico + reale:
+
+1. **Lo zero-indice non si mette ai voti.** Se il vincitore ai punti ha scartato
+   un indice cliccato e esiste una rilettura che lo tiene, vince quella, e la
+   differenza di rot diventa la diagnosi (`:phase-suspect {:axis :steps :deg}`).
+2. **`phase-probe`** per quando i click sono pochi e la rilettura concorrente non
+   fa punti (il caso live: 4 click): sotto la posa vincente si provano gli altri
+   anelli ruotati di −k passi attorno all'asse cliccato; se un k spiega ≥6 mark e
+   ≥4 più del nominale, stessa diagnosi. `phase-from-residuals` NON può vederlo:
+   misura la fase solo modulo un passo.
+
+Il messaggio in `edit-acquire` nomina la causa e dà la forma da copiare:
+`(registration-cage :d 176 :phases {:x 90})`, col caveat sul segno. k e 12−k sono
+lo stesso quarto di giro visto dai due versi: si riporta il canonico e il segno lo
+verificano le facce.
+
+**La gabbia di riferimento VA MODELLATA così d'ora in poi**:
+`(registration-cage :d 176 :phases {:x 90})`. Non è un difetto da rifare: è una
+proprietà del pezzo, misurata, e dichiarata funziona al pari del nominale.
+
 ### Fetta 3 — cablaggio: FATTA il 2026-08-24
 
 Tasto **`a`** (e bottone «Auto — leggi la gabbia») su una gabbia →

@@ -53,3 +53,15 @@ inquadratura l'anello di mezzo sta a ~16 px/mm, quindi i **17-23px** che restano
 dopo la rilettura corretta valgono **circa 1.1-1.4mm** sul pezzo — la taglia
 giusta per una svergolatura «di poco», e qualcosa che nessuna `:phase` (che è una
 rotazione rigida) può correggere.
+
+## L'anello grande è incollato a 90°, ed è una proprietà del pezzo
+
+Trovato dal gate umano del 2026-08-24: i candidati dicevano «rot 3», lo
+zero-indice cliccato diceva «rot 0», e la conciliazione è che l'anello grande —
+l'unico la cui rotazione nessun giunto impone — è incollato un quarto di giro
+dal nominale. A 90° le linguette ricadono fra i mark, quindi a occhio è
+perfetto. Confermato da tre testimoni sui click live (zero 7.9px, interni
+5-24px, facce x=m y=p z=m come Vincenzo le ha lette sul pezzo).
+
+**Questa gabbia si modella `(registration-cage :d 176 :phases {:x 90})`.**
+Il segno (+90, non −90) lo decidono le facce, non i candidati.

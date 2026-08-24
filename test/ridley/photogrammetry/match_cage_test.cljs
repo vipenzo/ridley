@@ -138,6 +138,59 @@
       (is (or (nil? r) (seq (:ties r)) (= 4 (:rot (:reading r))))
           "o rifiuta, o dichiara la parità, o ha ragione — mai una risposta sicura e sbagliata"))))
 
+(deftest a-glued-ring-is-diagnosed-not-outvoted
+  ;; The assembly error nothing else can see, reproduced synthetically: the cage
+  ;; PHOTOGRAPHED has its big ring glued a quarter turn round (:phases {:x 90}),
+  ;; the proxy MODELLING it does not know. The user clicks marks of that ring plus
+  ;; its zero-index, with the labels the index pins — which are RIGHT.
+  ;;
+  ;; Scored on candidates alone, the readings that explain most are the ones that
+  ;; rotate the labels and silently throw the clicked index away. The index cannot
+  ;; be outvoted: read-crown must return the index-keeping reading AND name the
+  ;; real culprit — the glued ring — as :phase-suspect. Found live on Vincenzo's
+  ;; cage (2026-08-24) before it was a test.
+  (println "
+=== gabbia: l'anello incollato girato si diagnostica, non si vota ===")
+  (let [glued (cage/registration-cage :d 176 :phases {:x 90})
+        model (cage/registration-cage :d 176)
+        truth-targets (cage-targets glued)
+        targets (cage-targets model)
+        w 3024 h 4032
+        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 48.0 (/ w h)) w h)
+        pose (cam/look-at-pose eye [0.0 0.0 0.0] [0.0 0.0 1.0])
+        cands (scene nil truth-targets intr pose)
+        ;; picks named as the index pins them, pixels from the GLUED cage
+        pick-of (fn [id] (let [t (first (filter #(= id (:id %)) truth-targets))]
+                           (cam/project intr pose (:obj t))))
+        picks (into {} (for [id [:xm00 :xm03 :xm06 :xm09 :zero-xm]
+                             :let [px (pick-of id)] :when px]
+                         [id px]))
+        r (mc/read-crown picks targets cands intr marks)]
+    (println (str "  lettura " (when r (str "rot " (:rot (:reading r))
+                                            " · spiega " (:explained r)
+                                            " · sospetto " (pr-str (:phase-suspect r))))))
+    (is (some? r) "una lettura si trova")
+    (when r
+      (is (= 0 (:rot (:reading r)))
+          "lo zero-indice non si mette ai voti: vince la lettura che lo tiene")
+      (is (some? (:phase-suspect r)) "e l'anello incollato girato viene DIAGNOSTICATO")
+      (when-let [ps (:phase-suspect r)]
+        (is (= :x (:axis ps)) "sull'asse giusto")
+        (is (= 3 (:steps ps)) (str "di 3 passi (90°), non " (:steps ps)))))
+    ;; and with the phase DECLARED, the same picks read clean: no suspect, and the
+    ;; other rings' marks are collected
+    (let [r2 (mc/read-crown picks truth-targets cands intr marks)]
+      (println (str "  col modello fasato: "
+                    (when r2 (str "rot " (:rot (:reading r2)) " · spiega " (:explained r2)
+                                  " · corr " (count (:corr r2))
+                                  " · sospetto " (pr-str (:phase-suspect r2))))))
+      (is (some? r2) "col modello fasato la lettura c'è")
+      (when r2
+        (is (= 0 (:rot (:reading r2))) "i nomi restano giusti")
+        (is (nil? (:phase-suspect r2)) "nessun sospetto: la fase dichiarata spiega tutto")
+        (is (>= (count (:corr r2)) 20)
+            (str "e il resto della gabbia si raccoglie (" (count (:corr r2)) ")"))))))
+
 (deftest mutual-nearest-refuses-a-shared-disc
   (testing "due mark non possono rivendicare lo stesso dischetto"
     (let [{:keys [targets intr pose]} (setup eye)
@@ -152,15 +205,13 @@
 ;; ── on real pixels ───────────────────────────────────────────────────────────
 
 (def ^:private picks-9014
-  "The nine picks Vincenzo made on the largest ring of IMG_9014, WITH THE NAMES HE
-   GAVE THEM — which is the point: eight of them are three marks out of phase, and
-   nothing in that ring can say so. (`xm07` is corrected to the mark it actually
-   names; the session file has it 143px away on blank band. `xm09` is left exactly
-   as clicked, wrong name and all, because a real run will contain such a pick and
-   the search has to survive one.)"
-  {:xm00 [494.0 1005.8] :xm01 [992.3 578.5] :xm02 [1631.4 422.0]
-   :xm03 [2261.8 573.9] :xm04 [2728.4 1022.3] :xm06 [2648.0 2362.9]
-   :xm07 [2071.0 2853.0] :xm09 [304.6 2235.1] :zero-xm [693.9 890.8]})
+  "The five picks of Vincenzo's live gate on IMG_9014 (2026-08-24), with the names
+   he gave them — which the zero-index proves RIGHT. Four crown marks 3 apart
+   ({0,3,6,9}, the 4-fold-symmetric subset, invariant under the very rotation in
+   question) plus the zero: the pick set that makes candidate scoring weakest and
+   the index most decisive, i.e. the hard case."
+  {:xm00 [492.5 1004.4] :xm03 [2260.4 574.7] :xm06 [2648.4 2359.1]
+   :xm09 [697.2 2752.9] :zero-xm [693.9 890.8]})
 
 (def ^:private inner-9014
   "Four marks on the two INNER rings whose pixel position is known — read off the
@@ -207,31 +258,52 @@
                                              (min b (Math/hypot (- u (first px)) (- v (second px))))
                                              b))
                                          js/Infinity targets))]
-                      (println "\n=== gabbia reale: la lettura, arbitrata dagli altri anelli ===")
+                      (println "\n=== gabbia reale: lo zero-indice smaschera l'anello girato ===")
                       (println (str "  " (count cands) " candidati · lettura "
                                     (when r (str "rot " (:rot (:reading r))
-                                                 " mirror " (:mirror? (:reading r))
-                                                 " faccia-girata " (:flip-face? (:reading r))))
-                                    " · spiega " (when r (:explained r))
-                                    " · corr " (when r (count (:corr r)))))
+                                                 " · spiega " (:explained r)
+                                                 " · sospetto " (pr-str (:phase-suspect r))))))
+                      ;; Vincenzo's cage has its big ring GLUED 90° round (confirmed
+                      ;; three ways on 2026-08-24: candidates, the clicked zero, and
+                      ;; the faces he read off the part). The unphased model must
+                      ;; keep his labels — the zero pins them — and DIAGNOSE the
+                      ;; turn, not rename his picks to paper over it.
                       (is (some? r) "una lettura si trova sui pixel veri")
                       (when r
-                        (println (str "  rms anello " (.toFixed (:rms-px r) 2)
-                                      "px · posa su tutte le corrispondenze "
-                                      (when (:full r) (str (.toFixed (:rms-px (:full r)) 2) "px"))))
-                        (println (str "  ai 4 mark interni noti: "
-                                      (mapv #(.toFixed (near (:pose (:full r)) %) 0) inner-9014)
-                                      " (con la lettura dell'utente erano 157 127 92 139)"))
-                        (is (= 3 (:rot (:reading r)))
-                            (str "il resto della gabbia dice rot 3, non " (:rot (:reading r))))
-                        (is (>= (:explained r) 15) "conferma una buona parte della gabbia")
-                        (is (some? (:full r)) "e risolve la posa su tutte le corrispondenze")
-                        (when (:full r)
-                          (doseq [px inner-9014]
-                            (is (< (near (:pose (:full r)) px) 26.0)
-                                (str "il mark interno " (mapv #(Math/round %) px)
-                                     " ha ora un mark addosso ("
-                                     (.toFixed (near (:pose (:full r)) px) 1) "px)")))))
+                        (is (= 0 (:rot (:reading r)))
+                            "i nomi di Vincenzo erano GIUSTI: lo zero-indice li conferma")
+                        (is (= 3 (:steps (:phase-suspect r) 0))
+                            (str "e l'anello grande è diagnosticato incollato a 90° ("
+                                 (pr-str (:phase-suspect r)) ")")))
+                      ;; declared, the same picks register the whole cage
+                      (let [phased (cage-targets (cage/registration-cage :d 176 :phases {:x 90}))
+                            r2 (mc/read-crown picks-9014 phased cands intr marks)
+                            near2 (fn [pose px]
+                                    (reduce (fn [b {:keys [obj]}]
+                                              (if-let [[u v] (cam/project intr pose obj)]
+                                                (min b (Math/hypot (- u (first px)) (- v (second px))))
+                                                b))
+                                            js/Infinity phased))]
+                        (println (str "  col modello fasato {:x 90}: "
+                                      (when r2 (str "rot " (:rot (:reading r2))
+                                                    " · spiega " (:explained r2)
+                                                    " · corr " (count (:corr r2))
+                                                    " · rms pieno "
+                                                    (when (:full r2) (.toFixed (:rms-px (:full r2)) 2))))))
+                        (is (some? r2) "col modello fasato la lettura c'è")
+                        (when r2
+                          (is (= 0 (:rot (:reading r2))) "nomi giusti anche qui")
+                          (is (nil? (:phase-suspect r2)) "e nessun sospetto residuo")
+                          (is (>= (:explained r2) 15) "la gabbia intera si spiega")
+                          (when (:full r2)
+                            (println (str "  ai 4 mark interni noti: "
+                                          (mapv #(.toFixed (near2 (:pose (:full r2)) %) 0) inner-9014)
+                                          " (col modello non fasato erano 92-157)"))
+                            (doseq [px inner-9014]
+                              (is (< (near2 (:pose (:full r2)) px) 30.0)
+                                  (str "il mark interno " (mapv #(Math/round %) px)
+                                       " ha ora un mark addosso ("
+                                       (.toFixed (near2 (:pose (:full r2)) px) 1) "px)"))))))
                       (done))))
                  (.catch (fn [e]
                            (println "  errore:" (str e))
