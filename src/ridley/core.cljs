@@ -2999,6 +2999,10 @@
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
+    ;; async save failures (stl.cljs) surface HERE instead of dying in the
+    ;; console: a Promise the SCI caller deliberately drops still owes the user
+    ;; its rejection (2026-08-24: three 3MFs written into nowhere, silently)
+    (stl/set-async-notify! show-error)
     (viewport/init canvas)
     ;; Wire animation callbacks (registry <-> playback, avoids circular dep)
     (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)

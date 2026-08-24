@@ -450,3 +450,35 @@ un giro il 19 agosto.
   `cage-relabel-rescue` / `best-misreading` (~1948)
 - `test/ridley/photogrammetry/cage_test.cljs` — 959 test verdi, fixture su dati veri
 - `dev-docs/HANDOVER-registration-cage.md` — la gabbia nel suo complesso
+
+## Appendice — save-3mf: tre guasti in uno (2026-08-24)
+
+Vincenzo: «la save-3mf sulla desktop app non produce nessun file in Downloads,
+su Firefox produce solo gabbia-176-small.3mf». Tre difetti veri, verificati e
+corretti:
+
+1. **Firefox**: i tre download partivano da un `Promise.all` — tre `a.click()`
+   nello stesso giro di eventi, e i click successivi soppiantano i precedenti
+   prima che il browser li commetta. La PROVA era in Downloads: `small-2` e
+   `small-3` delle 16:48, cioè due tentativi e da ciascuno solo l'ULTIMO file.
+   Ora i download sono sequenziali a 600ms — misurato dal vivo via CDP:
+   click a 946/1587/2229ms, tutti e tre.
+2. **Desktop, la `~` letterale**: `stl/expand-home` risolve `~` con una XHR
+   sincrona che nella WKWebView può fallire in silenzio; la `~` letterale arriva
+   al geo-server, che diligentemente prova `CWD/~/…` — per un'app lanciata dal
+   Finder `/~`, permesso negato. Ora `expand_tilde` sta NEL SERVER Rust
+   (write/read/delete): il server conosce la propria $HOME, non c'è ragione di
+   fidarsi che il client l'abbia saputa. (Richiede una build desktop nuova.)
+3. **Il silenzio**: la promise del salvataggio viene deliberatamente scartata
+   dal chiamante SCI (un println asincrono ricomparirebbe nell'evaluation
+   successiva — problema noto), e con lei si scartava anche il RIGETTO. Ora
+   `stl/set-async-notify!` registra il pannello errori di core all'avvio e ogni
+   salvataggio si porta un `.catch` che ci scrive: un fallimento asincrono non
+   è più muto.
+
+**Pericolo residuo, da non dimenticare**: la libreria builtin sta sul
+FILESYSTEM (`~/.ridley/libraries/`), condivisa fra TUTTE le istanze desktop —
+un'app vecchia (l'installata è 3.5.1 del 2 agosto) può trovarsi a eseguire una
+libreria nuova che chiama binding che il suo bundle non ha, e l'errore è
+«Could not resolve symbol» a runtime. Il negozio di librerie non è versionato
+contro l'app: prima o poi servirà un minimo di gating.

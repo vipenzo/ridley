@@ -176,6 +176,31 @@
    of memory and removes a race whose failure mode is a truncated file."
   60000)
 
+(defonce ^:private async-notify
+  ;; Where an ASYNC failure goes to be seen. Everything in this namespace that
+  ;; saves returns a Promise, and a Promise the caller drops — which SCI callers
+  ;; do, deliberately: the print buffer is read at end-of-eval, so an async
+  ;; println reappears inside the NEXT evaluation — takes its rejections to the
+  ;; console, where no user has ever looked. Measured cost (2026-08-24): the
+  ;; desktop app wrote three 3MFs into nowhere and said nothing. core.cljs
+  ;; registers its error panel here at startup; until then, console.error.
+  (atom (fn [msg] (js/console.error msg))))
+
+(defn set-async-notify!
+  "Register the function async save failures are shown through."
+  [f] (reset! async-notify f))
+
+(defn- notify-async-failure!
+  "Attach the last-resort error surface to a save Promise: on rejection, SAY SO
+   where the user is looking. Returns the promise (with the catch attached) so
+   callers that do consume it still can."
+  [p what]
+  (.catch p (fn [err]
+              (let [msg (str what " NON riuscito: "
+                             (or (some-> err .-message) (str err)))]
+                (@async-notify msg)
+                msg))))
+
 (defn- download-blob-fallback
   "Download a blob using the traditional createElement('a') method.
 
@@ -671,14 +696,24 @@
               (for [[filename meshes] named]
                 (-> (build meshes)
                     (.then (fn [blob] (desktop-write-file blob (str full "/" filename))))))))
-            (.then (fn [_] (summary full)))))
+            (.then (fn [_] (summary full)))
+            (notify-async-failure! (str "Salvataggio di " (count named) " file in " full))))
       (let [downloads (fn []
-                        (-> (js/Promise.all
-                             (into-array
-                              (for [[filename meshes] named]
-                                (-> (build meshes)
-                                    (.then (fn [blob]
-                                             (download-blob-fallback blob filename)))))))
+                        ;; SEQUENTIAL, half a second apart — not Promise.all. Three
+                        ;; programmatic anchor clicks in the same tick are one
+                        ;; download: the later clicks supersede the earlier ones
+                        ;; before the browser commits them. Measured (Firefox,
+                        ;; 2026-08-24): of gabbia-{big,medium,small} only small —
+                        ;; the LAST — ever arrived, twice in a row.
+                        (-> (reduce (fn [p [filename meshes]]
+                                      (-> p
+                                          (.then (fn [_] (build meshes)))
+                                          (.then (fn [blob]
+                                                   (download-blob-fallback blob filename)
+                                                   (js/Promise.
+                                                    (fn [res _] (js/setTimeout res 600)))))))
+                                    (js/Promise.resolve nil)
+                                    named)
                             (.then (fn [_]
                                      (str "Nel browser non c'è un filesystem: i "
                                           (count named) " file sono stati SCARICATI "
@@ -702,7 +737,8 @@
                         (if (and err (= "AbortError" (.-name err)))
                           (js/Promise.resolve "Salvataggio annullato.")
                           (do (js/console.warn "directory picker unavailable:" err)
-                              (downloads))))))
+                              (downloads)))))
+              (notify-async-failure! (str "Salvataggio di " (count named) " file")))
           (downloads))))))
 
 (defn save-3mf-at

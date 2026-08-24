@@ -210,7 +210,7 @@ fn handle_read_file(request: &mut tiny_http::Request) -> Result<Vec<u8>, String>
         .headers()
         .iter()
         .find(|h| h.field.as_str() == "X-File-Path")
-        .map(|h| h.value.as_str().to_string())
+        .map(|h| expand_tilde(h.value.as_str()))
         .ok_or_else(|| "missing X-File-Path header".to_string())?;
 
     // Drain body (unused)
@@ -261,7 +261,7 @@ fn handle_delete_file(request: &mut tiny_http::Request) -> Result<String, String
         .headers()
         .iter()
         .find(|h| h.field.as_str() == "X-File-Path")
-        .map(|h| h.value.as_str().to_string())
+        .map(|h| expand_tilde(h.value.as_str()))
         .ok_or_else(|| "missing X-File-Path header".to_string())?;
 
     // Drain body
@@ -272,13 +272,29 @@ fn handle_delete_file(request: &mut tiny_http::Request) -> Result<String, String
     Ok("{\"deleted\":true}".to_string())
 }
 
+/// Expand a leading `~` into the user's home directory. The front end already
+/// tries to do this (stl/expand-home), but its lookup is a synchronous XHR that
+/// can fail quietly inside a WKWebView — and a `~` that reaches the filesystem
+/// verbatim asks for `CWD/~/…`, which for a Finder-launched app is `/~`:
+/// permission denied, write rejected, and (before 2026-08-24) nobody told the
+/// user. The server knows its own $HOME; there is no reason to trust the client
+/// to have known it.
+fn expand_tilde(path: &str) -> String {
+    if path == "~" || path.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            return format!("{}{}", home, &path[1..]);
+        }
+    }
+    path.to_string()
+}
+
 /// Write raw bytes to a given path (from X-File-Path header).
 fn handle_write_file(request: &mut tiny_http::Request) -> Result<String, String> {
     let path = request
         .headers()
         .iter()
         .find(|h| h.field.as_str() == "X-File-Path")
-        .map(|h| h.value.as_str().to_string())
+        .map(|h| expand_tilde(h.value.as_str()))
         .ok_or_else(|| "missing X-File-Path header".to_string())?;
 
     let mut bytes = Vec::new();
