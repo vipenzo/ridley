@@ -40,6 +40,7 @@
   (:require [ridley.photogrammetry.cage :as cage]
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.linalg :as la]
+            [ridley.photogrammetry.match-cage :as mc]
             [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.blob-detect :as bd]
             [ridley.photogrammetry.synth :as synth]))
@@ -140,7 +141,16 @@
         d (js/parseFloat (or (aget (.-env js/process) "CAGE_D") "176"))
         proxy (cage/registration-cage :d d :index-phase iph)
         anchors (:anchors proxy)
-        obj (into {} (for [[id pose] anchors] [id (:position pose)]))]
+        obj (into {} (for [[id pose] anchors] [id (:position pose)]))
+        ;; the same shape bridge/pnp-target-points hands the editor: object-frame
+        ;; position plus the mark's own printed-face normal, which is what the
+        ;; physical guard tests against
+        targets (vec (for [[id pose] (sort-by key anchors)]
+                       {:id id :obj (:position pose)
+                        :normal (let [h (:heading pose)
+                                      n (la/v-norm h)]
+                                  (when (pos? n) (la/v-scale h (/ 1.0 n))))
+                        :index? (some? (cage/index-parts id))}))]
     (println (str "\n=== gabbia ⌀" d " index-phase " iph ": " (count anchors) " bersagli ==="))
     (-> (decode photo)
         (.then
@@ -373,6 +383,33 @@
                                        " a fase " (fmt (first at) 1) "°…" (fmt (last at) 1) "°"
                                        " (nominale 0°, a 0° ne spiega "
                                        (second (first (filter #(= 0.0 (first %)) prof))) ")"))))))
+                 ;; ── and now the same thing through match-cage ───────────────
+                 ;; Everything above is the measurement that found the mechanism.
+                 ;; This is the mechanism as a function, on the same data: it must
+                 ;; reach the same reading, and then do the part the study never
+                 ;; did — take every mark the pose accounts for and re-solve on all
+                 ;; of them, which is where a one-ring planar fit finally becomes a
+                 ;; pose conditioned on the whole cage.
+                 (println "\n  == match-cage/read-crown ==")
+                 (let [r (mc/read-crown seed-picks targets cands intr 12)]
+                   (if (nil? r)
+                     (println "  nessuna lettura confermata")
+                     (do
+                       (println (str "  lettura: rot " (:rot (:reading r))
+                                     " mirror " (:mirror? (:reading r))
+                                     " faccia-girata " (:flip-face? (:reading r))
+                                     " · spiega " (:explained r) " mark"
+                                     " · rms anello " (fmt (:rms-px r) 2) "px"))
+                       (println (str "  corrispondenze trovate: " (count (:corr r))
+                                     " · posa su TUTTE: "
+                                     (if (:full r) (str "rms " (fmt (:rms-px (:full r)) 2) "px") "—")))
+                       (println (str "  guardia fisica ha scartato " (:guard-rejected r)
+                                     " letture · restano in parità " (count (:ties r))
+                                     " " (mapv (comp :rot :reading) (:ties r))))
+                       (when-let [fp (:pose (:full r))]
+                         (println (str "  ai 4 mark interni noti, con la posa piena: "
+                                       (mapv (fn [px] (fmt (nearest (keep (fn [[_ q]] (cam/project intr fp q)) obj) px) 0))
+                                             inner-truth)))))))
                  ;; ── the same fact from the other side ───────────────────────
                  ;; The peaks above say 85.5 on the X plane (nominal), 53.5 on the Y
                  ;; and ~69.5 on the Z: the two inner rings look SWAPPED. They are

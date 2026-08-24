@@ -202,20 +202,45 @@ fra due facce è precisamente il mestiere di `bridge/camera-sees-marks?`.
 Cioè: **la simmetria della corona non si rompe cliccando di più, si rompe col
 RESTO della gabbia**. Ed è per questo che il rilevatore doveva venire prima.
 
-Da cui la forma della fetta 2:
+Da cui la forma della fetta 2, **costruita il 2026-08-24** in
+`src/ridley/photogrammetry/match_cage.cljs` (`read-crown`):
 
 1. rileva i candidati (fatto);
 2. l'utente clicca 4+ mark di UN anello più il suo zero-indice — cosa che sa fare
    bene, e che il documento ha già misurato chiudere a 5px;
 3. si provano tutte e 48 le riletture, ciascuna punteggiata da **quanto della
    gabbia intera** la sua posa spiega contro i candidati;
-4. restano due facce, e decide la guardia fisica, non il residuo.
+4. restano due facce, e decide la guardia fisica, non il residuo;
+5. poi `assign` appaia OGNI mark che la posa spiega col dischetto su cui cade
+   (nearest-neighbour **mutuo**: un mark si prende un dischetto solo se quel
+   dischetto a sua volta ha lui come più vicino), e si risolve di nuovo su tutte
+   le corrispondenze — ed è lì che un fit planare a un anello diventa una posa
+   condizionata sulla gabbia intera.
 
-**Resta da capire i 17-23px**, e c'è un indiziato con nome e cognome: le
-`:phases`, la rotazione con cui ciascun anello è stato incollato, che i documenti
-della gabbia dicono di MISURARE e non di dare per nominale — ed è un errore che
-fa scivolare i mark LUNGO il proprio anello, che è la forma giusta per quel che
-resta. `cage/phase-from-residuals` esiste già.
+**Sui pixel veri di `IMG_9014`** (test protetto `real-cage-photo-read-crown`):
+legge `rot 3`, spiega 19 mark, ne appaia 19, e la posa risolta su tutti chiude a
+**9.13px**. I quattro mark interni noti passano da **157 127 92 139px** (lettura
+dell'utente) a **21 8 4 4px**. Su gabbia sintetica: sfasamenti 0/3/5/9 tutti
+recuperati esatti, 39 corrispondenze su 39 mark rivolti alla camera, rms 0.00px.
+
+**La tolleranza `:tol-px` è il numero da capire**, e la fissa la GABBIA, non la
+camera: una lettura si giudica su mark che l'anello cliccato non vincola, quindi
+la predizione porta addosso tutto l'errore del modello — le fasi di incollaggio
+(misurate: 1-2°) e l'anello che non è perfettamente piano (Vincenzo, guardando il
+pezzo: «di poco» — a quell'inquadratura ~1.2mm, cioè una ventina di pixel). Più
+stretta di così, la lettura GIUSTA prende zero e la ricerca non trova nulla.
+
+**Il residuo, spiegato.** I 17-23px che restavano dopo la sola rilettura non sono
+le `:phases`: misurate sulla lettura giusta valgono X −0.4°, Y +0.7…+2.4°,
+Z −0.9…−0.3°, cioè un grado o due — un incollaggio fatto bene. È **la planarità**,
+e nessuna fase la corregge, perché una fase è una rotazione rigida. Ed è anche
+perché il quarto mark interno resta a 21px mentre gli altri tre stanno a 4-8.
+
+Provata e scartata: `:index-phase 0`. Il docstring di `default-index-phase` dice
+che una gabbia stampata PRIMA del 2026-08-22 ha lo zero-indice sull'asse del mark
+0, e questa è stata incollata il 18-19 agosto — ma è sbagliata per questa gabbia:
+con `:index-phase 0` il pallino cliccato finisce a 149px e il solve lo butta,
+mentre col terzo di passo nominale sta a 4.1px. Ha l'indice chirale.
 
 **Senza seme** (nessun click) resta la strada lunga: RANSAC sulle ellissi — i tre
 anelli proiettano tre ellissi, cinque punti definiscono una conica, il raggio noto
@@ -226,7 +251,12 @@ piccolo.
 ### Fetta 3 — cablaggio
 
 Tasto `a` per la gabbia (oggi rifiuta), messaggio, e i risultati nel pannello
-come per il piatto.
+come per il piatto. Ora c'è tutto quello che serve: `blob-detect/cage-opts` per i
+candidati e `match-cage/read-crown` per la lettura e la posa. Quel che manca è il
+gesto: da dove vengono i `picks` di UN anello (i click che l'utente già fa con
+`p`), dove finiscono le correspondenze, e cosa dire quando `read-crown` torna nil
+o con `:ties` non vuoto — che è il caso onesto di una foto che mostra un anello
+solo, e va detto, non nascosto.
 
 ## Il banco di prova, e usalo
 
