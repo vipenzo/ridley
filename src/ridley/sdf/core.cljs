@@ -155,6 +155,16 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn- with-default-pose [node]
   (assoc node :creation-pose default-creation-pose))
 
+(defn- check-sdf-number!
+  "Throw if `v` is not a finite number. Same rationale as check-sdf-nodes!:
+   a missing k serializes as null (and NaN/Infinity also become null in JSON),
+   so the Rust parser rejects the whole request with a cryptic error."
+  [op-label param-name v]
+  (when-not (and (number? v) (js/isFinite v))
+    (throw (js/Error. (str op-label ": " param-name " must be a number, got "
+                           (let [s (pr-str v)]
+                             (if (> (count s) 60) (str (subs s 0 60) " …") s)))))))
+
 ;; ── SDF node constructors (pure data) ───────────────────────────
 ;; Every public-facing constructor stamps a default :creation-pose at
 ;; world origin. Top-level rotate/scale pivot on that pose, mirroring
@@ -162,6 +172,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
 ;; via compile-expr remain untagged — only the root is positional.
 
 (defn sdf-sphere [r]
+  (check-sdf-number! "sdf-sphere" "r" r)
   (with-default-pose {:op "sphere" :r r}))
 
 (defn sdf-box
@@ -169,9 +180,15 @@ need the Rust backend — make sure the desktop app's geometry server is running
    (sdf-box size) — cube with given side
    (sdf-box a b c) — a→Y(right), b→Z(up), c→X(heading)."
   ([size] (sdf-box size size size))
-  ([a b c] (with-default-pose {:op "box" :sx c :sy a :sz b})))
+  ([a b c]
+   (check-sdf-number! "sdf-box" "a" a)
+   (check-sdf-number! "sdf-box" "b" b)
+   (check-sdf-number! "sdf-box" "c" c)
+   (with-default-pose {:op "box" :sx c :sy a :sz b})))
 
 (defn sdf-cyl [r h]
+  (check-sdf-number! "sdf-cyl" "r" r)
+  (check-sdf-number! "sdf-cyl" "h" h)
   ;; :feature-r drives mesh smoothness around the side (see min-feature-size).
   (with-default-pose {:op "cyl" :r r :h h :feature-r r}))
 
@@ -187,6 +204,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
    the exact frustum surface — accurate enough for booleans and visual
    meshing, though not a true Euclidean SDF outside the surface."
   [r1 r2 h]
+  (check-sdf-number! "sdf-cone" "r1" r1)
+  (check-sdf-number! "sdf-cone" "r2" r2)
+  (check-sdf-number! "sdf-cone" "h" h)
   (let [half-h (/ h 2)
         slope  (/ (- r2 r1) h)
         max-r  (max r1 r2)]
@@ -212,6 +232,10 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Box with rounded corners as a true SDF.
    Parameters match mesh box convention: (sdf-rounded-box a b c r)."
   [a b c r]
+  (check-sdf-number! "sdf-rounded-box" "a" a)
+  (check-sdf-number! "sdf-rounded-box" "b" b)
+  (check-sdf-number! "sdf-rounded-box" "c" c)
+  (check-sdf-number! "sdf-rounded-box" "r" r)
   (with-default-pose {:op "rounded-box" :sx c :sy a :sz b :r r}))
 
 (declare compile-expr)
@@ -220,6 +244,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Torus in the XY plane around the Z axis.
    R = major radius (center of tube to torus axis), r = minor radius (tube)."
   [R r]
+  (check-sdf-number! "sdf-torus" "R" R)
+  (check-sdf-number! "sdf-torus" "r" r)
   (-> (compile-expr
        (list '- (list 'sqrt
                       (list '+
@@ -287,16 +313,6 @@ need the Rust backend — make sure the desktop app's geometry server is running
                  (when-let [suggestion (and (mesh-arg? (nth args idx))
                                             (mesh-space-equivalent op-label))]
                    (str " To work in mesh space instead, use " suggestion ".")))))))
-
-(defn- check-sdf-number!
-  "Throw if `v` is not a finite number. Same rationale as check-sdf-nodes!:
-   a missing k serializes as null (and NaN/Infinity also become null in JSON),
-   so the Rust parser rejects the whole request with a cryptic error."
-  [op-label param-name v]
-  (when-not (and (number? v) (js/isFinite v))
-    (throw (js/Error. (str op-label ": " param-name " must be a number, got "
-                           (let [s (pr-str v)]
-                             (if (> (count s) 60) (str (subs s 0 60) " …") s)))))))
 
 ;; ── SDF boolean operations ──────────────────────────────────────
 
@@ -619,6 +635,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn sdf-gyroid
   "Gyroid TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
+  (check-sdf-number! "sdf-gyroid" "period" period)
+  (check-sdf-number! "sdf-gyroid" "thickness" thickness)
   (let [s (/ (* 2 js/Math.PI) period)]
     (with-default-pose
       (sdf-shell
@@ -631,6 +649,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn sdf-schwarz-p
   "Schwarz-P TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
+  (check-sdf-number! "sdf-schwarz-p" "period" period)
+  (check-sdf-number! "sdf-schwarz-p" "thickness" thickness)
   (let [s (/ (* 2 js/Math.PI) period)]
     (with-default-pose
       (sdf-shell
@@ -643,6 +663,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn sdf-diamond
   "Diamond (Schwarz-D) TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
+  (check-sdf-number! "sdf-diamond" "period" period)
+  (check-sdf-number! "sdf-diamond" "thickness" thickness)
   (let [s (/ (* 2 js/Math.PI) period)]
     (with-default-pose
       (sdf-shell

@@ -127,6 +127,29 @@
     (is (thrown-with-msg? js/Error #"sdf-scale: sx must be a number"
                           (sdf/sdf-scale node nil)))))
 
+(deftest primitive-numeric-params-are-checked
+  (testing "constructors reject nil/non-numeric dimensions on the spot"
+    (is (thrown-with-msg? js/Error #"sdf-sphere: r must be a number, got nil"
+                          (sdf/sdf-sphere nil)))
+    (is (thrown-with-msg? js/Error #"sdf-box: b must be a number, got \"2\""
+                          (sdf/sdf-box 1 "2" 3)))
+    (is (thrown-with-msg? js/Error #"sdf-box: a must be a number"
+                          (sdf/sdf-box nil)))
+    (is (thrown-with-msg? js/Error #"sdf-cyl: h must be a number"
+                          (sdf/sdf-cyl 5 nil)))
+    (is (thrown-with-msg? js/Error #"sdf-cone: r2 must be a number"
+                          (sdf/sdf-cone 10 nil 5)))
+    (is (thrown-with-msg? js/Error #"sdf-rounded-box: r must be a number"
+                          (sdf/sdf-rounded-box 1 2 3 nil)))
+    (is (thrown-with-msg? js/Error #"sdf-torus: r must be a number"
+                          (sdf/sdf-torus 10 js/NaN)))
+    (is (thrown-with-msg? js/Error #"sdf-gyroid: period must be a number"
+                          (sdf/sdf-gyroid nil 1)))
+    (is (thrown-with-msg? js/Error #"sdf-schwarz-p: thickness must be a number"
+                          (sdf/sdf-schwarz-p 10 nil)))
+    (is (thrown-with-msg? js/Error #"sdf-diamond: period must be a number"
+                          (sdf/sdf-diamond js/Infinity 1)))))
+
 ;; ── Non-regression: valid SDF trees still build ─────────────────
 
 (deftest valid-nodes-build-normally
@@ -139,6 +162,9 @@
     (is (= "shell" (:op (sdf/sdf-shell node 2))))
     (is (= "offset" (:op (sdf/sdf-offset node 2))))
     (is (= "morph" (:op (sdf/sdf-morph node other-node 0.5))))
+    (is (= "sphere" (:op (sdf/sdf-sphere 5))))
+    (is (= "box" (:op (sdf/sdf-box 1 2 3))))
+    (is (= "cyl" (:op (sdf/sdf-cyl 5 10))))
     (is (= "move" (:op (sdf/sdf-move node 1 2 3))))
     (is (= "rotate" (:op (sdf/sdf-rotate node :z 45))))
     (is (= "scale" (:op (sdf/sdf-scale node 2))))))
