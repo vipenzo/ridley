@@ -367,14 +367,17 @@ need the Rust backend — make sure the desktop app's geometry server is running
 
 (defn sdf-shell [a thickness]
   (check-sdf-nodes! "sdf-shell" [a])
+  (check-sdf-number! "sdf-shell" "thickness" thickness)
   (-> {:op "shell" :a a :thickness thickness} (inherit-meta a)))
 
 (defn sdf-offset [a amount]
   (check-sdf-nodes! "sdf-offset" [a])
+  (check-sdf-number! "sdf-offset" "amount" amount)
   (-> {:op "offset" :a a :amount amount} (inherit-meta a)))
 
 (defn sdf-morph [a b t]
   (check-sdf-nodes! "sdf-morph" [a b])
+  (check-sdf-number! "sdf-morph" "t" t)
   (-> {:op "morph" :a a :b b :t t} (merge-meta a b)))
 
 (defn sdf-displace
@@ -388,6 +391,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
 ;; ── SDF transforms ──────────────────────────────────────────────
 
 (defn sdf-move [node dx dy dz]
+  (check-sdf-number! "sdf-move" "dx" dx)
+  (check-sdf-number! "sdf-move" "dy" dy)
+  (check-sdf-number! "sdf-move" "dz" dz)
   (-> {:op "move" :a node :dx dx :dy dy :dz dz}
       (with-meta-from node (pose-translate dx dy dz))))
 
@@ -396,6 +402,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
    translating :anchors. Used by cp-* in attach: anchors and geometry
    slide in opposite directions from the creation-pose, which stays put."
   [node dx dy dz]
+  (check-sdf-number! "sdf-move-keeping-creation-pose" "dx" dx)
+  (check-sdf-number! "sdf-move-keeping-creation-pose" "dy" dy)
+  (check-sdf-number! "sdf-move-keeping-creation-pose" "dz" dz)
   (let [base {:op "move" :a node :dx dx :dy dy :dz dz}
         pose-fn (pose-translate dx dy dz)]
     (cond-> base
@@ -448,6 +457,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    so we silently flip the angle before sending it to libfive — the angle
    stored in the JSON tree for :y is the negated form."
   [node axis angle]
+  (check-sdf-number! "sdf-rotate" "angle" angle)
   (cond
     (keyword? axis)
     (let [rad (* angle (/ Math/PI 180))
@@ -501,6 +511,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Scale an SDF node. Uniform or per-axis."
   ([node s] (sdf-scale node s s s))
   ([node sx sy sz]
+   (check-sdf-number! "sdf-scale" "sx" sx)
+   (check-sdf-number! "sdf-scale" "sy" sy)
+   (check-sdf-number! "sdf-scale" "sz" sz)
    (-> {:op "scale" :a node :sx sx :sy sy :sz sz}
        (with-meta-from node (pose-scale sx sy sz)))))
 
@@ -514,6 +527,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    sdf-box / sdf-sphere don't expose `var` nodes in their JSON tree —
    their dependence on x/y/z is implicit inside the libfive backend."
   [node axis angle-deg]
+  (check-sdf-number! "sdf-rotate-axis" "angle" angle-deg)
   (let [[ax-r ay-r az-r] axis
         mag (Math/sqrt (+ (* ax-r ax-r) (* ay-r ay-r) (* az-r az-r)))]
     (when-not (pos? mag)

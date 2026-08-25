@@ -105,6 +105,28 @@
     (is (thrown-with-msg? js/Error #"sdf-blend-difference: k must be a number"
                           (sdf/sdf-blend-difference node other-node js/Infinity)))))
 
+(deftest unary-op-numeric-params-are-checked
+  (testing "shell/offset/morph reject a nil or non-numeric parameter"
+    (is (thrown-with-msg? js/Error #"sdf-shell: thickness must be a number, got nil"
+                          (sdf/sdf-shell node nil)))
+    (is (thrown-with-msg? js/Error #"sdf-offset: amount must be a number, got \"2\""
+                          (sdf/sdf-offset node "2")))
+    (is (thrown-with-msg? js/Error #"sdf-morph: t must be a number"
+                          (sdf/sdf-morph node other-node nil)))))
+
+(deftest transform-numeric-params-are-checked
+  (testing "move/rotate/scale name the offending component"
+    (is (thrown-with-msg? js/Error #"sdf-move: dy must be a number, got nil"
+                          (sdf/sdf-move node 1 nil 3)))
+    (is (thrown-with-msg? js/Error #"sdf-rotate: angle must be a number"
+                          (sdf/sdf-rotate node :z nil)))
+    (is (thrown-with-msg? js/Error #"sdf-rotate: angle must be a number"
+                          (sdf/sdf-rotate node [0 0 1] nil)))
+    (is (thrown-with-msg? js/Error #"sdf-scale: sz must be a number"
+                          (sdf/sdf-scale node 1 1 js/NaN)))
+    (is (thrown-with-msg? js/Error #"sdf-scale: sx must be a number"
+                          (sdf/sdf-scale node nil)))))
+
 ;; ── Non-regression: valid SDF trees still build ─────────────────
 
 (deftest valid-nodes-build-normally
@@ -116,7 +138,10 @@
     (is (= "intersection" (:op (sdf/sdf-intersection node other-node))))
     (is (= "shell" (:op (sdf/sdf-shell node 2))))
     (is (= "offset" (:op (sdf/sdf-offset node 2))))
-    (is (= "morph" (:op (sdf/sdf-morph node other-node 0.5))))))
+    (is (= "morph" (:op (sdf/sdf-morph node other-node 0.5))))
+    (is (= "move" (:op (sdf/sdf-move node 1 2 3))))
+    (is (= "rotate" (:op (sdf/sdf-rotate node :z 45))))
+    (is (= "scale" (:op (sdf/sdf-scale node 2))))))
 
 (deftest variadic-forms-still-work
   (testing "vector form, n-ary form, and the 1-node and empty degenerate cases"
