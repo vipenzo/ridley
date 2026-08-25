@@ -87,11 +87,30 @@
     (is (thrown-with-msg? js/Error #"argument 1 is a path"
                           (sdf/sdf-shell {:type :path :commands []} 2)))))
 
+;; ── Numeric parameters are checked too ──────────────────────────
+
+(deftest blend-k-must-be-a-number
+  (testing "a nil or non-numeric k is rejected here, not by the Rust parser"
+    (is (thrown-with-msg? js/Error #"sdf-blend: k must be a number, got nil"
+                          (sdf/sdf-blend node other-node nil)))
+    (is (thrown-with-msg? js/Error #"sdf-blend: k must be a number, got \"3\""
+                          (sdf/sdf-blend node other-node "3")))
+    (is (thrown-with-msg? js/Error #"sdf-blend-difference: k must be a number"
+                          (sdf/sdf-blend-difference node other-node nil)))))
+
+(deftest blend-k-must-be-finite
+  (testing "NaN/Infinity would serialize as JSON null, so they are rejected too"
+    (is (thrown-with-msg? js/Error #"sdf-blend: k must be a number"
+                          (sdf/sdf-blend node other-node js/NaN)))
+    (is (thrown-with-msg? js/Error #"sdf-blend-difference: k must be a number"
+                          (sdf/sdf-blend-difference node other-node js/Infinity)))))
+
 ;; ── Non-regression: valid SDF trees still build ─────────────────
 
 (deftest valid-nodes-build-normally
   (testing "well-formed SDF operands are untouched by the check"
     (is (= "blend" (:op (sdf/sdf-blend node other-node 3))))
+    (is (= "blend-difference" (:op (sdf/sdf-blend-difference node other-node 3))))
     (is (= "union" (:op (sdf/sdf-union node other-node))))
     (is (= "difference" (:op (sdf/sdf-difference node other-node))))
     (is (= "intersection" (:op (sdf/sdf-intersection node other-node))))

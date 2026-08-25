@@ -288,6 +288,16 @@ need the Rust backend — make sure the desktop app's geometry server is running
                                             (mesh-space-equivalent op-label))]
                    (str " To work in mesh space instead, use " suggestion ".")))))))
 
+(defn- check-sdf-number!
+  "Throw if `v` is not a finite number. Same rationale as check-sdf-nodes!:
+   a missing k serializes as null (and NaN/Infinity also become null in JSON),
+   so the Rust parser rejects the whole request with a cryptic error."
+  [op-label param-name v]
+  (when-not (and (number? v) (js/isFinite v))
+    (throw (js/Error. (str op-label ": " param-name " must be a number, got "
+                           (let [s (pr-str v)]
+                             (if (> (count s) 60) (str (subs s 0 60) " …") s)))))))
+
 ;; ── SDF boolean operations ──────────────────────────────────────
 
 (defn- variadic-args
@@ -342,6 +352,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
 
 (defn sdf-blend [a b k]
   (check-sdf-nodes! "sdf-blend" [a b])
+  (check-sdf-number! "sdf-blend" "k" k)
   (-> {:op "blend" :a a :b b :k k} (merge-meta a b)))
 
 (defn sdf-blend-difference
@@ -351,6 +362,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    Anchors come from the minuend (a)."
   [a b k]
   (check-sdf-nodes! "sdf-blend-difference" [a b])
+  (check-sdf-number! "sdf-blend-difference" "k" k)
   (-> {:op "blend-difference" :a a :b b :k k} (inherit-meta a)))
 
 (defn sdf-shell [a thickness]
