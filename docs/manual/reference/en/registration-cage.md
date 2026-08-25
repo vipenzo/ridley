@@ -202,6 +202,34 @@ A cage glued **before** the key exists is not wrong — its turn is a property o
 the part, measured once and declared forever: `:phases {:x 90}` (the reference
 cage's own number).
 
+## Holding the part: sticks, not pegs
+
+Cages printed after 2026-08-25 carry **two stick-slots per ring**: small blocks
+with an elliptical channel pointing at the cage's centre. A printed **stick**
+(slightly elliptical in section) slides through; push it until it touches the
+part, give it a quarter turn, and it locks — the stick is its own cam, no
+levers, no loose hardware. Four or five sticks entering from different rings
+cage any part at the centre.
+
+This matters to registration, not just to convenience: the clothes-pegs and
+stems that held the part in the first real sessions are exactly what covered
+marks and fed the detector its false candidates. The slots sit at 60° and 240°
+on each ring — 15° clear of the nearest crown disc, 30° clear of the joints,
+35° from the zero-index — and take no part in the solve.
+
+The kit, all from the tested sections (stick 4.0×3.6 mm, channel 4.4×4.0):
+
+```clojure
+(register Stick (acquire-cage/stick))        ; 60mm, il collaudato
+(register Lungo (acquire-cage/stick 80))     ; per il centro dall'anello grande
+(register Punta (acquire-cage/punta-tricuspide))
+```
+
+`punta-tricuspide` is an optional three-pointed foot that mounts on a stick's
+tip by the same insert-and-twist principle — three contacts neither slip nor
+roll on a convex surface. Print sticks **lying down**: the slight flat the
+bridge side loses falls where the fit has clearance, not where it bites.
+
 ## The rotation you cannot impose
 
 Concentricity and squareness are imposed by the tabs and their stops. So is the

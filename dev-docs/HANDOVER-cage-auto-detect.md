@@ -512,5 +512,24 @@ Vincoli da rispettare, tutti già pagati altrove:
 - La generazione dei mesh senza export è verificata (make-cage-ring /
   make-print-ring, chiave inclusa): si può prototipare nell'editor.
 
-Non ancora costruito: Vincenzo lo vuole «quando tutto sarà a posto». Resta
-prima il collaudo di stampa della chiave di montaggio.
+**COSTRUITO il 2026-08-25, su design COLLAUDATO da Vincenzo** — che ha superato
+la mia idea (cam-cleat con leva): lo stick stesso è la camma. Sezione ellittica
+4.0×3.6, canale 4.4×4.0 con gioco 0.2 per lato; infili con le ellissi allineate,
+un quarto di giro e l'asse maggiore dello stick morde l'asse minore del canale.
+Zero pezzi mobili. Ha anche disegnato la `punta-tricuspide` (tre sfere schiacciate
+in blend SDF), piedino opzionale che si monta sulla punta con lo stesso principio.
+
+Implementazione: `cage/stick-slots` (pose: 2 per anello a 30°/210° locali, raggio
+outer−7, heading verso il centro, up = asse dell'anello) esportate anche in
+`printable-ring :slots`; la libreria le costruisce (`slot-pieces`) come blocchi
+dal piatto di stampa a +6 sopra la faccia (ricetta delle linguette, zero sbalzi)
+col canale ellittico passante — asse maggiore VERTICALE in stampa, così il
+cedimento del ponte cade sui 0.4mm di gioco e non sullo zero del bloccaggio.
+`acquire-cage/stick` e `acquire-cage/punta-tricuspide` (il suo design, verbatim).
+
+Bug trovato dal vivo e da ricordare: `rotate` su mesh gira attorno alla
+CREATION-POSE, che `mesh-translate` porta con sé — ruotare dopo la traslazione
+fa girare il pezzo su se stesso invece che attorno all'origine. Orientare prima,
+traslare dopo, e la posizione arriva dai dati di posa del proxy.
+
+Resta il collaudo di stampa: chiave di montaggio + slot nella prossima gabbia.

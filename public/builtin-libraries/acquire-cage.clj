@@ -79,6 +79,118 @@
   [c axis]
   (filter (fn [[id _]] (= (name axis) (ring-letter id))) (:anchors c)))
 
+;; --- Il portapezzo: stick ellittici e i loro slot -----------------------------
+;;
+;; Disegnato, stampato e COLLAUDATO da Vincenzo (2026-08-25): un bastoncino a
+;; sezione ellittica scorre in un canale ellittico con gioco; una piccola
+;; rotazione e si blocca — il bastoncino fa da camma a se stesso, senza leve né
+;; pezzi in più. Quattro o cinque stick, entrando da anelli diversi, ingabbiano
+;; il pezzo al centro senza mollette né nastro — che sono esattamente ciò che
+;; nella prima sessione reale copriva i dischetti e regalava falsi candidati al
+;; riconoscimento.
+;;
+;; Le SEZIONI sono quelle collaudate, e sono l'unica fonte: stick 4.0×3.6 mm,
+;; canale 4.4×4.0. Si infila con le ellissi allineate (0.2 mm di gioco per
+;; lato), si ruota di un quarto di giro e l'asse maggiore dello stick (4.0)
+;; morde l'asse minore del canale (4.0): frizione piena. Il corpo ATTORNO al
+;; canale invece cambia rispetto al pezzo incollabile del collaudo: qui si fonde
+;; con l'anello in stampa, come le linguette.
+
+(def stick-section
+  "La sezione dello stick: ellisse 4.0×3.6 mm. Quella collaudata."
+  (scale-shape (circle 2) 1 0.9))
+
+(def channel-section
+  "La sezione del canale: ellisse 4.4×4.0 mm, asse MAGGIORE lungo l'up — che in
+   stampa è la verticale, dove il foro orizzontale perde qualche decimo per
+   cedimento del ponte: il calo cade sui 0.4 mm di gioco dell'inserimento, non
+   sullo zero del bloccaggio, che lavora sull'asse minore stampato in piano."
+  (scale-shape (circle 2) 1 1.1))
+
+(def ^:private slot-body-w 8.0)     ; larghezza del corpo (azimutale)
+(def ^:private slot-body-len 14.0)  ; lunghezza lungo il canale (radiale)
+(def ^:private slot-rise 6.0)       ; quanto il corpo sale sopra la faccia
+(def ^:private channel-lift 2.5)    ; quota dell'asse del canale sopra la faccia
+
+(defn- to-ring-frame
+  "Porta una mesh costruita nel frame PIATTO dell'anello (anello in XY, normale
+   +Z — la posa di stampa) nel frame che quell'anello ha nella gabbia. È la
+   stessa permutazione ciclica di `place`, scritta come due rotazioni d'asse —
+   verificata sulle matrici: per :x, u→y v→z n→x; per :y, u→z v→x n→y."
+  [m axis]
+  (cond
+    (= axis :z) m
+    (= axis :x) (rotate (rotate m :x 90) :z 90)
+    :else       (rotate (rotate m :z -90) :x -90)))
+
+(defn- slot-pieces
+  "[corpi tagli] degli slot di un anello — corpi da UNIRE alla fascia, canali da
+   SOTTRARRE. Ogni slot arriva coi suoi dati di posa (da :slots del printable o
+   :stick-slots della gabbia); qui se ne usano l'azimut e il raggio, e la
+   geometria si costruisce nel frame piatto e si porta in posa con
+   `to-ring-frame` — così i numeri vivono in un posto solo, nel proxy.
+
+   Il corpo: un blocco che dal PIATTO DI STAMPA (−h/2) sale a `slot-rise` sopra
+   la faccia — fuso con la fascia dove la copre, in piedi sul piatto dove la
+   sborda verso il centro: la ricetta delle linguette, zero sbalzi. Il canale:
+   l'ellisse collaudata, asse maggiore verticale, passante e abbondante."
+  [slots h axis flat?]
+  (let [;; ORIENTA PRIMA, TRASLA DOPO: rotate gira attorno alla creation-pose,
+        ;; che mesh-translate porta con sé — ruotare dopo la traslazione fa
+        ;; girare il blocco su se stesso invece che attorno al centro (trovato
+        ;; dal vivo: gli slot finivano tutti ad azimut zero). Quindi il pezzo si
+        ;; costruisce centrato all'origine, si ruota lì, e la POSIZIONE arriva
+        ;; già pronta dai dati di posa del proxy.
+        orient (fn [m azim] (let [r (rotate m :z azim)]
+                              (if flat? r (to-ring-frame r axis))))
+        body-h (+ h slot-rise)
+        one (fn [mk lift]
+              (map (fn [{:keys [azimuth-deg position up]}]
+                     (mesh-translate (orient (mk) azimuth-deg)
+                                     (v+ position (v* up lift))))
+                   slots))]
+    [(one (fn [] (box slot-body-w body-h slot-body-len))
+          (- (/ body-h 2.0) (/ h 2.0)))
+     (one (fn [] (scale (cyl 2 80) 1 1.0 1.1))
+          (+ (/ h 2.0) channel-lift))]))
+
+(defn stick
+  "Uno stick da stampare: sezione ellittica collaudata (4.0×3.6), lungo `len`
+   (default 60 — quello provato; per arrivare al centro dall'anello grande di
+   una ⌀176 servono ~80).
+
+     (register Stick (acquire-cage/stick))
+     (register Lungo (acquire-cage/stick 80))
+
+   Si infila nel canale di uno slot con le ellissi allineate, si spinge fino a
+   toccare il pezzo, e un quarto di giro lo blocca: lo stick fa da camma a se
+   stesso. Va stampato SDRAIATO, e la piccola perdita di rotondità del lato
+   ponte cade dove c'è gioco, non dove morde."
+  ([] (stick 60))
+  ([len] (scale (cyl 2 len) 1 1.0 0.9)))
+
+(defn punta-tricuspide
+  "Il piedino a tre punte di Vincenzo (2026-08-25), stampato e provato: tre
+   sfere schiacciate fuse a blend che fanno una presa a tre contatti — su una
+   superficie convessa tre punti non scivolano e non rotolano. Si monta sulla
+   punta dello stick con lo stesso principio dello slot: canale ellittico,
+   infili, ruoti, bloccato. Opzionale: per pezzi delicati o lisci; sul resto la
+   punta nuda dello stick basta.
+
+   Costruito alla posa corrente della turtle, come ogni pezzo del DSL."
+  []
+  (mesh-difference
+   (mesh-union
+    (attach (cyl 3 3) (f 2))
+    (sdf-blend
+     (sdf-blend
+      (attach (scale (sdf-sphere 2) 2 1 1) (cp-f -3) (tv 120))
+      (attach (scale (sdf-sphere 2) 2 1 1) (cp-f -3) (tv -0) (th 60) (tv -75) (th 30))
+      1.5)
+     (attach (scale (sdf-sphere 2) 2 1 1) (cp-f -3) (tv -120) (th -15) (tv -15) (th -30))
+     1.5))
+   (attach (extrude (scale-shape (circle 2) 1.1 1) (f 60)) (f -20))))
+
 (defn- build-ring
   "L'anello `axis` di `c` come [base dischetti]. Con `flat?` vero l'anello esce
    nel SUO frame — piatto in XY, mark sulle facce ±Z, linguette verso l'alto —
@@ -99,6 +211,10 @@
         tabs-boxes (if flat?
                      (:tabs p)
                      (filter (fn [t] (= axis (:owner t))) (:tabs c)))
+        slots (if flat?
+                (:slots p)
+                (filter (fn [sl] (= axis (:axis sl))) (:stick-slots c)))
+        [slot-bodies slot-cuts] (slot-pieces slots h axis flat?)
         ;; il taglierino sporge 2 mm sopra la faccia: taglia netto, senza facce
         ;; complanari (la ricetta nota degli artefatti CSG)
         over 2.0
@@ -125,8 +241,10 @@
         ;; una scatola è o materiale dell'anello (linguette, battute, la SPINA
         ;; della chiave di montaggio) o un TAGLIO (la tacca che la riceve):
         ;; lo dice il suo :kind, e la tacca è l'unico taglio della famiglia
-        cuts (map as-box (filter (fn [t] (= :key-notch (:kind t))) tabs-boxes))
-        tabs (map as-box (remove (fn [t] (= :key-notch (:kind t))) tabs-boxes))
+        cuts (concat (map as-box (filter (fn [t] (= :key-notch (:kind t))) tabs-boxes))
+                     slot-cuts)
+        tabs (concat (map as-box (remove (fn [t] (= :key-notch (:kind t))) tabs-boxes))
+                     slot-bodies)
         solid (as-> annulus m
                 (if (empty? tabs) m (mesh-union (cons m tabs)))
                 (if (empty? cuts) m (mesh-difference (cons m cuts))))]

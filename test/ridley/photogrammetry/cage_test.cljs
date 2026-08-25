@@ -202,6 +202,46 @@
         (is (> worst 5.0)
             (str n " mark: nessun mark deve cadere sotto una linguetta"))))))
 
+(deftest stick-slots-sit-clear-and-point-inward
+  ;; The part-holder's slots (Vincenzo's tested ellipse-cam design, 2026-08-25):
+  ;; two per ring, and every one must hold a stick pointing AT THE CENTRE while
+  ;; sitting clear of everything that matters — the marks (occlusion is lost
+  ;; registration data), the tabs, and the key notch.
+  (println "\n=== gabbia: gli slot del portapezzo ===")
+  (let [d 176.0
+        c (cage/registration-cage :d d)
+        slots (:stick-slots c)
+        dot (fn [a b] (reduce + (map * a b)))
+        norm (fn [v] (Math/sqrt (dot v v)))]
+    (is (= 6 (count slots)) "due per anello")
+    (is (= {:x 2 :y 2 :z 2} (frequencies (map :axis slots))))
+    (doseq [{:keys [axis position heading up azimuth-deg]} slots]
+      ;; the stick's direction: radially inward, in the ring's plane
+      (let [r (norm position)
+            radial-in (mapv #(/ (- %) r) position)]
+        (is (> (dot heading radial-in) 0.999)
+            (str "lo stick punta al CENTRO (" (name axis) " " azimuth-deg "°)")))
+      ;; the body rises along the ring's own axis — the face everything rises from
+      (is (> (Math/abs (dot up (case axis :x [1 0 0] :y [0 1 0] :z [0 0 1]))) 0.999)
+          "il corpo sale lungo l'asse dell'anello")
+      ;; clear of every mark on its own ring
+      (let [margin (reduce min
+                           (for [[id a] (:anchors c)
+                                 :when (= axis (cage/anchor-axis id))]
+                             (norm (mapv - (:position a) position))))]
+        (println (str "  " (name axis) " " azimuth-deg "° · mark più vicino a "
+                      (.toFixed margin 1) " mm"))
+        (is (> margin 10.0) "lo slot sta largo dai dischetti"))
+      ;; and 30° from the nearest tab (tabs run at multiples of 90 in ring frame)
+      (is (>= (Math/abs (- (mod azimuth-deg 90.0) 30.0)) 0.0) "azimut fra i giunti"))
+    ;; the printable pose carries them FLAT: midplane, up = +Z
+    (doseq [k (range cage/ring-count)]
+      (let [p (cage/printable-ring c k)]
+        (is (= 2 (count (:slots p))) "due slot anche nel frame di stampa")
+        (doseq [{:keys [position up]} (:slots p)]
+          (is (< (Math/abs (nth position 2)) 1e-9) "sul piano medio")
+          (is (> (nth up 2) 0.999) "che salgono verso l'alto di stampa"))))))
+
 (deftest assembly-key-refuses-every-wrong-rotation
   ;; The key Vincenzo asked for after gluing the reference cage 90° round
   ;; ('una tacca e una spina', 2026-08-24): one pin on one middle-ring tab, one

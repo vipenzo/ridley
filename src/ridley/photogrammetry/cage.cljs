@@ -423,6 +423,47 @@
                      (assoc (box :key-notch notch) :owner p-axis :partner q-axis)])))))
       (for [pr pairs sign [1 -1]] [pr sign])))))
 
+(def ^:private slot-azimuths
+  "Where the two stick-slots sit on each ring, in RING-LOCAL degrees. The
+   occupants to stay clear of: marks at the odd multiples of 15° (crown-phase),
+   tabs at 0/90/180/270 — and the ZERO-INDEX at 25° (crown phase plus a third
+   of a step), which the first choice of 30° forgot: the test measured the slot
+   body 7.3mm from the most precious disc on the ring. At 60° and 240° a slot is
+   15° from the nearest crown mark, 30° from the nearest joint, 35° from the
+   index — and the two being opposite, one ring's sticks brace the part from
+   both sides."
+  [60.0 240.0])
+
+(defn stick-slots
+  "The poses of the STICK-SLOTS on a cage of diameter `d` — the part-holder
+   Vincenzo designed, printed and tested (2026-08-25): an elliptical stick slides
+   through an elliptical channel and a small twist locks it, the stick being its
+   own cam. Four or five sticks, entering from different rings, cage the part at
+   the centre with no clothes-pegs and no tape — which matters to REGISTRATION,
+   not just to convenience: the pegs and stems of the first real session are
+   exactly what covered marks and fed the detector its false candidates.
+
+   Two per ring, at `slot-azimuths`. Each: {:axis :azimuth-deg :position
+   :heading :up} in cage coordinates — :position on the ring's mid-plane at
+   radius outer−7 (the slot body spans the band and stands the rest on the print
+   bed), :heading RADIALLY INWARD (the direction the stick travels), :up along
+   the ring's own axis, the face the body rises from — the same face the tabs
+   rise from, so the ring still prints flat with everything growing upward.
+
+   Fabrication data, not registration data: slots carry no marks and take no
+   part in the solve, so `:phases` does not move them."
+  [d]
+  (vec (for [k (range ring-count)
+             alpha slot-azimuths]
+         (let [axis (ring-axis k)
+               a (* alpha (/ Math/PI 180.0))
+               r (- (:outer (ring-radii d k)) 7.0)]
+           {:axis axis
+            :azimuth-deg alpha
+            :position (place axis [(* r (Math/cos a)) (* r (Math/sin a)) 0.0])
+            :heading (place axis [(- (Math/cos a)) (- (Math/sin a)) 0.0])
+            :up (place axis [0.0 0.0 1.0])}))))
+
 ;; --- anchors ----------------------------------------------------------------
 
 (defn- face-tag [s] (if (pos? s) "p" "m"))
@@ -826,6 +867,7 @@
      ;; `acquire-cage` library must not restate any of this, or the printed cage
      ;; and the model of it drift apart without either one looking wrong.
      :tabs (joint-tabs d h)
+     :stick-slots (stick-slots d)
      :aperture (aperture d)}))
 
 (defn printable-ring
@@ -859,4 +901,9 @@
            :tabs (vec (for [t (:tabs cage) :when (= axis (:owner t))]
                         {:kind (:kind t)
                          :center (unplace axis (:center t))
-                         :size (unplace axis (:size t))})))))
+                         :size (unplace axis (:size t))}))
+           :slots (vec (for [sl (:stick-slots cage) :when (= axis (:axis sl))]
+                         (-> sl
+                             (update :position (partial unplace axis))
+                             (update :heading (partial unplace axis))
+                             (update :up (partial unplace axis))))))))
