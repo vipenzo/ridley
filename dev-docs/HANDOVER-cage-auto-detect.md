@@ -533,3 +533,24 @@ fa girare il pezzo su se stesso invece che attorno all'origine. Orientare prima,
 traslare dopo, e la posizione arriva dai dati di posa del proxy.
 
 Resta il collaudo di stampa: chiave di montaggio + slot nella prossima gabbia.
+
+## Appendice — la rifinitura congiunta non è più avvelenabile (2026-08-26)
+
+Dalla sessione vera della gabbia nuova (quella con chiave e portapezzi): la foto
+6, registrata a 138.8px dopo un groviglio di click doppi, è entrata nella
+rifinitura congiunta e ha trascinato la focale condivisa da 48.6 a 60.7mm,
+portando le foto pulite da 3-8px a 12-20px. Il refiner sapeva chi era il
+colpevole — stampava «è questa che tira su la media» — e lo lasciava vincere.
+E ha perfino ADOTTATO un passaggio peggiorativo: 48.9 → 90.3px, con la focale
+ferma al limite del clamp. Con la focale avvelenata, la foto 8 non poteva che
+fallire («ogni soluzione mette la camera dietro un dischetto cliccato»).
+
+Due regole, ora nel codice (`on-refine-session!`):
+
+1. **Una foto sopra la soglia (accept-rms-px, 12) non vota sulla lente.** Il
+   fit congiunto è ai minimi quadrati: un voto avvelenato non si media, trascina.
+   La foto resta nella sessione, il log dice che è esclusa e come sistemarla
+   (Azzera, 4 click + 'a', poi R).
+2. **Un risultato peggiore non si adotta.** Se l'rms totale dopo la rifinitura
+   supera quello di prima, si tengono focale e pose correnti e si nomina la
+   foto peggiore da guardare.

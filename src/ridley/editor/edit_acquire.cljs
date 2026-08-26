@@ -3012,6 +3012,18 @@
   (if-let [[iw ih] (backdrop/image-size)]
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           targets (pnp-targets)
+          ;; A photo whose OWN registration never earned the acceptance bar must
+          ;; not vote on the LENS. The joint fit is least-squares: one poisoned
+          ;; view does not average out, it drags — measured on Vincenzo's session
+          ;; (2026-08-25): foto 6, registered at 138.8px after a tangle of
+          ;; duplicate clicks, pulled the shared focal from 48.6 to 60.7mm and
+          ;; took every clean photo from 3-8px to 12-20px with it. The refiner
+          ;; even NAMED it ("è questa che tira su la media") and then let it win.
+          bar pnp/accept-rms-px
+          poisoned (vec (for [idx (range (count (:photos @session)))
+                              :let [r (get-in @session [:acquire-results idx :rms-px])]
+                              :when (and r (> r bar))]
+                          idx))
           views (vec (keep (fn [idx]
                              ;; A pick the per-photo solve already REJECTED must not
                              ;; vote here. solve-pnp reports its rms over the
@@ -3026,7 +3038,8 @@
                                    picks (remove (fn [[ci _]] (dropped ci))
                                                  (get-in @session [:pnp-picks idx] {}))
                                    cam (get-in @session [:camera-poses idx])]
-                               (when (and cam (>= (count picks) 4))
+                               (when (and cam (>= (count picks) 4)
+                                          (not (some #{idx} poisoned)))
                                  {:idx idx
                                   ;; one lens, one session: the pixel size is the
                                   ;; current photo's, which is every photo's
@@ -3036,8 +3049,37 @@
                                                 {:world (:obj (nth targets ci)) :px px}))})))
                            (range (count (:photos @session)))))
           out (bundle/refine-session views (:focal-mm @session))]
-      (if (:error out)
+      (doseq [idx poisoned]
+        (auto-log! (str "  foto " (inc idx) " ESCLUSA dalla rifinitura: la sua "
+                        "registrazione è a "
+                        (modal/fmt-number (get-in @session [:acquire-results idx :rms-px]))
+                        "px, sopra la soglia di " bar " — sistemala (Azzera, poi "
+                        "4 click + 'a') e rifai R")))
+      (cond
+        (:error out)
         (set-status-message! (str "Rifinitura: " (:error out)))
+
+        ;; A refinement that made things WORSE is not a refinement, and adopting
+        ;; it poisons everything downstream: the session focal feeds every later
+        ;; solve on every photo. Measured (2026-08-25): 48.9 → 90.3px, ADOPTED,
+        ;; focal clamped at the limit — and photo 8 became unsolvable at 60.7mm.
+        ;; Keep what we had, say why, name the worst view.
+        (> (:rms-px out) (+ (:rms-px (:before out)) 1e-9))
+        (let [idxs (:views out)
+              per (:per-view out)
+              worst (when (seq per)
+                      (nth idxs (first (apply max-key second (map-indexed vector per)))))]
+          (auto-log! (str "=== rifinitura RIFIUTATA: peggiorava ("
+                          (modal/fmt-number (:rms-px (:before out))) " → "
+                          (modal/fmt-number (:rms-px out)) " px) ==="))
+          (set-status-message!
+           (str "Rifinitura NON applicata: peggiorava ("
+                (modal/fmt-number (:rms-px (:before out))) " → "
+                (modal/fmt-number (:rms-px out)) " px). Tengo focale e pose che avevi."
+                (when worst
+                  (str " La peggiore è la foto " (inc worst) ": guardala prima di rifare R.")))))
+
+        :else
         (let [{:keys [focal-mm poses rms-px before]} out]
           (doseq [[view pose] (map vector (filterv #(and (:pose %) (>= (count (:picks %)) 4)) views)
                                    poses)]
