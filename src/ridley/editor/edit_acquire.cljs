@@ -2237,7 +2237,17 @@
                                                   (assoc c :ci j :world (:obj (nth targets j)))))
                                         correspondences))
                         flip-sol (when flipped (pnp/solve-pnp flipped k {}))
+                        ;; A rescue may REWRITE the user's names only when the fit
+                        ;; it buys is one the session would accept. Renaming on the
+                        ;; strength of a 100px fit is guessing — and the guess gets
+                        ;; PERSISTED: measured on Vincenzo's session (2026-08-26),
+                        ;; the name rescue rewrote picks on fits of 103 and 118px
+                        ;; while the focal was poisoned at 61mm, corrupting photo
+                        ;; after photo until no single lens satisfied them all and
+                        ;; the joint refinement could only refuse.
+                        rename-worthy? (fn [sol] (and sol (<= (:rms-px sol) pnp/accept-rms-px)))
                         flip-ok? (and flip-sol
+                                      (rename-worthy? flip-sol)
                                       (bridge/camera-sees-marks?
                                        targets (mapv :ci flipped) (:pose flip-sol)))
                         seed (bridge/editor->solver-pose camera-pose proxy-pose)
@@ -2263,7 +2273,7 @@
                                       "nomi corretti. Il residuo non poteva accorgersene — è "
                                       "identico nei due casi — ma la camera finiva dietro i "
                                       "dischetti che avevi fotografato")))
-                    (if (and rescue (not (sees-marks? retry)))
+                    (if (and rescue (rename-worthy? (:sol rescue)) (not (sees-marks? retry)))
                       (do (relabel-picks! idx (:flip rescue))
                           (assoc (:sol rescue) :note
                                  (str "erano i NOMI, non i click: " (:changed rescue)
@@ -2277,6 +2287,9 @@
                                   "cliccati (sono tutti su un anello solo, e un anello solo "
                                   "ha il suo gemello specchiato): ripresa dall'allineamento "
                                   "corrente"))
+                      ;; A rescue that exists but could not buy an acceptable
+                      ;; fit is reported, not applied — renaming on its strength
+                      ;; would persist a guess (see rename-worthy? above)
                       ;; Nothing left: not the pose on screen, and not a
                       ;; misreading of the names either. Name BOTH remaining
                       ;; causes — the old message asserted the picks were all on
