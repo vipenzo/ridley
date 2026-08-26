@@ -3012,14 +3012,27 @@
   (if-let [[iw ih] (backdrop/image-size)]
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           targets (pnp-targets)
-          ;; A photo whose OWN registration never earned the acceptance bar must
+          ;; A photo whose OWN registration is an OUTLIER among the session's must
           ;; not vote on the LENS. The joint fit is least-squares: one poisoned
           ;; view does not average out, it drags — measured on Vincenzo's session
           ;; (2026-08-25): foto 6, registered at 138.8px after a tangle of
           ;; duplicate clicks, pulled the shared focal from 48.6 to 60.7mm and
           ;; took every clean photo from 3-8px to 12-20px with it. The refiner
           ;; even NAMED it ("è questa che tira su la media") and then let it win.
-          bar pnp/accept-rms-px
+          ;;
+          ;; The bar is RELATIVE (3× the session's median rms, never below the
+          ;; acceptance bar), and it must be: the first version used the absolute
+          ;; 12px alone, and on the poisoned session it would have excluded
+          ;; every photo — at the dragged focal the CLEAN photos all sat at
+          ;; 12-20px, and only R itself can bring them back down. Against a
+          ;; median of ~15 the bar is ~45: foto 6 (127) is out, the six clean
+          ;; ones vote, the focal returns.
+          all-rms (vec (sort (keep #(get-in @session [:acquire-results % :rms-px])
+                                   (range (count (:photos @session))))))
+          bar (if (seq all-rms)
+                (max pnp/accept-rms-px
+                     (* 3.0 (nth all-rms (quot (dec (count all-rms)) 2))))
+                pnp/accept-rms-px)
           poisoned (vec (for [idx (range (count (:photos @session)))
                               :let [r (get-in @session [:acquire-results idx :rms-px])]
                               :when (and r (> r bar))]
@@ -3053,7 +3066,7 @@
         (auto-log! (str "  foto " (inc idx) " ESCLUSA dalla rifinitura: la sua "
                         "registrazione è a "
                         (modal/fmt-number (get-in @session [:acquire-results idx :rms-px]))
-                        "px, sopra la soglia di " bar " — sistemala (Azzera, poi "
+                        "px, sopra la soglia di " (modal/fmt-number bar) " — sistemala (Azzera, poi "
                         "4 click + 'a') e rifai R")))
       (cond
         (:error out)
