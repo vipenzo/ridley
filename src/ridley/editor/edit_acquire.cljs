@@ -3059,9 +3059,14 @@
           ;; the poisoned-list above never saw it BECAUSE refusals leave no
           ;; registered rms to judge. The circle he named — R fails because 8 is
           ;; broken, 8 cannot be fixed because R is poisoned — was exactly this.
+          ;; registered-result?, NOT the :pnp? flag: the flag lives only in
+          ;; memory, while :matched/:rms-px round-trip through acquire-state —
+          ;; tested on the first reload, where every photo of the session came
+          ;; back "mai registrata" and R had nobody left to ask.
           unregistered (vec (for [idx (range (count (:photos @session)))
                                   :when (and (>= (count (get-in @session [:pnp-picks idx] {})) 4)
-                                             (not (:pnp? (get-in @session [:acquire-results idx]))))]
+                                             (not (registered-result?
+                                                   (get-in @session [:acquire-results idx]))))]
                               idx))
           views (vec (keep (fn [idx]
                              ;; A pick the per-photo solve already REJECTED must not
@@ -3079,7 +3084,8 @@
                                    cam (get-in @session [:camera-poses idx])]
                                (when (and cam (>= (count picks) 4)
                                           (not (some #{idx} poisoned))
-                                          (:pnp? (get-in @session [:acquire-results idx])))
+                                          (registered-result?
+                                           (get-in @session [:acquire-results idx])))
                                  {:idx idx
                                   ;; one lens, one session: the pixel size is the
                                   ;; current photo's, which is every photo's
