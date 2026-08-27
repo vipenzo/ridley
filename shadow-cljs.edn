@@ -30,6 +30,10 @@
           :cage-fit {:target :node-script
                      :output-to "out/cage-fit.js"
                      :main ridley.photogrammetry.cage-fit-study/main}
+          ;; …and for the ZERO-CLICK read, measured against a hand-registered session.
+          :cage-auto {:target :node-script
+                      :output-to "out/cage-auto.js"
+                      :main ridley.photogrammetry.cage-auto-study/main}
           ;; Test build for turtle core tests
           :test {:target :node-test
                  :output-to "out/test.js"

@@ -40,6 +40,8 @@
   (:require [ridley.photogrammetry.cage :as cage]
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.linalg :as la]
+            [ridley.photogrammetry.ellipse :as ellipse]
+            [ridley.photogrammetry.match-plate :as mp]
             [ridley.photogrammetry.pnp :as pnp]))
 
 (def default-opts
@@ -287,3 +289,159 @@
                   :phase-suspect suspect
                   :ties (mapv #(select-keys % [:reading :explained :rms-px])
                               (remove #(= % result) kept)))))))))
+
+;; ── zero-click: the machine produces the seed ────────────────────────────────
+;;
+;; Vincenzo, at the end of the recovery week (2026-08-27): «se non riusciamo ad
+;; avere la registrazione automatica delle foto sarà tutto inutile». He is
+;; right, and the pieces already exist: the PLATE finds rings among the
+;; detector's candidates with no identity at all (crown-ring-hypotheses) and
+;; identifies one crown against its zero-index (assign-marks); the CAGE knows
+;; how to take a seed on one ring and let the rest of the cage arbitrate its
+;; reading (read-crown). Zero-click is those three in a row — the seed the user
+;; used to click is produced by the machine instead.
+
+(defn ring-faces
+  "`targets` grouped into the six (axis, face) crown families a cage carries:
+   [{:axis :sign :marks [{:id :obj} ×12, index order] :zero-id :zero-obj
+     :face-normal}]. Pure regrouping of what pnp-target-points already knows."
+  [targets]
+  (let [crowns (group-by (fn [t] (let [p (cage/mark-parts (:id t))]
+                                   (when p [(:axis p) (:sign p)])))
+                         targets)
+        indices (into {} (keep (fn [t]
+                                 (when-let [p (cage/index-parts (:id t))]
+                                   [[(:axis p) (:sign p)] t]))
+                               targets))]
+    (vec (for [[[axis sign] ts] crowns
+               :when (and axis (>= (count ts) 4))
+               :let [zero (indices [axis sign])]
+               :when zero]
+           {:axis axis :sign sign
+            :marks (vec (sort-by #(:index (cage/mark-parts (:id %))) ts))
+            :zero-id (:id zero)
+            :zero-obj (:obj zero)
+            :face-normal (:normal zero)}))))
+
+(defn auto-read
+  "Read the cage from a frame with NO clicks at all: `candidates` from
+   blob-detect, `targets` from pnp-target-points, `judge` a disc-presence test
+   ((fn [px r] -> bool), blob/disc-at? over the photo). Returns
+   {:pose :rms-px :corr :explained :seed {:axis :sign :crown-hits} :phase-suspect}
+   or nil when no ring identifies — which on a frame worth keeping means it
+   shows one ring badly or none well, and the remedy is a few degrees off-axis.
+
+   A machine seed does NOT go through read-crown's 48-reading vote. The vote
+   exists for HAND labels, which carry no evidence of their own; a machine seed
+   is index-pinned and face-judged ON THE PIXELS by assign-marks — better
+   evidence than the vote's candidate-counting, and the vote's ties (the
+   through-plastic twin, irreducible from candidates on a one-ring frame) were
+   measured killing correct seeds. Instead: take the seed's refined pose,
+   collect every mark of the WHOLE cage it accounts for (mutual-nearest), solve
+   on all of them, and hold the result to the session's own acceptance bar plus
+   the physical guard and the glued-ring probe. Junk constellations die at those
+   gates: they solve wide of the bar or claim discs the camera cannot see."
+  ([candidates targets intrinsics judge marks] (auto-read candidates targets intrinsics judge marks nil))
+  ([candidates targets intrinsics judge marks opts]
+   (let [{:keys [disc-r min-seed-crown tol-px trace max-identify]
+          :or {disc-r 1.25 min-seed-crown 8 max-identify 18
+               tol-px (:tol-px default-opts)}} opts
+         note! (fn [m] (when trace (swap! trace conj m)) nil)
+         ;; Ring hypotheses with a floor of EIGHT inliers — a cost wall, not a
+         ;; taste: identifying a k-point ring among 12 marks enumerates C(12,k)
+         ;; cyclic candidates, 24 at k=12 but 11088 at k=7, and each face of
+         ;; each hypothesis pays it. The first bench run at floor 6 took 40-57
+         ;; seconds per frame, almost all of it on junk partial rings.
+         hyps (ellipse/fit-inliers-ranked (vec candidates)
+                                          {:iters 2000 :thr 0.04
+                                           :min-inliers 8 :top-k 6})
+         ;; NO competitive-size filter — the plate's rule, and wrong here. On a
+         ;; plate the crown is the biggest ring in the picture; on a cage a junk
+         ;; conic threading three interleaved crowns gathers MORE inliers than
+         ;; any true crown (measured on the synthetic scene: 13 and 16 against
+         ;; the crowns' 12, and the ≥biggest−3 filter deleted every true ring
+         ;; in plain sight). Regularity ranks, the budget caps.
+         ;; …ranked by ANGULAR REGULARITY, not by inlier count. A crown is twelve
+         ;; near-evenly spaced points; a junk conic through the stragglers of
+         ;; three interleaved rings is not — but it often gathers MORE inliers (a
+         ;; conic has five degrees of freedom and the whole frame to spend them
+         ;; on), and ranked by count it burned the whole identity budget before
+         ;; the true ring was ever tried (measured: the synthetic scene, three
+         ;; clean rings in plain sight, REFUSED). The regularity score is the
+         ;; identity check's signature in cheap form: coefficient of variation
+         ;; of the angular gaps about the inliers' own centroid.
+         regularity (fn [hyp]
+                      (let [pts (mapv #(nth candidates %) hyp)
+                            n (count pts)
+                            cx (/ (reduce + (map first pts)) n)
+                            cy (/ (reduce + (map second pts)) n)
+                            angs (vec (sort (map (fn [[u v]] (Math/atan2 (- v cy) (- u cx))) pts)))
+                            gaps (mapv (fn [i]
+                                         (let [a (nth angs i)
+                                               b (nth angs (mod (inc i) n))
+                                               g (- b a)]
+                                           (if (neg? g) (+ g (* 2 Math/PI)) g)))
+                                       (range n))
+                            mean (/ (* 2 Math/PI) n)
+                            var (/ (reduce + (map #(let [d (- % mean)] (* d d)) gaps)) n)]
+                        (/ (Math/sqrt var) mean)))
+         hyps (vec (sort-by regularity hyps))
+         faces (ring-faces targets)
+         by-id (into {} (map (juxt :id identity) targets))
+         budget (volatile! (inc max-identify))]
+     (note! {:stage :hyps :sizes (mapv count hyps) :candidates (count candidates)})
+     ;; BEST accepted wins — never the first. The same 11 candidate discs
+     ;; identify as ring X AND as ring Y (same circle, different radius: the
+     ;; pose absorbs the scale into distance), both at clean rms, both past the
+     ;; guard — and only how much of the REST of the cage each pose explains
+     ;; tells them apart (measured on foto 1: 13 vs 12, and first-wins shipped
+     ;; the 12, putting the camera 697mm out). The identity budget caps the
+     ;; cost instead: the search stops grinding junk after :max-identify
+     ;; attempts, which took refusals from 40-65s to 10-25.
+     (->> (for [hyp hyps
+                face faces
+                :let [pts (mapv #(nth candidates %) (take (count (:marks face)) hyp))
+                      res (when (and (>= (count pts) 4)
+                                     (pos? (vswap! budget dec)))
+                            (mp/assign-marks pts (:marks face) (:zero-obj face)
+                                             intrinsics judge
+                                             {:disc-r disc-r
+                                              :face-normal (:face-normal face)}))
+                      _ (note! {:stage :seed :hyp (count hyp)
+                                :face [(:axis face) (:sign face)]
+                                :crown-hits (:crown-hits res)
+                                :zero-hit? (:zero-hit? res)})]
+                :when (and res (:zero-hit? res) (>= (:crown-hits res) min-seed-crown))
+                :let [corr (assign targets candidates intrinsics (:pose res) tol-px)
+                      full (when (>= (count corr) 6)
+                             (pnp/solve-pnp corr intrinsics {}))
+                      suspect (when full
+                                (phase-probe targets candidates intrinsics
+                                             (:pose full) (:axis face) marks tol-px))
+                      guard-ok? (when full
+                                  (sees-its-own-picks?
+                                   {:picks (into {} (map (fn [c] [(:ci c) (:px c)]) corr))
+                                    :pose (:pose full)}
+                                   by-id))
+                      _ (note! {:stage :solve :face [(:axis face) (:sign face)]
+                                :corr (count corr)
+                                :rms (some-> full :rms-px)
+                                :guard guard-ok?
+                                :suspect (some? suspect)})]
+                :when (and full
+                           (<= (:rms-px full) pnp/accept-rms-px)
+                           guard-ok?)]
+            {:pose (:pose full) :rms-px (:rms-px full)
+             :corr corr :explained (count corr)
+             ;; marks the pose accounts for BEYOND the seed's own ring — the
+             ;; only currency that separates the ring-family twins above
+             :off-ring (count (remove (fn [{:keys [ci]}]
+                                        (= (:axis face)
+                                           (:axis (or (cage/mark-parts ci)
+                                                      (cage/index-parts ci)))))
+                                      corr))
+             :phase-suspect (some-> suspect (assoc :axis (:axis face)))
+             :seed {:axis (:axis face) :sign (:sign face)
+                    :crown-hits (:crown-hits res)}})
+          (sort-by (juxt (comp - :explained) (comp - :off-ring) :rms-px))
+          first))))

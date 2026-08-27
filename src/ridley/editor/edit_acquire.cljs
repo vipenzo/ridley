@@ -2556,11 +2556,67 @@
       (nil? file)
       (set-status-message! "Nessuna foto su cui leggere la gabbia.")
 
+      ;; ZERO click: try to read the cage entirely on its own (Vincenzo,
+      ;; 2026-08-27: «se non riusciamo ad avere la registrazione automatica
+      ;; sarà tutto inutile»). The machine finds a ring among the detector's
+      ;; candidates, pins its zero-index on the pixels, and solves on the whole
+      ;; cage — measured on the battiscopa session: 2 of 8 frames register
+      ;; alone, camera within 1-4mm of the hand result, zero false positives.
+      ;; When it refuses, the seeded path (4 clicks + 'a') is the fallback, and
+      ;; the message says so.
+      (zero? (count picks-by-id))
+      (do
+        (set-status-message!
+         "Leggo la gabbia DA SOLA (zero click)… può volerci fino a mezzo minuto")
+        (js/setTimeout
+         (fn []
+           (-> (backdrop/load-luminance-sampler (photo-path file))
+               (.then
+                (fn [{:keys [lum-at size data]}]
+                  (let [[iw ih] size
+                        k (session-intrinsics iw ih)
+                        cands (blob-detect/detect-blobs lum-at size
+                                                        (assoc blob-detect/cage-opts :rgba data))
+                        judge (fn [px r] (blob/disc-at? lum-at px r))
+                        disc-r (or (:mark-disc-r (:proxy-mesh @session)) 1.25)
+                        rr (match-cage/auto-read (mapv :center cands) targets k
+                                                 judge marks {:disc-r disc-r})]
+                    (if (nil? rr)
+                      (set-status-message!
+                       (str "Da sola non ci riesco su questa foto (" (count cands)
+                            " dischetti trovati, nessun anello identificato con certezza). "
+                            "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'."))
+                      (let [canvas (viewport/get-canvas)
+                            added (reduce (fn [n {:keys [ci px]}]
+                                            (let [j (id->ci ci)]
+                                              (if (nil? j)
+                                                n
+                                                (do (swap! session assoc-in [:pnp-picks idx j]
+                                                           {:px px
+                                                            :screen (backdrop/screen-of-pixel
+                                                                     canvas (viewport/get-camera) px)
+                                                            :proposed? true})
+                                                    (inc n)))))
+                                          0 (:corr rr))]
+                        (set-status-message!
+                         (str "Gabbia letta DA SOLA: anello "
+                              (name (:axis (:seed rr))) " + zero-indice trovati nella foto, "
+                              added " dischetti piazzati (rms " (.toFixed (:rms-px rr) 1) "px)"
+                              (when (:phase-suspect rr)
+                                (str " · ATTENZIONE: l'anello "
+                                     (name (:axis (:phase-suspect rr)))
+                                     " sembra incollato girato di "
+                                     (.toFixed (:deg (:phase-suspect rr)) 0) "°"))))
+                        (on-solve-pnp!))))))
+               (.catch (fn [e]
+                         (set-status-message! (str "Lettura automatica fallita: " (str e)))))))
+         50))
+
       (< (count picks-by-id) 4)
       (set-status-message!
        (str "Per leggere la gabbia servono almeno 4 dischetti cliccati su UN anello "
             "(ne hai " (count picks-by-id) "): arma un mark con 'p' e clicca dov'è nella foto. "
-            "Lo zero-indice, se lo vedi, vale doppio."))
+            "Lo zero-indice, se lo vedi, vale doppio. Con ZERO click, 'a' prova da sola."))
 
       :else
       (do

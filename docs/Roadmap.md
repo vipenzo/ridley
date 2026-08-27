@@ -102,8 +102,19 @@ libertà; a: conferma i nomi, 10.8px; Y/Z e facce giuste). E per le gabbie futur
 la fase non serve: su proposta di Vincenzo («una tacca e una spina») i giunti ora
 portano la CHIAVE DI MONTAGGIO — spina su una linguetta dell'anello di mezzo,
 tacca passante nel bordo del grande — che rifiuta ogni rotazione e ribaltamento
-sbagliato dell'anello grande all'assemblaggio. Il fronte gabbia è CHIUSO salvo
-collaudo di stampa della chiave. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
+sbagliato dell'anello grande all'assemblaggio. Il collaudo di stampa (chiave +
+portapezzi) è PASSATO e la sessione battiscopa (8 foto, pezzo vero) è registrata
+per intero — dopo una settimana di recupero da un avvelenamento della focale che
+ha fruttato cinque correzioni alle difese (rifinitura non avvelenabile, soccorsi
+che non rinominano su fit cattivi, voto sulla lente solo alle foto registrate).
+**Fronte nuovo su direttiva di Vincenzo («se non riusciamo ad avere la
+registrazione automatica sarà tutto inutile»): ZERO CLICK** —
+`match-cage/auto-read`, prima luce 2026-08-27: 2 foto su 8 si registrano DA SOLE
+(camera a 1.0 e 3.5mm dalla mano, zero falsi positivi), cablata in `a` a zero
+click col seeded come ripiego. Le sei rifiutate muoiono tutte allo stadio
+ellissi: frontiera = concentricità, identità condivisa fra famiglie di anello,
+recall del rilevatore. Banco `node out/cage-auto.js` su
+`test-assets/cage-battiscopa` (verità = la sessione a mano). Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
 `node out/cage-study.js` e `node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come

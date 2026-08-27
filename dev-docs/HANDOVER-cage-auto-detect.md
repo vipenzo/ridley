@@ -554,3 +554,43 @@ Due regole, ora nel codice (`on-refine-session!`):
 2. **Un risultato peggiore non si adotta.** Se l'rms totale dopo la rifinitura
    supera quello di prima, si tengono focale e pose correnti e si nomina la
    foto peggiore da guardare.
+
+## Fetta 5 — ZERO CLICK (2026-08-27, prima luce)
+
+Vincenzo, a valle della settimana di recupero: «se non riusciamo ad avere la
+registrazione automatica delle foto sarà tutto inutile». Direttiva accolta:
+`match-cage/auto-read` legge la gabbia SENZA click. Catena: candidati dal
+rilevatore → ipotesi di anello (RANSAC ellissi, `ellipse/fit-inliers-ranked`,
+piso 8 inlier per il muro di costo C(12,k)) → per ipotesi × faccia, identità
+con `mp/assign-marks` (corona + ZERO-INDICE **verificati sui pixel**) → posa del
+seme → raccolta su tutta la gabbia (`assign`) → solve pieno → guardie (rms ≤
+soglia, camera-sees, phase-probe). Cablata in `a` a zero click; il seeded resta
+il ripiego, e il messaggio lo dice.
+
+Tre lezioni pagate sul banco (`node out/cage-auto.js`, sessione battiscopa: 8
+foto registrate a mano = verità):
+
+1. **Il seme della macchina NON passa dal voto a 48.** Il voto esiste per
+   etichette non fidate (le mani); il seme automatico ha l'indice puntato e la
+   faccia giudicata sui pixel. Il voto gli rompeva i nomi (rot 5 → 547mm) o lo
+   uccideva coi pareggi del gemello attraverso-la-plastica. Senza voto, la
+   stessa foto 8 — due giorni di battaglia a mano — si registra DA SOLA a 1.0mm
+   dalla verità.
+2. **Mai il primo che passa: il migliore.** Gli stessi 11 dischetti si
+   identificano come anello X E come anello Y (stesso cerchio, raggio diverso:
+   la posa assorbe la scala nella distanza), entrambi a rms pulito, entrambi
+   oltre la guardia. Li separa solo quanto del RESTO della gabbia spiegano
+   (13 vs 12, misurato): first-wins spediva il 12, camera a 697mm.
+3. **Il budget di identità** (`:max-identify` 12): l'identificazione dei
+   costellati-spazzatura era il costo intero (40–65s a rifiuto → 10–23).
+
+Stato: 2/8 da sola, 0 falsi. Le sei rifiutate muoiono TUTTE allo stadio
+ellissi: l'anello vero non emerge fra le ipotesi (junk conics vincono, o
+raccoglie <8 inlier). Frontiera prossima, in ordine di leva attesa:
+- **concentricità**: i tre anelli condividono il centro — un RANSAC che ipotizza
+  la famiglia concentrica invece di coniche indipendenti;
+- **identità condivisa fra le famiglie di anello**: X/Y/Z hanno la stessa
+  geometria a meno di scala — oggi la stessa ricerca si paga 6 volte;
+- **recall del rilevatore su queste foto**: 16–31 candidati contro i 19–30
+  pick della mano (su foto 8: 16 vs 19 — la mano vedeva dischetti che il
+  rilevatore perde).

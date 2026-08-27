@@ -1,0 +1,147 @@
+(ns ridley.photogrammetry.cage-auto-study
+  "Bench for ZERO-CLICK cage registration, against Vincenzo's battiscopa session
+   (2026-08-25): eight real photographs of the new cage — key, slots, a part in
+   the middle — every one registered BY HAND at 3.8-13.8px. His poses are the
+   truth; auto-read gets no clicks and is measured on how many photos it
+   registers and how far its camera lands from his.
+
+       npx shadow-cljs compile cage-auto && node out/cage-auto.js"
+  (:require [ridley.photogrammetry.blob :as blob]
+            [ridley.photogrammetry.blob-detect :as bd]
+            [ridley.photogrammetry.bridge :as bridge]
+            [ridley.photogrammetry.cage :as cage]
+            [ridley.photogrammetry.camera :as cam]
+            [ridley.photogrammetry.linalg :as la]
+            [ridley.photogrammetry.match-cage :as mc]))
+
+(def fs (js/require "fs"))
+(def path (js/require "path"))
+(def sharp (js/require "sharp"))
+
+(def dir "test-assets/cage-battiscopa")
+
+(defn- fmt [x n] (.toFixed (js/Number. x) n))
+
+(defn- decode [file]
+  (let [^js img (sharp file)
+        ^js pipe (.raw (.ensureAlpha (.rotate img)))]
+    (.toBuffer pipe #js {:resolveWithObject true})))
+
+(defn- sampler [^js res]
+  (let [data (.-data res) info (.-info res)
+        w (.-width info) h (.-height info)]
+    {:data data :w w :h h
+     :lum-at (fn [x y]
+               (let [xi (Math/round x) yi (Math/round y)]
+                 (when (and (>= xi 0) (>= yi 0) (< xi w) (< yi h))
+                   (let [o (* 4 (+ xi (* yi w)))]
+                     (+ (* 0.299 (aget data o)) (* 0.587 (aget data (+ o 1)))
+                        (* 0.114 (aget data (+ o 2))))))))}))
+
+(defn- cage-targets [proxy]
+  (vec (for [[id pose] (sort-by key (:anchors proxy))]
+         {:id id :obj (:position pose)
+          :normal (let [h (:heading pose) n (la/v-norm h)]
+                    (when (pos? n) (la/v-scale h (/ 1.0 n))))
+          :index? (some? (cage/index-parts id))})))
+
+(defn- solver-camera
+  "His registered EDITOR camera pose for one photo, converted into the cage's
+   object frame — the frame auto-read's poses live in — via the session's
+   proxy pose."
+  [state idx]
+  (let [pp (:proxy-pose state)
+        cam-pose (if (zero? idx)
+                   (:camera-pose-0 state)
+                   (get-in state [:photos (keyword (str idx)) :camera-pose]))]
+    (when (and pp cam-pose)
+      (bridge/editor->solver-pose cam-pose pp))))
+
+(defn- synth-run!
+  "CAGE_AUTO_SYNTH=1: the synthetic scene of match-cage-test, with the full
+   trace — for debugging why a refusal happens where sight says it should not."
+  []
+  (let [proxy (cage/registration-cage :d 176)
+        targets (cage-targets proxy)
+        w 3024 h 4032
+        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 48.0 (/ w h)) w h)
+        pose (cam/look-at-pose [150.0 -210.0 190.0] [0.0 0.0 0.0] [0.0 0.0 1.0])
+        c (cam/camera-center pose)
+        cands (vec (for [{:keys [obj normal]} targets
+                         :when (or (nil? normal) (pos? (la/v-dot normal (la/v-sub c obj))))
+                         :let [px (cam/project intr pose obj)]
+                         :when px]
+                     px))
+        judge (fn [px _r] (boolean (some (fn [[u v]]
+                                           (< (Math/hypot (- u (first px)) (- v (second px))) 4.0))
+                                         cands)))
+        tr (atom [])
+        rr (mc/auto-read cands targets intr judge 12 {:disc-r 1.25 :trace tr})]
+    (println (str "SINTETICO: " (count cands) " candidati · "
+                  (if rr (str "seme " (pr-str (:seed rr)) " rms " (fmt (:rms-px rr) 2))
+                      "RIFIUTATA")))
+    (doseq [t @tr] (println (str "  " (pr-str t))))))
+
+(defn- main* []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        proxy (cage/registration-cage :d 176)
+        targets (cage-targets proxy)
+        disc-r (:mark-disc-r proxy)
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        [w h] [3024 4032]
+        focal (get-in state [:focal :mm] 48.0)
+        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+        score (atom {:ok 0 :none 0 :far 0})]
+    (println (str "\n=== auto-read (zero click) su battiscopa: " (count files)
+                  " foto · focale della sessione " (fmt focal 1) "mm ==="))
+    (letfn [(step [i]
+              (if (>= i (count files))
+                (let [{:keys [ok none far]} @score]
+                  (println (str "\n  BILANCIO: " ok " registrate da sola, " far
+                                " lontane dalla verità, " none " rifiutate (su "
+                                (count files) ")")))
+                (-> (decode (.join path dir (nth files i)))
+                    (.then
+                     (fn [res]
+                       (let [{:keys [data lum-at w h]} (sampler res)
+                             t0 (.now js/Date)
+                             cands (mapv :center (bd/detect-blobs lum-at [w h]
+                                                                  (assoc bd/cage-opts :rgba data)))
+                             judge (fn [px r] (blob/disc-at? lum-at px r))
+                             tr (atom [])
+                             rr (mc/auto-read cands targets intr judge 12
+                                              {:disc-r disc-r :trace tr})
+                             ms (- (.now js/Date) t0)
+                             truth (solver-camera state i)]
+                         (if (nil? rr)
+                           (do (swap! score update :none inc)
+                               (println (str "  foto " (inc i) " (" (nth files i) "): "
+                                             (count cands) " candidati · RIFIUTATA · " ms "ms"))
+                               (doseq [t @tr] (println (str "      " (pr-str t)))))
+                           (let [pose (:pose rr)
+                                 c-auto (cam/camera-center pose)
+                                 c-true (when truth (cam/camera-center truth))
+                                 d (when c-true (la/v-norm (la/v-sub c-auto c-true)))
+                                 ok? (and d (< d 15.0))]
+                             (swap! score update (if ok? :ok :far) inc)
+                             (println (str "  foto " (inc i) " (" (nth files i) "): "
+                                           (count cands) " candidati · seme "
+                                           (name (:axis (:seed rr))) (if (pos? (:sign (:seed rr))) "p" "m")
+                                           " (" (:crown-hits (:seed rr)) " corona)"
+                                           " · spiega " (:explained rr)
+                                           " · rms " (fmt (:rms-px rr) 1)
+                                           (when (:phase-suspect rr) " · SOSPETTO ANELLO GIRATO")
+                                           " · camera a " (if d (str (fmt d 1) "mm") "?")
+                                           " dalla tua · " ms "ms"
+                                           (when-not ok? "   ← LONTANA")))))
+                         (step (inc i)))))
+                    (.catch (fn [e]
+                              (println (str "  foto " (inc i) " ERRORE: " (str e)))
+                              (step (inc i)))))))]
+      (step 0))))
+
+(defn ^:export main [& _]
+  (if (aget (.-env js/process) "CAGE_AUTO_SYNTH")
+    (synth-run!)
+    (main*)))

@@ -191,6 +191,35 @@
         (is (>= (count (:corr r2)) 20)
             (str "e il resto della gabbia si raccoglie (" (count (:corr r2)) ")"))))))
 
+(deftest auto-read-registers-with-no-clicks
+  ;; Zero-click on a synthetic cage: candidates are every front-facing mark's
+  ;; true pixel, the judge is proximity to a candidate, and auto-read gets no
+  ;; picks at all. It must find a ring, pin its index, and land the pose on the
+  ;; truth — and must NOT return the ring-family twin (the same discs read as a
+  ;; different ring, which rms alone cannot reject: measured live, 697mm out at
+  ;; rms 1.3).
+  (println "\n=== gabbia: lettura senza click ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        cands (scene nil targets intr pose)
+        judge (fn [px _r] (boolean (some (fn [[u v]]
+                                           (< (Math/hypot (- u (first px)) (- v (second px))) 4.0))
+                                         cands)))
+        rr (mc/auto-read cands targets intr judge marks {:disc-r 1.25})]
+    (println (str "  " (count cands) " candidati · "
+                  (if rr (str "seme " (name (:axis (:seed rr)))
+                              " · spiega " (:explained rr)
+                              " · off-ring " (:off-ring rr)
+                              " · rms " (.toFixed (:rms-px rr) 2))
+                      "RIFIUTATA")))
+    (is (some? rr) "la gabbia si legge da sola")
+    (when rr
+      (let [c-auto (cam/camera-center (:pose rr))
+            c-true (cam/camera-center pose)
+            d (la/v-norm (la/v-sub c-auto c-true))]
+        (println (str "  camera a " (.toFixed d 2) "mm dalla verità"))
+        (is (< d 5.0) (str "e la posa è quella vera (" (.toFixed d 1) "mm)"))
+        (is (pos? (:off-ring rr)) "confermata anche fuori dall'anello del seme")))))
+
 (deftest mutual-nearest-refuses-a-shared-disc
   (testing "due mark non possono rivendicare lo stesso dischetto"
     (let [{:keys [targets intr pose]} (setup eye)
