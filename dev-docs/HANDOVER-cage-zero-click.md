@@ -36,12 +36,69 @@ stato dei lavori per ripartire.
 - **La gabbia fisica**: quella NUOVA (chiave di montaggio + portapezzi, stampata
   2026-08-25) si modella `(registration-cage :d 176)` liscia. Quella VECCHIA ha
   l'anello grande incollato a 90°: `(registration-cage :d 176 :phases {:x 90})`,
-  sempre. La chiave (`:key-pin`/`:key-notch` in `joint-tabs`) rende
+  sempre. **VERDETTO 2026-08-27 sera (misurato sui pixel, battiscopa1)**: la
+  gabbia NUOVA di Vincenzo montata sta con l'anello Y a **180° dal modello** →
+  per LEI serve `:phases {:y 180}`. Prova: sotto la posa registrata di grab-01
+  (21 mark, 13.4px, ancorata dall'indice di Z che riproietta a 9px dal suo
+  pick → non è il gemello), lo zero-yp del modello proietta su banda LISCIA a
+  [1223 806], mentre lo zero-yp GIRATO di 180° proietta a [1028 516] ≈ il
+  doppio pallino che Vincenzo aveva cliccato ([1021 479], visibile nel crop —
+  coppia indice+mark inconfondibile). Il suo «Y è girato di 180°» era
+  giusto DUE volte; il rifiuto del suggerimento `:phases` («su altre foto
+  funzionava») non reggeva: quelle registrazioni non avevano mai verificato
+  l'indice di Y coi nomi accesi. Con `{:y 180}` dichiarato, Vincenzo confronta
+  proxy e gabbia vera: anche **X è a 180°** (Z è giusto — il suo indice
+  riproiettava a 9px). Stato finale della gabbia montata:
+  **`:phases {:y 180 :x 180}`**. SOSPETTO FORTE sul perché (da verificare nei
+  sorgenti: `key-pin-azim`/`joint-tabs`): «una tacca e una spina» messe a 180°
+  l'una dall'altra rendono la chiave 2-FOLD DEGENERE — uccide 90° e 270° ma
+  NON il 180°: tre anelli montati su una moneta a due facce → Z dritto, X e Y
+  girati, esattamente l'osservato. Se confermato, correzione di stampa: tacca
+  NON antipodale alla spina (es. a 90°). Il phase-probe resta cieco a 6 passi (i
+  dischetti ricadono identici, solo lo zero si sposta) e il solve scartava
+  come outlier proprio i click sullo zero. **Fetta da fare**: gli
+  zero-indice cliccati A MANO su anelli diversi dal seme diventano un VETO
+  dentro read-crown (una lettura la cui posa riproietta quel doppio pallino
+  dall'altra parte dell'anello è contraddetta da un fatto, non da un punteggio
+  — confronto min sulle due facce zero-yp/zero-ym, soglia larga: il gemello
+  sbaglia di centinaia di px), e in on-solve-pnp! uno zero a mano non è
+  scartabile come outlier senza prima provare la rilettura a k passi del suo
+  anello. Il workaround «rendi dominante l'anello conteso» NON è bastato: la
+  lettura seminata dall'anello Y pieno (13 click, zero incluso) ha DICHIARATO
+  il pareggio («1 riletture spiegano la gabbia altrettanto bene») e scelto il
+  gemello sbagliato — l'arbitro vero è lo zero cliccato dell'ALTRO anello.
+  In più la notte ha scoperto DUE bug fratelli:
+  (a) le proposte di corr possono DOPPIO-PRENOTARE un dischetto già occupato
+  da un click a mano sotto il nome dell'altra faccia (misurato: 5 dischetti di
+  Z con zm* e zp* insieme, stesso pixel → fit 194.9px, nessuna rilettura può
+  salvarlo. `kept` filtra per INDICE, serve anche il filtro per DISTANZA
+  PIXEL dai click a mano);
+  (b) NON ESISTE un gesto per cancellare un pick — una foto avvelenata non si
+  ripara a mano. Serve la gomma (e/o «pulisci i pick di questa foto»).
+  Fixture reale per il banco (battiscopa1, grab della sera, focale ~26-30,
+  1920×1440 — la lista pick del rifiuto finale, Y a nomi giusti per Vincenzo,
+  Z/X contaminati dal gemello + 5 doppioni):
+  [[:xm00 [1046 24]] [:xm01 [1123 114]] [:zm11 [802 737]] [:zp00 [1451 511]]
+   [:zp01 [1326 360]] [:yp00 [1082 453]] [:zp02 [1134 287]] [:yp01 [887 511]]
+   [:yp02 [731 598]] [:zp04 [805 423]] [:xm07 [1112 1207]] [:yp03 [653 702]]
+   [:yp04 [689 798]] [:zp06 [802 737]] [:yp05 [865 856]] [:yp06 [1142 840]]
+   [:zp08 [1079 931]] [:yp07 [1415 752]] [:yp08 [1572 630]] [:zp10 [1396 837]]
+   [:yp09 [1577 520]] [:yp10 [1466 452]] [:yp11 [1285 432]]
+   [:zero-yp [1021 479]] [:zero-zp [1381 480]] [:zm01 [805 422]]
+   [:zm03 [1134 286]] [:zm04 [1326 360]] [:zm05 [1451 511]]] La chiave (`:key-pin`/`:key-notch` in `joint-tabs`) rende
   l'errore impossibile sulle stampe future; gli slot del portapezzi
   (`stick-slots`, 2 per anello a 60°/240°) portano gli stick ellittici
   collaudati da Vincenzo (`acquire-cage/stick`, `punta-tricuspide`).
 - **Sessione battiscopa**: 8/8 registrate a mano, focale rifinita 48.9mm — è la
   VERITÀ del banco zero-click.
+- **Presa dal vivo su gabbia** (2026-08-27, non committata): il Grab ora TIENE
+  il frame come foto libera (θ nil, `keep-live-frame-unregistered!`) invece di
+  rimbalzarlo — prima ogni presa moriva sulla via automatica del piatto e il
+  consiglio «'p' poi 'a'» era inapplicabile a una foto mai entrata in pellicola
+  (una sessione intera di grab scartati). La registrazione resta a mano
+  ('p'+'a'); cablare `auto-read` nel grab è rinviato finché sta a 2/8 con
+  25–40s per rifiuto. NB: un frame grabbato non ha EXIF — la sessione parte
+  alla focale di default finché la rifinitura non la misura.
 
 ## Le quattro regole di auto-read, tutte misurate prima di essere scritte
 
