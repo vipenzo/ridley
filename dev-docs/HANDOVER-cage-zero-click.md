@@ -103,10 +103,18 @@ stato dei lavori per ripartire.
    [:zp08 [1079 931]] [:yp07 [1415 752]] [:yp08 [1572 630]] [:zp10 [1396 837]]
    [:yp09 [1577 520]] [:yp10 [1466 452]] [:yp11 [1285 432]]
    [:zero-yp [1021 479]] [:zero-zp [1381 480]] [:zm01 [805 422]]
-   [:zm03 [1134 286]] [:zm04 [1326 360]] [:zm05 [1451 511]]] La chiave (`:key-pin`/`:key-notch` in `joint-tabs`) rende
-  l'errore impossibile sulle stampe future; gli slot del portapezzi
-  (`stick-slots`, 2 per anello a 60°/240°) portano gli stick ellittici
-  collaudati da Vincenzo (`acquire-cage/stick`, `punta-tricuspide`).
+   [:zm03 [1134 286]] [:zm04 [1326 360]] [:zm05 [1451 511]]] La chiave (`:key-pin`/`:key-notch` in `joint-tabs`) vieta i
+  quarti di giro ma NON il ribaltamento (test fisico 28/8, vedi sopra: le
+  fasi sono per-montaggio); gli slot del portapezzi (`stick-slots`, 2 per
+  anello a 60°/240°) portano gli stick ellittici collaudati da Vincenzo
+  (`acquire-cage/stick`, `punta-tricuspide`).
+  **CODA DI RISTAMPA** (per quando si rimette mano alla gabbia):
+  1. chiave anti-ribaltamento — il vincolo va rotto fuori dal piano
+     dell'anello;
+  2. fori/canali degli stick PIÙ ELLITTICI (Vincenzo 28/8: negli anelli Y e
+     Z gli stick fanno meno attrito che in X, causa ignota — sospetto la
+     curvatura di banda che cambia col raggio dell'anello; da guardare in
+     `stick-slots` prima di ritoccare i numeri).
 - **Sessione battiscopa**: 8/8 registrate a mano, focale rifinita 48.9mm — è la
   VERITÀ del banco zero-click.
 - **PRIMA SESSIONE LIVE END-TO-END (battiscopa1, chiusa 2026-08-28)**: 5 frame
