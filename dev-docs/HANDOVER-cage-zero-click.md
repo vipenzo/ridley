@@ -64,31 +64,70 @@ stato dei lavori per ripartire.
   azimut (da progettare su `key-pin-azim`/`joint-tabs`).
   Il phase-probe resta cieco a 6 passi (i
   dischetti ricadono identici, solo lo zero si sposta) e il solve scartava
-  come outlier proprio i click sullo zero. **Fetta da fare**: gli
-  zero-indice cliccati A MANO su anelli diversi dal seme diventano un VETO
-  dentro read-crown (una lettura la cui posa riproietta quel doppio pallino
-  dall'altra parte dell'anello è contraddetta da un fatto, non da un punteggio
-  — confronto min sulle due facce zero-yp/zero-ym, soglia larga: il gemello
-  sbaglia di centinaia di px), e in on-solve-pnp! uno zero a mano non è
-  scartabile come outlier senza prima provare la rilettura a k passi del suo
-  anello. Il workaround «rendi dominante l'anello conteso» NON è bastato: la
+  come outlier proprio i click sullo zero.
+
+  **FETTA COSTRUITA (2026-08-28, questa sessione) — le fasi scoperte dalla
+  foto, in due metà:**
+  1. **Il veto degli zero in read-crown** (`:zero-picks` in opts, da
+     `cage-read-and-place!`: gli zero-indice cliccati A MANO su anelli diversi
+     dal seme). Una lettura la cui posa riproietta quel doppio pallino lontano
+     dal click è CONTRADDETTA da un fatto, non battuta ai punti — confronto
+     min sulle due facce zero-…p/zero-…m, soglia `:zero-veto-px` 100 (il
+     gemello sbaglia di centinaia di px, la lettura vera porta solo lo slop
+     del modello). REGOLA DI ONESTÀ: uno zero che contraddice TUTTE le 48
+     riletture è prova sul SUO ANELLO (montato a passi interi), non sulle
+     letture — viene accantonato (`:moot`), mai trasformato in rifiuto, e il
+     messaggio dice che il solve lo misurerà. Ritorna
+     `:zero-veto {:killed n :moot [...]}`; il pareggio sintetizzato (candidati
+     senza zeri, anello Y pieno → gemello a 6 passi in parità) muore col veto:
+     test `the-other-rings-zero-arbitrates-the-tie`.
+  2. **La rilettura a k passi nel solve** (`match-cage/rescue-hand-zeros`,
+     pura, cablata in `solve-and-apply!` via `cage-zero-phase-rescue!`): uno
+     zero a mano che il solve vuole scartare come outlier viene prima provato
+     a ogni giro di passo intero del suo anello (proiezione sotto la posa
+     degli ALTRI pick, soglia 26px); se un k spiega il click, si riadotta il
+     re-solve che TIENE lo zero (accettato solo se rms non peggiora e lo zero
+     è inlier) e la scoperta — «l'anello R è MONTATO girato di k passi» — va
+     in `:note` (status line), in `auto-log!`, e in `:zero-phases` (il
+     phase-report ignora gli zero già girati per non avvelenare la misura
+     sub-passo). Il messaggio suggerisce la dichiarazione TOTALE
+     (`:phases` già dichiarate + scoperta). Test:
+     `a-mounted-ring-is-measured-from-its-clicked-zero` (anello Z montato a
+     90°: senza soccorso lo zero vero è outlier; col soccorso k=3, 90°, rms
+     sotto 1px, zero inlier; su un solve pulito il soccorso resta muto).
+  NON ANCORA: applicare la fase scoperta ai TARGET della sessione (oggi resta
+  una diagnosi + dichiarazione da riaprire; l'auto-apply — ruotare gli anchor
+  dell'anello nel proxy-mesh, che visivamente è invariante — è la prossima
+  fetta naturale, ed è ciò che rende `:phases` davvero inutile a regime).
+  GATE LIVE: da fare su una foto vera di Vincenzo (i due test sintetici e la
+  suite a 982/0 sono il collaudo a freddo).
+
+  Il workaround «rendi dominante l'anello conteso» NON è bastato: la
   lettura seminata dall'anello Y pieno (13 click, zero incluso) ha DICHIARATO
   il pareggio («1 riletture spiegano la gabbia altrettanto bene») e scelto il
   gemello sbagliato — l'arbitro vero è lo zero cliccato dell'ALTRO anello.
-  In più la notte ha scoperto DUE bug fratelli:
-  (a) le proposte di corr possono DOPPIO-PRENOTARE un dischetto già occupato
+  In più la notte ha scoperto DUE bug fratelli, ORA CHIUSI (stessa sessione):
+  (a) le proposte di corr potevano DOPPIO-PRENOTARE un dischetto già occupato
   da un click a mano sotto il nome dell'altra faccia (misurato: 5 dischetti di
   Z con zm* e zp* insieme, stesso pixel → fit 194.9px, nessuna rilettura può
-  salvarlo. `kept` filtra per INDICE, serve anche il filtro per DISTANZA
-  PIXEL dai click a mano). MECCANISMO INCHIODATO il 28/8 (foto 4, log di
-  Vincenzo): NON servono proposte stantie — è corr stessa che, accettati i
-  click sulla faccia p di un anello, propone l'INTERA faccia m sopra di loro
-  (le due facce proiettano a ~2px attraverso la plastica): `zp01` [1159 931]
-  e `zm01` [1159 931], pixel identico. Con 2 doppioni il solve li scarta e
-  registra; con 10 muore camera-dietro. Il fix: nessuna proposta a meno di
-  ~snap-radius px da un pick esistente, qualunque nome porti;
-  (b) NON ESISTE un gesto per cancellare un pick — una foto avvelenata non si
-  ripara a mano. Serve la gomma (e/o «pulisci i pick di questa foto»).
+  salvarlo. `kept` filtrava per INDICE). MECCANISMO INCHIODATO il 28/8 (foto
+  4, log di Vincenzo): NON servono proposte stantie — è corr stessa che,
+  accettati i click sulla faccia p di un anello, propone l'INTERA faccia m
+  sopra di loro (le due facce proiettano a ~2px attraverso la plastica):
+  `zp01` [1159 931] e `zm01` [1159 931], pixel identico. Con 2 doppioni il
+  solve li scarta e registra; con 10 muore camera-dietro. FIX: nessuna
+  proposta a meno di `propose-clear-px` (30px: sopra l'errore di un click ALT
+  ~25px, sotto i 200-500px fra mark) da un pick esistente, qualunque nome
+  porti — e il ramo zero-click di 'a' ora AZZERA le proposte stantie prima di
+  scrivere le sue (stessa malattia, altra porta). Il messaggio di 'a' conta le
+  proposte scartate («cadevano su dischetti già tuoi»).
+  (b) NON ESISTEVA un gesto per cancellare un pick — una foto avvelenata non
+  si riparava a mano. FIX: LA GOMMA — clic DESTRO su un pallino (o Backspace
+  col cursore vicino, fuori dal batch dove Backspace resta «annulla ultimo»)
+  toglie QUEL pick, click a mano o proposta, pulisce i suoi flag di fit,
+  salva, e dice come rimetterlo; `eraser-radius-px` 40. Un cenno nel pannello
+  la rende trovabile. «Azzera» (già esistente) resta la pulizia totale.
+  GATE LIVE di (a)+(b): da fare sulla foto 4 avvelenata o su un grab nuovo.
   Fixture reale per il banco (battiscopa1, grab della sera, 1920×1440 — NB
   la lente vera di questa camera è ≈44mm-equiv, MISURATA 2026-08-28 sul set
   pulito a 32 pick del proxy con le fasi: min 3.97px a 44, 22.5px a 26; la
@@ -120,13 +159,16 @@ stato dei lavori per ripartire.
 - **PRIMA SESSIONE LIVE END-TO-END (battiscopa1, chiusa 2026-08-28)**: 5 frame
   grabbati (1920×1440, Continuity iPhone), tutti registrati col giro
   «un anello + `a`», rifinitura congiunta su 5 → focale 45.33mm (coerente col
-  44 misurato), riproiezione 7.57px, per-foto 4.8–12.2px. Il giro che REGGE:
-  Azzera se la foto è sporca → 4–8 click ALT su UN solo anello (zero se
-  visibile) → `a` → `n` → mai un secondo anello a mano finché il fix (a) non
-  è dentro. Se un anello-seme non legge il resto della gabbia, provarne un
-  ALTRO (sulla stessa foto X falliva, Z affogava nei doppioni, Y registrava
-  a 7.1px — l'istinto di Vincenzo su quale anello usare ha battuto il
-  consiglio calcolato TRE volte).
+  44 misurato), riproiezione 7.57px, per-foto 4.8–12.2px. Il giro che REGGEVA
+  ALLORA (coi bug (a)/(b) ancora aperti): Azzera se la foto è sporca → 4–8
+  click ALT su UN solo anello (zero se visibile) → `a` → `n` → mai un secondo
+  anello a mano. DA QUESTA SESSIONE il fix (a) è dentro e il secondo anello
+  non solo è permesso: cliccare lo ZERO di un secondo anello è ciò che ARMA
+  il veto dei gemelli (e la gomma ripara i pick sbagliati senza Azzera). Se
+  un anello-seme non legge il resto della gabbia, provarne un ALTRO (sulla
+  stessa foto X falliva, Z affogava nei doppioni, Y registrava a 7.1px —
+  l'istinto di Vincenzo su quale anello usare ha battuto il consiglio
+  calcolato TRE volte).
 - **Presa dal vivo su gabbia** (2026-08-27, non committata): il Grab ora TIENE
   il frame come foto libera (θ nil, `keep-live-frame-unregistered!`) invece di
   rimbalzarlo — prima ogni presa moriva sulla via automatica del piatto e il
@@ -243,7 +285,8 @@ worker.
 
 ## File
 
-- `src/ridley/photogrammetry/match_cage.cljs` — `read-crown` (seeded),
+- `src/ridley/photogrammetry/match_cage.cljs` — `read-crown` (seeded, ora con
+  `:zero-picks`/`:zero-veto`), `rescue-hand-zeros` (rilettura a k passi),
   `auto-read` (zero click), `ring-faces`, `phase-probe`
 - `src/ridley/photogrammetry/blob_detect.cljs` — rilevatore, `cage-opts`,
   `enclosed-frac`
@@ -254,7 +297,10 @@ worker.
 - `src/ridley/photogrammetry/cage.cljs` — geometria, `stick-slots`, chiave,
   `:phases`
 - `src/ridley/editor/edit_acquire.cljs` — `cage-read-and-place!` (il tasto
-  `a`, tre rami: 0 click → auto, ≥4 → seeded, 1–3 → messaggio),
+  `a`, tre rami: 0 click → auto, ≥4 → seeded, 1–3 → messaggio; costruisce
+  `:zero-picks`, filtra le proposte con `propose-clear-px`),
+  `cage-zero-phase-rescue!` (cabla `rescue-hand-zeros` in `solve-and-apply!`),
+  `erase-pick-at!`/`pnp-on-contextmenu` (la gomma),
   `on-refine-session!` (le guardie della rifinitura)
 - `test/ridley/photogrammetry/cage_auto_study.cljs` — il banco zero-click
 - `test/ridley/photogrammetry/match_cage_test.cljs` — sintetici + foto vera

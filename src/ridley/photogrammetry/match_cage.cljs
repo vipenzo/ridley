@@ -58,7 +58,14 @@
    re-solve afterwards."
   {:tol-px 26.0        ; a prediction this close to a candidate counts as explained
    :min-picks 4        ; the planar homography's minimum
-   :min-explained 6})  ; below this the reading has not been confirmed by anything
+   :min-explained 6    ; below this the reading has not been confirmed by anything
+   ;; A reading whose pose puts a hand-clicked zero-index of ANOTHER ring further
+   ;; than this from its click is contradicted by a fact, not outscored — see
+   ;; :zero-picks in read-crown. Wide on purpose: the through-plastic twin sends
+   ;; that zero to the reflected point of its ring, hundreds of px away, while
+   ;; the true reading carries only the model's slop (~20-40px on a seed-ring
+   ;; pose). Nothing in between exists to be confused with.
+   :zero-veto-px 100.0})
 
 ;; A cage's marks are HOLES: `xm00` and `xp00` are the same disc seen from the two
 ;; sides of the same ring, 3mm apart. Both project within a few px of the same
@@ -224,15 +231,54 @@
    `:ties` is not a wart to be hidden. A reading and the same reading turned 180°
    about the ring's axis put the camera in two different places and explain the
    cage equally well; the physical guard removes those it can, and what survives
-   is a genuine ambiguity that another photograph — not a better score — settles."
+   is a genuine ambiguity that another photograph — not a better score — settles.
+
+   `:zero-picks` in opts — [{:axis :z :px [u v]} …], the zero-indices the user
+   clicked BY HAND on rings other than the seed — is the arbiter that outranks
+   the score. Measured on battiscopa1 (2026-08-28): a FULL ring Y seeded with 13
+   clicks, zero included, still declared the tie and shipped the through-plastic
+   twin — every disc of the other rings lands on a disc under both readings (the
+   crowns are symmetric under half a turn), so candidate-counting cannot decide.
+   What the twin cannot do is put the OTHER ring's zero where it was clicked: it
+   sends that double disc to the reflected point of its ring, hundreds of px out.
+   So each zero-pick VETOES the readings that contradict it (min over the two
+   faces zero-…p/zero-…m, since the faces are the same dot through the plastic),
+   within `:zero-veto-px`.
+
+   One rule keeps the veto honest: a zero-pick that contradicts EVERY reading is
+   evidence about the RING, not about the readings — that ring is mounted a whole
+   number of steps round from the model (the phases are per-assembly: the cage
+   opens at every part change), and its zero sits k steps from where the model
+   looks. Such a pick is set aside (`:moot`) instead of enforced, and the k-step
+   probe at solve time (`rescue-hand-zeros`) measures the k it points at.
+   Returns `:zero-veto {:killed n :moot [axis …]}` when zero-picks were given."
   ([picks targets candidates intrinsics marks] (read-crown picks targets candidates intrinsics marks nil))
   ([picks targets candidates intrinsics marks opts]
-   (let [{:keys [tol-px min-explained] :as opts} (merge default-opts opts)
+   (let [{:keys [tol-px min-explained zero-veto-px] :as opts} (merge default-opts opts)
          by-id (into {} (map (juxt :id identity) targets))
-         scored (->> (cage/crown-misreadings marks)
-                     (keep (score-reading picks targets by-id candidates
-                                          intrinsics marks opts))
-                     vec)]
+         all-scored (->> (cage/crown-misreadings marks)
+                         (keep (score-reading picks targets by-id candidates
+                                              intrinsics marks opts))
+                         vec)
+         zero-picks (vec (remove #(= (picks-axis picks) (:axis %)) (:zero-picks opts)))
+         zero-d (fn [pose {:keys [axis px]}]
+                  (reduce min js/Infinity
+                          (for [s [1 -1]
+                                :let [t (by-id (cage/index-id axis s))
+                                      p (when t (cam/project intrinsics pose (:obj t)))]
+                                :when p]
+                            (Math/hypot (- (nth p 0) (nth px 0))
+                                        (- (nth p 1) (nth px 1))))))
+         [scored zero-veto]
+         (reduce (fn [[sc note] zp]
+                   (let [ok (filterv #(<= (zero-d (:pose %) zp) zero-veto-px) sc)]
+                     (if (seq ok)
+                       [ok (update note :killed + (- (count sc) (count ok)))]
+                       ;; contradicts every reading: the ring is the suspect, not
+                       ;; the readings — set aside, never turned into a refusal
+                       [sc (update note :moot conj (:axis zp))])))
+                 [all-scored {:killed 0 :moot []}]
+                 zero-picks)]
      (when (seq scored)
        (let [best (apply max (map :explained scored))
              top (filterv #(= best (:explained %)) scored)
@@ -287,8 +333,85 @@
                   :full (when full (select-keys full [:pose :rms-px]))
                   :guard-rejected (- (count top) (count kept))
                   :phase-suspect suspect
+                  :zero-veto (when (seq zero-picks) zero-veto)
                   :ties (mapv #(select-keys % [:reading :explained :rms-px])
                               (remove #(= % result) kept)))))))))
+
+;; ── the k-step re-reading: a hand-clicked zero is never just discarded ───────
+
+(def zero-step-tol-px
+  "How close (px) a whole-step turn of a ring must put its zero-index to the
+   hand-clicked pixel before the ring is declared MOUNTED k steps round. The
+   same figure as `:tol-px`, for the same reason: it only has to be smaller
+   than the distance between two candidate positions, and consecutive steps of
+   the zero are a whole step of arc apart — hundreds of px in these frames."
+  26.0)
+
+(defn rescue-hand-zeros
+  "A hand-clicked zero-index is never discarded as an outlier without first
+   trying the k-step re-reading of its ring.
+
+   The failure this exists for was measured before it was written (battiscopa1,
+   2026-08-27/28): a ring mounted a whole number of steps round from the model —
+   and the phases ARE per-assembly, the cage opens at every part change — puts
+   every DISC exactly on another disc's position, so the marks fit perfectly and
+   the pose is right; the only witness that moved is the ZERO, which now sits k
+   steps from where the model looks. The solve, doing its job, threw away the
+   one pick that was telling the truth and registered the numbering blind.
+
+   `sol` is a pnp/solve-pnp result over `correspondences` [{:ci :world :px} …].
+   `hand-zero-axis` names the hand-clicked zero-indices: (fn [ci] -> ring axis,
+   nil for everything else). `index-axis` does the same for EVERY zero-index
+   claim, proposals included — a discovered turn moves the ring's zero for every
+   claim on it, not only the hand's.
+
+   For each outlier the hand swears by: find the whole-step turn k of its ring
+   that puts the zero under the click (judged on the pose the OTHER picks
+   agreed on), re-solve with that ring's zero claims turned by k, and accept
+   only if the fit stays acceptable and the hand's zero is now an inlier.
+
+   Returns {:sol sol' :corr corr' :phases {axis {:steps k :deg d}}} — the
+   re-solve to apply and the mounting the photo just measured, the number
+   `:phases` on `registration-cage` wants declared — or nil when no hand zero
+   was outliered or no turn explains it."
+  [sol correspondences intrinsics marks hand-zero-axis index-axis]
+  (let [step (/ 360.0 marks)]
+    (loop [sol sol corr correspondences phases {} tried #{}]
+      (let [out (first (for [o (:outliers sol)
+                             :let [axis (hand-zero-axis (:ci o))]
+                             :when (and axis (not (tried axis)))]
+                         (assoc o :axis axis)))]
+        (if (nil? out)
+          (when (seq phases) {:sol sol :corr corr :phases phases})
+          (let [{:keys [axis world px]} out
+                best (first (sort-by second
+                                     (for [k (range 1 marks)
+                                           :let [p (cam/project intrinsics (:pose sol)
+                                                                (cage/turn-about-axis
+                                                                 axis world (* k step)))]
+                                           :when p]
+                                       [k (Math/hypot (- (nth p 0) (nth px 0))
+                                                      (- (nth p 1) (nth px 1)))])))
+                k* (first best)
+                corr' (when (and best (<= (second best) zero-step-tol-px))
+                        (mapv (fn [c]
+                                (if (= axis (index-axis (:ci c)))
+                                  (assoc c :world (cage/turn-about-axis
+                                                   axis (:world c) (* k* step)))
+                                  c))
+                              corr))
+                sol' (when corr' (pnp/solve-pnp corr' intrinsics {}))
+                ok? (and sol'
+                         ;; the turn must BUY the fit, not talk its way in
+                         (<= (:rms-px sol') (max (:rms-px sol) pnp/accept-rms-px))
+                         (not-any? #(= axis (hand-zero-axis (:ci %))) (:outliers sol')))]
+            (if ok?
+              (recur sol' corr'
+                     (assoc phases axis {:steps k* :deg (* k* step)})
+                     (conj tried axis))
+              ;; no whole-step turn explains this zero: leave it to the caller's
+              ;; ordinary outlier reporting, and go on to the next ring's
+              (recur sol corr phases (conj tried axis)))))))))
 
 ;; ── zero-click: the machine produces the seed ────────────────────────────────
 ;;

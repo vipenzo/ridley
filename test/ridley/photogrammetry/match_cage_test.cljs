@@ -54,8 +54,7 @@
   (let [proxy (cage/registration-cage :d 176)
         targets (cage-targets proxy)
         w 3024 h 4032
-        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 48.0 (/ w h)) w h)
-        ]
+        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 48.0 (/ w h)) w h)]
     {:proxy proxy :targets targets :intr intr
      :pose (cam/look-at-pose eye [0.0 0.0 0.0] [0.0 0.0 1.0])
      :size [w h]}))
@@ -230,6 +229,120 @@
           corr (mc/assign targets [mid] intr pose 1e6)]
       (is (<= (count corr) 1)
           (str "un solo dischetto non può servire due mark (" (count corr) ")")))))
+
+;; ── the zero of the OTHER ring: veto, not vote ──────────────────────────────
+
+(defn- project-id
+  "The true pixel of anchor `id` of `targets` under `pose`."
+  [targets intr pose id]
+  (let [t (first (filter #(= id (:id %)) targets))]
+    (cam/project intr pose (:obj t))))
+
+(deftest the-other-rings-zero-arbitrates-the-tie
+  ;; The 2026-08-28 pareggio, synthesized. Candidates carry the crown DISCS but
+  ;; no zero-indices — exactly the information a real frame offers the vote,
+  ;; since every disc of every ring lands on another disc under a half-turn (the
+  ;; crowns are symmetric under 6 steps) and only the zeros move. A full,
+  ;; correctly-named seed ring then TIES with its twin: candidate counting
+  ;; cannot decide, and on the bench it chose the twin. What decides is a FACT:
+  ;; the hand-clicked zero-index of ANOTHER ring, which the twin's pose sends
+  ;; hundreds of px from its click.
+  (println "\n=== gabbia: lo zero dell'ALTRO anello arbitra il pareggio ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        mark-targets (filterv #(nil? (cage/index-parts (:id %))) targets)
+        cands (scene nil mark-targets intr pose)
+        picks (misname targets intr pose :y [0 1 2 3 4 5 6 7] 0)
+        zero-z {:axis :z :px (project-id targets intr pose :zero-zp)}
+        bare (mc/read-crown picks targets cands intr marks)
+        vetoed (mc/read-crown picks targets cands intr marks {:zero-picks [zero-z]})]
+    (println (str "  senza zero: "
+                  (when bare (str "rot " (:rot (:reading bare))
+                                  " · spiega " (:explained bare)
+                                  " · in parità " (count (:ties bare))))))
+    (println (str "  con lo zero di Z: "
+                  (when vetoed (str "rot " (:rot (:reading vetoed))
+                                    " · in parità " (count (:ties vetoed))
+                                    " · veto " (pr-str (:zero-veto vetoed))))))
+    (is (some? bare) "senza zero una lettura c'è comunque")
+    (when bare
+      (is (seq (:ties bare))
+          "e DICHIARA il pareggio: senza gli zero i candidati non possono decidere"))
+    (is (some? vetoed) "con lo zero dell'altro anello la lettura c'è")
+    (when vetoed
+      (is (= {:rot 0 :mirror? false :flip-face? false} (:reading vetoed))
+          "e il gemello è morto: vince la lettura vera")
+      (is (empty? (:ties vetoed)) "nessun pareggio dichiarato")
+      (is (pos? (:killed (:zero-veto vetoed)))
+          "il veto ha contraddetto almeno una rilettura")
+      (is (empty? (:moot (:zero-veto vetoed))) "e lo zero non è stato accantonato"))
+    ;; a zero clicked on GARBAGE (or a ring mounted steps round: same signature)
+    ;; contradicts EVERY reading — that is evidence about the ring, not the
+    ;; readings, so it is set aside as :moot and never turns into a refusal
+    (let [moot (mc/read-crown picks targets cands intr marks
+                              {:zero-picks [{:axis :z :px [10.0 10.0]}]})]
+      (println (str "  con uno zero-spazzatura: "
+                    (when moot (str "rot " (:rot (:reading moot))
+                                    " · veto " (pr-str (:zero-veto moot))))))
+      (is (some? moot) "uno zero che contraddice tutto non diventa un rifiuto")
+      (when moot
+        (is (= [:z] (:moot (:zero-veto moot)))
+            "ma viene messo agli atti come :moot")))))
+
+(deftest a-mounted-ring-is-measured-from-its-clicked-zero
+  ;; The k-step re-reading (rescue-hand-zeros): the cage PHOTOGRAPHED has ring Z
+  ;; MOUNTED three steps round — the phases are per-assembly, the cage opens at
+  ;; every part change — while the model declares nothing. Every disc of Z still
+  ;; lands on a disc position, so the marks fit and the pose is right; only the
+  ;; ZERO moved, and the solve, doing its job, throws away the one pick that
+  ;; tells the truth. The rescue must catch it: find k=3, re-solve keeping the
+  ;; zero, and hand back the mounting the photo just measured.
+  (println "\n=== gabbia: l'anello montato girato si misura dal suo zero ===")
+  (let [truth (cage/registration-cage :d 176 :phases {:z 90})
+        model (cage/registration-cage :d 176)
+        truth-targets (cage-targets truth)
+        targets (cage-targets model)
+        w 3024 h 4032
+        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 48.0 (/ w h)) w h)
+        pose (cam/look-at-pose eye [0.0 0.0 0.0] [0.0 0.0 1.0])
+        ;; marks labelled off the MODEL's predictions — which is what a user or a
+        ;; proposal produces, and is positionally RIGHT despite the mounting
+        ;; (whole steps map discs onto discs); the zero clicked where it truly is
+        mark-ids [:ym00 :ym02 :ym04 :ym06 :ym08 :ym10
+                  :xm01 :xm03 :xm05 :xm07 :xm09 :xm11
+                  :zm00 :zm03 :zm06 :zm09]
+        by-id (into {} (map (juxt :id identity) targets))
+        corr (vec (concat
+                   (for [id mark-ids]
+                     {:ci id :world (:obj (by-id id))
+                      :px (cam/project intr pose (:obj (by-id id)))})
+                   [{:ci :zero-zm :world (:obj (by-id :zero-zm))
+                     :px (project-id truth-targets intr pose :zero-zm)}]))
+        sol (pnp/solve-pnp corr intr {})
+        zero-out? (some #(= :zero-zm (:ci %)) (:outliers sol))
+        axis-of (fn [ci] (when (= ci :zero-zm) :z))
+        r (mc/rescue-hand-zeros sol corr intr marks axis-of axis-of)]
+    (println (str "  solve cieco: rms " (.toFixed (:rms-px sol) 2)
+                  "px · zero scartato? " (boolean zero-out?)))
+    (is (some? sol) "il solve c'è")
+    (is zero-out? "PREMESSA: senza soccorso lo zero vero viene scartato come outlier")
+    (println (str "  soccorso: " (when r (str (pr-str (:phases r))
+                                              " · rms " (.toFixed (:rms-px (:sol r)) 2) "px"))))
+    (is (some? r) "la rilettura a k passi lo salva")
+    (when r
+      (is (= 3 (get-in r [:phases :z :steps])) "tre passi")
+      (is (< (Math/abs (- 90.0 (get-in r [:phases :z :deg]))) 1e-9) "novanta gradi")
+      (is (< (:rms-px (:sol r)) 1.0)
+          (str "e il fit che TIENE lo zero chiude stretto ("
+               (.toFixed (:rms-px (:sol r)) 2) "px)"))
+      (is (not-any? #(= :zero-zm (:ci %)) (:outliers (:sol r)))
+          "con lo zero dentro, non più outlier"))
+    ;; and on a clean solve the rescue stays silent
+    (let [clean-corr (vec (for [id (conj mark-ids :zero-zm)]
+                            {:ci id :world (:obj (by-id id))
+                             :px (cam/project intr pose (:obj (by-id id)))}))
+          clean (pnp/solve-pnp clean-corr intr {})]
+      (is (nil? (mc/rescue-hand-zeros clean clean-corr intr marks axis-of axis-of))
+          "niente da salvare: il soccorso non tocca un solve pulito"))))
 
 ;; ── on real pixels ───────────────────────────────────────────────────────────
 

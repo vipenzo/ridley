@@ -113,10 +113,17 @@ registrazione automatica sarà tutto inutile»): ZERO CLICK** —
 (camera a 1.0 e 3.5mm dalla mano, zero falsi positivi), cablata in `a` a zero
 click col seeded come ripiego. Le sei rifiutate muoiono tutte allo stadio
 ellissi: frontiera = concentricità, identità condivisa fra famiglie di anello,
-recall del rilevatore. Banco `node out/cage-auto.js` su
-`test-assets/cage-battiscopa` (verità = la sessione a mano). Entry point
-`dev-docs/HANDOVER-cage-zero-click.md`. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
-`node out/cage-study.js` e `node out/cage-fit.js`.
+recall del rilevatore. *Fetta «le fasi dalla foto» COSTRUITA (2026-08-28)*: le
+fasi degli anelli sono per-montaggio, e ora le scopre la foto — gli zero-indice
+cliccati su altri anelli VETANO i gemelli in `read-crown` (46 riletture
+contraddette sul pareggio sintetico) e uno zero che il solve scarterebbe come
+outlier viene prima riletto a k passi (`rescue-hand-zeros`: anello montato a
+90° misurato dal suo zero); più il filtro anti-doppioni sulle proposte e la
+gomma per i pick (clic destro). Gate live da fare. Banco `node
+out/cage-auto.js` su `test-assets/cage-battiscopa` (verità = la sessione a
+mano). Entry point `dev-docs/HANDOVER-cage-zero-click.md`; storia in
+`dev-docs/HANDOVER-cage-auto-detect.md`; banchi `node out/cage-study.js` e
+`node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già

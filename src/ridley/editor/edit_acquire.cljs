@@ -1848,6 +1848,9 @@
         st (.-style cv)]
     (if-let [[ix iy] (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
       (do
+        ;; remembered for the keyboard half of the eraser: Backspace deletes the
+        ;; pick nearest where the cursor last was (see erase-pick-at!)
+        (swap! session assoc :pnp-cursor-px [ix iy])
         (backdrop/draw-loupe! cv ix iy (loupe-zoom))
         ;; up-right of the cursor by default, clamped into the window so it
         ;; never runs off-screen near an edge
@@ -1878,6 +1881,70 @@
       (swap! session assoc :pnp-loupe-zoom z')
       (update-loupe! e))))
 
+;; --- the eraser: a poisoned pick must be REMOVABLE, one at a time -----------
+;;
+;; Until 2026-08-28 there was no gesture to delete a single pick: a photo with a
+;; doubled disc (see propose-clear-px) or a click on the wrong feature could
+;; only be repaired by Azzera — throwing away every good click with the bad one.
+;; Right-click on the dot (or Backspace with the cursor near it) removes just
+;; that one, hand click or proposal alike.
+
+(def ^:private eraser-radius-px
+  "How far (image px) from the cursor the eraser reaches for a pick. Generous —
+   aiming a right-click at a 2.5mm disc should not require the loupe — but well
+   under the 200-500px between neighbouring marks, so it cannot grab the wrong
+   dot: whatever is nearest within this ring is what the user is pointing at."
+  40.0)
+
+(defn- erase-pick-at!
+  "Delete the ONE pick nearest `px` (within eraser-radius-px): a hand click, a
+   proposal, or in batch mode an identity-free click. Clears that pick's stale
+   fit flags, says what was removed and how to put it back, persists."
+  [px]
+  (let [idx (:current-idx @session)
+        d (fn [q] (Math/hypot (- (nth px 0) (nth q 0)) (- (nth px 1) (nth q 1))))]
+    (if (batch-mode?)
+      (let [batch (vec (pnp-batch))
+            i (when (seq batch)
+                (apply min-key #(d (:px (nth batch %))) (range (count batch))))]
+        (if (and i (<= (d (:px (nth batch i))) eraser-radius-px))
+          (do (swap! session assoc-in [:pnp-batch idx]
+                     (vec (concat (subvec batch 0 i) (subvec batch (inc i)))))
+              (set-status-message! "gomma: tolto un click del batch")
+              (redraw-overlay-dots!)
+              (update-panel!))
+          (set-status-message!
+           "gomma: nessun click qui sotto — avvicina il cursore al pallino da togliere")))
+      (let [picks (pnp-picks)
+            best (when (seq picks)
+                   (apply min-key (fn [[_ v]] (d (:px v))) (vec picks)))]
+        (if (and best (<= (d (:px (val best))) eraser-radius-px))
+          (let [[ci v] best
+                lbl (:label (nth (pnp-targets) ci nil))]
+            (swap! session update-in [:pnp-picks idx] dissoc ci)
+            (swap! session update-in [:pnp-outliers idx] (fnil disj #{}) ci)
+            (swap! session update-in [:pnp-residuals idx] dissoc ci)
+            (set-status-message!
+             (str "gomma: tolto " lbl
+                  (if (:proposed? v) " (era una proposta automatica)" " (era un tuo click)")
+                  " — per rimetterlo clicca il suo bottone nel pannello, poi il punto nella foto"))
+            (redraw-pnp-preview!)
+            (redraw-overlay-dots!)
+            (update-panel!)
+            (save-acquire-state!))
+          (set-status-message!
+           "gomma: nessun pick qui sotto — avvicina il cursore al pallino da togliere"))))))
+
+(defn- pnp-on-contextmenu
+  "Right-click in PnP mode IS the eraser — the camera is locked on the photo, so
+   the right button has no other job here, and an eraser wants to be aimed."
+  [^js e]
+  (when (and @session (= :pnp (:mode @session)))
+    (.preventDefault e)
+    (.stopPropagation e)
+    (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+      (erase-pick-at! px))))
+
 (defn- start-pnp! []
   (when (and @session (not= :pnp (:mode @session)))
     (gizmo/close!)
@@ -1888,6 +1955,7 @@
       (.addEventListener canvas "pointerdown" pnp-on-pointerdown true)
       (.addEventListener canvas "pointermove" pnp-on-pointermove true)
       (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.addEventListener canvas "contextmenu" pnp-on-contextmenu true)
       (.addEventListener canvas "wheel" pnp-on-wheel #js {:capture true :passive false}))
     (redraw-overlay-dots!)
     (redraw-pnp-preview!)
@@ -1899,6 +1967,7 @@
       (.removeEventListener canvas "pointerdown" pnp-on-pointerdown true)
       (.removeEventListener canvas "pointermove" pnp-on-pointermove true)
       (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.removeEventListener canvas "contextmenu" pnp-on-contextmenu true)
       (.removeEventListener canvas "wheel" pnp-on-wheel true))
     (remove-pnp-overlay!)
     (remove-pnp-loupe!)
@@ -2143,6 +2212,54 @@
                          (id->ci (cage/relabel (:id (nth targets ci)) t n)))
                        ci))})))))
 
+(defn- cage-zero-phase-rescue!
+  "A hand-clicked zero-index is never discarded as an outlier without first
+   trying the k-step re-reading of its ring (match-cage/rescue-hand-zeros — the
+   mechanism, measured and argued, lives there). Cage only; anything else passes
+   through untouched, ::refused included.
+
+   When a whole-step turn explains the zero, the re-solve that KEEPS it is
+   adopted, and what the photo just measured — the ring is MOUNTED k steps round
+   from the model, a fact of THIS assembly, since the cage opens at every part
+   change — is logged (the pasted log is the bench's instrument) and attached as
+   `:note` for the status line and `:zero-phases` for the phase report."
+  [sol correspondences targets k]
+  (if-not (and (map? sol) (:pose sol) (cage-proxy?))
+    sol
+    (let [picks (pnp-picks)
+          index-axis (fn [ci] (some-> (nth targets ci nil) :id cage/index-parts :axis))
+          hand-zero (fn [ci] (when-not (:proposed? (get picks ci)) (index-axis ci)))
+          r (match-cage/rescue-hand-zeros sol correspondences k (cage-crown-count)
+                                          hand-zero index-axis)]
+      (if-not r
+        sol
+        (let [phrase (str/join ", " (for [[axis {:keys [steps deg]}] (sort-by key (:phases r))]
+                                      (str (str/upper-case (name axis)) " di " steps
+                                           " passi (" (.toFixed deg 0) "°)")))
+              ;; the declaration to suggest is the TOTAL mounting: what the proxy
+              ;; already declares plus what this photo just measured on top of it
+              declared (into {} (map (fn [[a v]] [a (double v)])
+                                     (or (:cage-phases (:proxy-mesh @session)) {})))
+              total (merge-with + declared
+                                (into {} (map (fn [[a p]] [a (:deg p)]) (:phases r))))
+              decl (str/join " " (for [[axis deg] (sort-by key total)]
+                                   (str ":" (name axis) " " (.toFixed deg 0))))]
+          (auto-log! (str "  fase scoperta dallo zero cliccato: anello " phrase
+                          " · rms " (.toFixed (:rms-px (:sol r)) 1) "px (era "
+                          (.toFixed (:rms-px sol) 1) " scartando lo zero)"))
+          (assoc (:sol r)
+                 :zero-phases (:phases r)
+                 :note (str (when-let [n (:note sol)] (str n " · "))
+                            "lo zero che avevi cliccato stava per essere SCARTATO come "
+                            "outlier, e non è lui l'errore: l'anello " phrase
+                            " è MONTATO girato — i dischetti ricadono su altri dischetti, "
+                            "solo lo zero lo può dire. Su questa foto ora conta. Vale per "
+                            "questo montaggio (la gabbia si apre a ogni cambio pezzo): "
+                            "finché non la smonti, riapri la sessione con "
+                            "(registration-cage :d "
+                            (or (:cage-d (:proxy-mesh @session)) "…")
+                            " :phases {" decl "})")))))))
+
 (defn- solve-and-apply!
   "Solve the current photo's placed correspondences and APPLY the pose (move the
    proxy on photo 0, the camera otherwise), updating results/residuals/outliers
@@ -2157,9 +2274,9 @@
         targets (pnp-targets)
         correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
                                {:ci ci :world (:obj (nth targets ci)) :px px}))
-        camera-pose (current-camera-pose)]
-    (let [sol (let [k (session-intrinsics iw ih)
-                    first-try (pnp/solve-pnp correspondences k {})
+        camera-pose (current-camera-pose)
+        k (session-intrinsics iw ih)]
+    (let [sol (let [first-try (pnp/solve-pnp correspondences k {})
                     detect (bridge/plate-detect (:proxy-mesh @session))
                     sees? (fn [s] (and s (bridge/camera-sees-marked-face?
                                           detect (:pose s))))
@@ -2360,7 +2477,11 @@
                             (swap! session assoc :last-solve ::refused)
                             ::refused)))))
 
-                  :else first-try))]
+                  :else first-try))
+          ;; before the outliers become red dots: a hand-clicked zero the solve
+          ;; wants to discard gets the k-step re-reading of its ring first — the
+          ;; one witness of a ring mounted whole steps round (fetta 2026-08-28)
+          sol (cage-zero-phase-rescue! sol correspondences targets k)]
       ;; A refusal must not reach the apply body: (:pose ::refused) is nil, and
       ;; bridge/solver-pose->camera of nil returns a PLAUSIBLE pose (measured:
       ;; {:position [0 0 0] :heading [0 0 1]}) rather than failing — so the
@@ -2481,9 +2602,15 @@
    `registration-cage`, which is a declaration, so the user makes it."
   [sol picks-by-ci targets k]
   (when (and sol (:pose sol) (cage-proxy?))
-    (let [picks (vec (keep (fn [[ci px]]
+    (let [;; a zero the k-step rescue just re-read is turned k steps from the
+          ;; model's anchor: measured against the stale :obj it would read as a
+          ;; huge angular estimate and drown this report's sub-step signal
+          rescued (set (keys (:zero-phases sol)))
+          picks (vec (keep (fn [[ci px]]
                              (when-let [t (nth targets ci nil)]
-                               {:axis (cage/anchor-axis (:id t)) :obj (:obj t) :px px}))
+                               (let [ip (cage/index-parts (:id t))]
+                                 (when-not (and ip (contains? rescued (:axis ip)))
+                                   {:axis (cage/anchor-axis (:id t)) :obj (:obj t) :px px}))))
                            picks-by-ci))
           ;; the pose that MEASURES a ring is solved without that ring — see
           ;; cage/phase-from-residuals for why measuring against the full fit
@@ -2568,6 +2695,19 @@
                   (min-pnp-picks) "?")))))))
   (update-panel!))
 
+(def ^:private propose-clear-px
+  "No automatic proposal may land within this (image px) of an EXISTING pick,
+   whatever name either carries. The double-booking it forbids is not a near
+   miss but the cage's own anatomy: the two faces of a ring are the same discs
+   through 3mm of plastic, ~2px apart in the image, so a reading that believes
+   the other face happily proposes zm01 on the very pixel of the hand's zp01 —
+   measured 2026-08-28 (foto 4): five doubled discs, fit 194.9px, unrecoverable.
+   `duplicate-pick-px` (6) cannot cover this: an ALT click is taken literally
+   and can sit ~25px off the detector centroid of its own disc (cf.
+   suspicious-snap-px), while distinct marks stay 200-500px apart in working
+   frames — so thirty is comfortably both above the one and below the other."
+  30.0)
+
 (defn- cage-read-and-place!
   "Cage 'a': the crown you clicked, read by the REST OF THE CAGE — then every
    other mark it accounts for placed for you, and the pose solved on all of them.
@@ -2615,6 +2755,16 @@
                       (into {} (val (apply max-key (comp count val)
                                            (group-by (comp ring-of-id key) hand-picks))))
                       {})
+        ;; the zero-indices the hand clicked on rings OTHER than the seed: the
+        ;; arbiter that outranks the vote (read-crown's :zero-picks). Measured
+        ;; 2026-08-28: a FULL seed ring, zero included, still tied on its
+        ;; through-plastic twin — only the other ring's clicked zero can refuse
+        ;; the twin as a fact rather than outscore it.
+        seed-axis (when (seq picks-by-id) (ring-of-id (key (first picks-by-id))))
+        zero-picks (vec (for [[id px] hand-picks
+                              :let [zp (cage/index-parts id)]
+                              :when (and zp (not= (name (:axis zp)) seed-axis))]
+                          {:axis (:axis zp) :px px}))
         id->ci (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
         ;; `get` and not `nth`: with no session open :current-idx is nil, and nth
         ;; throws on a nil index even with a default. Found by calling this from
@@ -2656,6 +2806,13 @@
                             " dischetti trovati, nessun anello identificato con certezza). "
                             "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'."))
                       (let [canvas (viewport/get-canvas)
+                            ;; a clean slate: with zero hand clicks whatever picks
+                            ;; exist are STALE proposals of an older pose — left
+                            ;; alive under other names they double-book the discs
+                            ;; this reading is about to propose (the same disease
+                            ;; propose-clear-px guards in the seeded branch)
+                            _ (swap! session update-in [:pnp-picks idx]
+                                     (fn [m] (into {} (remove (comp :proposed? val) m))))
                             added (reduce (fn [n {:keys [ci px]}]
                                             (let [j (id->ci ci)]
                                               (if (nil? j)
@@ -2697,7 +2854,8 @@
                      k (session-intrinsics iw ih)
                      cands (blob-detect/detect-blobs lum-at size
                                                      (assoc blob-detect/cage-opts :rgba data))
-                     res (match-cage/read-crown picks-by-id targets (mapv :center cands) k marks)]
+                     res (match-cage/read-crown picks-by-id targets (mapv :center cands) k marks
+                                                {:zero-picks zero-picks})]
                  (cond
                    (nil? res)
                    (set-status-message!
@@ -2727,19 +2885,50 @@
                      (swap! session update-in [:pnp-picks idx]
                             (fn [m] (into {} (remove (comp :proposed? val) m))))
                      ;; the marks the reading accounts for, minus the ones already
-                     ;; clicked — the user's own pixels always win over a proposal
+                     ;; clicked — the user's own pixels always win over a proposal,
+                     ;; and win BY DISTANCE, not by name: the two faces of a ring
+                     ;; project through the plastic onto the same disc, so corr can
+                     ;; propose the whole other face on top of the hand's clicks
+                     ;; under different names (measured 2026-08-28, foto 4: zp01 and
+                     ;; zm01 on the SAME pixel — 2 doubles get dropped by the solve,
+                     ;; 10 kill it camera-behind). No proposal lands within
+                     ;; propose-clear-px of an existing pick, whatever it is called.
                      (let [kept (set (keys (get-in @session [:pnp-picks idx])))
-                           added (reduce (fn [n {:keys [ci px]}]
-                                           (let [j (id->ci ci)]
-                                             (if (or (nil? j) (contains? kept j))
-                                               n
-                                               (do (swap! session assoc-in [:pnp-picks idx j]
-                                                          {:px px
-                                                           :screen (backdrop/screen-of-pixel
-                                                                    canvas (viewport/get-camera) px)
-                                                           :proposed? true})
-                                                   (inc n)))))
-                                         0 corr)]
+                           kept-px (mapv :px (vals (get-in @session [:pnp-picks idx])))
+                           on-your-disc? (fn [[u v]]
+                                           (some (fn [[qu qv]]
+                                                   (< (Math/hypot (- u qu) (- v qv))
+                                                      propose-clear-px))
+                                                 kept-px))
+                           [added shadowed]
+                           (reduce (fn [[n s] {:keys [ci px]}]
+                                     (let [j (id->ci ci)]
+                                       (cond
+                                         (or (nil? j) (contains? kept j)) [n s]
+                                         (on-your-disc? px) [n (inc s)]
+                                         :else
+                                         (do (swap! session assoc-in [:pnp-picks idx j]
+                                                    {:px px
+                                                     :screen (backdrop/screen-of-pixel
+                                                              canvas (viewport/get-camera) px)
+                                                     :proposed? true})
+                                             [(inc n) s]))))
+                                   [0 0] corr)
+                           zv (:zero-veto res)
+                           suffix (str
+                                   (when (and zv (pos? (:killed zv)))
+                                     (str " · lo zero cliccato sull'altro anello ha fatto da "
+                                          "arbitro: " (:killed zv) " riletture contraddette da "
+                                          "quel doppio pallino"))
+                                   (when (seq (:moot zv))
+                                     (str " · ATTENZIONE: lo zero dell'anello "
+                                          (str/join "/" (map (comp str/upper-case name) (:moot zv)))
+                                          " non torna con NESSUNA rilettura — quell'anello è "
+                                          "probabilmente MONTATO girato di passi interi; il solve "
+                                          "adesso lo misura proprio da quello zero"))
+                                   (when (pos? shadowed)
+                                     (str " · " shadowed " proposte scartate: cadevano su "
+                                          "dischetti già tuoi, sotto un altro nome")))]
                        (set-status-message!
                         (if-let [ps (:phase-suspect res)]
                           ;; The one assembly error nothing else can see, found by
@@ -2756,7 +2945,7 @@
                                (or (:cage-d (:proxy-mesh @session)) "…")
                                " :phases {:" (name (or (:axis ps) :x)) " " (.toFixed (:deg ps) 0)
                                "}) — se le facce di Y/Z escono invertite, usa −"
-                               (.toFixed (:deg ps) 0) ". I click fatti restano validi.")
+                               (.toFixed (:deg ps) 0) ". I click fatti restano validi." suffix)
                           (str "Gabbia letta: "
                                (if nominal?
                                  "i nomi che avevi dato erano giusti"
@@ -2770,7 +2959,8 @@
                                (when (seq (:ties res))
                                  (str " · ATTENZIONE: " (count (:ties res))
                                       " riletture spiegano la gabbia altrettanto bene — "
-                                      "questa foto non basta a decidere")))))
+                                      "questa foto non basta a decidere"))
+                               suffix)))
                        (on-solve-pnp!)))))))
             (.catch (fn [e]
                       (set-status-message! (str "Lettura della gabbia fallita: " (str e))))))))))
@@ -5194,7 +5384,13 @@
       (set! (.-type exit) "button")
       (set! (.-textContent exit) "Esci (p)")
       (.addEventListener exit "click" (fn [_] (stop-pnp!)))
-      (doseq [b [assign undo clr armedb exit]] (.appendChild actions b)))
+      (doseq [b [assign undo clr armedb exit]] (.appendChild actions b))
+      (let [hint (.createElement js/document "span")]
+        (set! (.-textContent hint) "gomma: clic destro su un click lo toglie")
+        (set! (.-color (.-style hint)) "#999")
+        (set! (.-fontSize (.-style hint)) "11px")
+        (set! (.-marginLeft (.-style hint)) "6px")
+        (.appendChild actions hint)))
     (.appendChild box actions)))
 
 (defn- render-pnp-panel!
@@ -5374,7 +5570,16 @@
           (.appendChild actions names)
           (.appendChild actions faces)
           (when batchb (.appendChild actions batchb))
-          (.appendChild actions exit))
+          (.appendChild actions exit)
+          ;; the eraser's one line of discoverability — a gesture with no button
+          ;; is a gesture nobody finds (the missing eraser cost a whole poisoned
+          ;; session, 2026-08-28)
+          (let [hint (.createElement js/document "span")]
+            (set! (.-textContent hint) "gomma: clic destro su un pallino lo toglie")
+            (set! (.-color (.-style hint)) "#999")
+            (set! (.-fontSize (.-style hint)) "11px")
+            (set! (.-marginLeft (.-style hint)) "6px")
+            (.appendChild actions hint)))
         (.appendChild box actions)))))
 
 (defn- render-retrace-panel!
@@ -5912,6 +6117,15 @@
         ;; Backspace in batch mode drops the last identity-free click.
           (and pnp? (batch-mode?) (= key "Backspace"))
           (do (.preventDefault e) (.stopPropagation e) (undo-batch-click!))
+
+        ;; Backspace in the armed flow is the eraser's keyboard half: delete the
+        ;; pick nearest where the cursor is (right-click does the same, aimed).
+          (and pnp? (not (batch-mode?)) (= key "Backspace"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if-let [px (:pnp-cursor-px @session)]
+                (erase-pick-at! px)
+                (set-status-message!
+                 "gomma: porta il cursore sul pallino da togliere, poi Backspace (o clic destro)")))
 
         ;; 'o' — the armed marker is occluded by the part in this view: skip it
         ;; (drop any pick, mark it hidden so nothing re-places it), then 'r'.
