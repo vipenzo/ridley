@@ -72,11 +72,21 @@ stato dei lavori per ripartire.
   da un click a mano sotto il nome dell'altra faccia (misurato: 5 dischetti di
   Z con zm* e zp* insieme, stesso pixel → fit 194.9px, nessuna rilettura può
   salvarlo. `kept` filtra per INDICE, serve anche il filtro per DISTANZA
-  PIXEL dai click a mano);
+  PIXEL dai click a mano). MECCANISMO INCHIODATO il 28/8 (foto 4, log di
+  Vincenzo): NON servono proposte stantie — è corr stessa che, accettati i
+  click sulla faccia p di un anello, propone l'INTERA faccia m sopra di loro
+  (le due facce proiettano a ~2px attraverso la plastica): `zp01` [1159 931]
+  e `zm01` [1159 931], pixel identico. Con 2 doppioni il solve li scarta e
+  registra; con 10 muore camera-dietro. Il fix: nessuna proposta a meno di
+  ~snap-radius px da un pick esistente, qualunque nome porti;
   (b) NON ESISTE un gesto per cancellare un pick — una foto avvelenata non si
   ripara a mano. Serve la gomma (e/o «pulisci i pick di questa foto»).
-  Fixture reale per il banco (battiscopa1, grab della sera, focale ~26-30,
-  1920×1440 — la lista pick del rifiuto finale, Y a nomi giusti per Vincenzo,
+  Fixture reale per il banco (battiscopa1, grab della sera, 1920×1440 — NB
+  la lente vera di questa camera è ≈44mm-equiv, MISURATA 2026-08-28 sul set
+  pulito a 32 pick del proxy con le fasi: min 3.97px a 44, 22.5px a 26; la
+  rifinitura congiunta si assesta a 47. Il «~26-30» creduto il 27/8 era
+  misurato su pick con X ancora etichettato girato — mai misurare la lente
+  su etichette non verificate — la lista pick del rifiuto finale, Y a nomi giusti per Vincenzo,
   Z/X contaminati dal gemello + 5 doppioni):
   [[:xm00 [1046 24]] [:xm01 [1123 114]] [:zm11 [802 737]] [:zp00 [1451 511]]
    [:zp01 [1326 360]] [:yp00 [1082 453]] [:zp02 [1134 287]] [:yp01 [887 511]]
@@ -91,6 +101,16 @@ stato dei lavori per ripartire.
   collaudati da Vincenzo (`acquire-cage/stick`, `punta-tricuspide`).
 - **Sessione battiscopa**: 8/8 registrate a mano, focale rifinita 48.9mm — è la
   VERITÀ del banco zero-click.
+- **PRIMA SESSIONE LIVE END-TO-END (battiscopa1, chiusa 2026-08-28)**: 5 frame
+  grabbati (1920×1440, Continuity iPhone), tutti registrati col giro
+  «un anello + `a`», rifinitura congiunta su 5 → focale 45.33mm (coerente col
+  44 misurato), riproiezione 7.57px, per-foto 4.8–12.2px. Il giro che REGGE:
+  Azzera se la foto è sporca → 4–8 click ALT su UN solo anello (zero se
+  visibile) → `a` → `n` → mai un secondo anello a mano finché il fix (a) non
+  è dentro. Se un anello-seme non legge il resto della gabbia, provarne un
+  ALTRO (sulla stessa foto X falliva, Z affogava nei doppioni, Y registrava
+  a 7.1px — l'istinto di Vincenzo su quale anello usare ha battuto il
+  consiglio calcolato TRE volte).
 - **Presa dal vivo su gabbia** (2026-08-27, non committata): il Grab ora TIENE
   il frame come foto libera (θ nil, `keep-live-frame-unregistered!`) invece di
   rimbalzarlo — prima ogni presa moriva sulla via automatica del piatto e il
