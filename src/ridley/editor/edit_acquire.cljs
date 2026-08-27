@@ -3050,6 +3050,19 @@
                               :let [r (get-in @session [:acquire-results idx :rms-px])]
                               :when (and r (> r bar))]
                           idx))
+          ;; …and a photo that was NEVER successfully registered does not vote at
+          ;; all, whatever picks it carries: those picks were REFUSED by every
+          ;; per-photo solve, which is the strongest possible statement about
+          ;; them. Without this, Vincenzo's foto 8 — unregistrable, clicks
+          ;; tangled at 931px — entered the joint fit through the side door (it
+          ;; had picks and a camera pose) and dragged the lens 48→50.6mm, while
+          ;; the poisoned-list above never saw it BECAUSE refusals leave no
+          ;; registered rms to judge. The circle he named — R fails because 8 is
+          ;; broken, 8 cannot be fixed because R is poisoned — was exactly this.
+          unregistered (vec (for [idx (range (count (:photos @session)))
+                                  :when (and (>= (count (get-in @session [:pnp-picks idx] {})) 4)
+                                             (not (:pnp? (get-in @session [:acquire-results idx]))))]
+                              idx))
           views (vec (keep (fn [idx]
                              ;; A pick the per-photo solve already REJECTED must not
                              ;; vote here. solve-pnp reports its rms over the
@@ -3065,7 +3078,8 @@
                                                  (get-in @session [:pnp-picks idx] {}))
                                    cam (get-in @session [:camera-poses idx])]
                                (when (and cam (>= (count picks) 4)
-                                          (not (some #{idx} poisoned)))
+                                          (not (some #{idx} poisoned))
+                                          (:pnp? (get-in @session [:acquire-results idx])))
                                  {:idx idx
                                   ;; one lens, one session: the pixel size is the
                                   ;; current photo's, which is every photo's
@@ -3075,6 +3089,10 @@
                                                 {:world (:obj (nth targets ci)) :px px}))})))
                            (range (count (:photos @session)))))
           out (bundle/refine-session views (:focal-mm @session))]
+      (doseq [idx unregistered]
+        (auto-log! (str "  foto " (inc idx) " ha click ma NON è registrata: non vota "
+                        "sulla lente. Registrala prima (Azzera, 4 click + doppio "
+                        "pallino, 'a'), poi rifai R.")))
       (doseq [idx poisoned]
         (auto-log! (str "  foto " (inc idx) " ESCLUSA dalla rifinitura: la sua "
                         "registrazione è a "
