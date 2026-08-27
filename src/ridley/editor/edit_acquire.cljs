@@ -162,7 +162,7 @@
     (m/v+ (:position proxy-pose)
           (m/v+ (m/v* ex (* 0.5 w)) (m/v+ (m/v* ey (* 0.5 h)) (m/v* ez (* 0.5 d)))))))
 
-(declare trace-items mark-world-positions)
+(declare trace-items mark-world-positions cage-proxy?)
 
 (def ^:private mark-color 0xff33cc)  ; magenta — placed marks, distinct from the retrace yellow
 
@@ -190,16 +190,24 @@
    The zero-index gets its own colour, because it is what breaks the crown's
    12-fold symmetry: with it you can tell not just where the plate is but which
    way round. Drawn even when the solid proxy is hidden ('v'), since hiding it to
-   read the photo is exactly when these are wanted."
+   read the photo is exactly when these are wanted.
+
+   On a CAGE the same dots turn hostile: six crowns are ~80 dots blanketing the
+   photo, sitting exactly on the printed discs the user is trying to click
+   (Vincenzo 2026-08-27) — and a cage, unlike the plate, is all wireframe rings,
+   so the eye has plenty to align against without them. So on a cage they follow
+   the names toggle ('n'); on the plate they stay always-on, per the 2026-08-01
+   decision above."
   []
   (when-let [as (seq (:anchors (:proxy-mesh @session)))]
-    {:type :dots
-     :data (mapv (fn [[k a]]
-                   {:pos (:position a)
-                    :radius (if (= k :zero) 1.3 1.0)
-                    :color (if (= k :zero) zero-dot-color crown-dot-color)
-                    :opacity 0.9})
-                 as)}))
+    (when (or (not (cage-proxy?)) (:show-names? @session))
+      {:type :dots
+       :data (mapv (fn [[k a]]
+                     {:pos (:position a)
+                      :radius (if (= k :zero) 1.3 1.0)
+                      :color (if (= k :zero) zero-dot-color crown-dot-color)
+                      :opacity 0.9})
+                   as)})))
 
 (defn- proxy-preview-items
   "The proxy mesh, plus the traced bezels and placed named marks (appended so they
@@ -470,18 +478,22 @@
 (defn- cage-proxy?
   "True when the session's proxy is a registration CAGE. It is a plate-proxy?
    too — same per-photo PnP on named marks — but the automatic paths (Auto, the
-   batch assignment, live Grab) are all built on the plate's ONE crown plus its
-   zero-index, and a cage has six crowns and no `:zero`. Those paths already
-   refuse it for want of a zero-index; this only lets them say WHY in terms of
-   what the user is holding, instead of advising a plate they deliberately
-   aren't using."
+   batch assignment) are built on the plate's ONE crown plus its zero-index,
+   and a cage has six crowns and no `:zero`. Those paths already refuse it for
+   want of a zero-index; this only lets them say WHY in terms of what the user
+   is holding, instead of advising a plate they deliberately aren't using.
+   The live Grab branches on it too — not to refuse, but to KEEP the frame
+   unregistered (keep-live-frame-unregistered!): a cage frame can only be
+   registered by hand, and only if it is in the film."
   []
   (boolean (:cage-d (:proxy-mesh @session))))
 
 (defn- no-auto-on-cage-msg
   "The one sentence a PLATE-shaped automatic path owes a cage session — the batch
-   assignment and the live grab, both of which are built on the plate's single
-   crown and its zero-index.
+   assignment, built on the plate's single crown and its zero-index. (The live
+   grab was the other caller until 2026-08-27: it now KEEPS a cage frame
+   unregistered instead of bouncing it — keep-live-frame-unregistered! — so only
+   register-live-frame's defensive branch still says this.)
 
    It used to say the cage had no automatic recognition at all. It has one since
    2026-08-24 ('a', see cage-read-and-place!), and it is seeded rather than
@@ -1375,13 +1387,21 @@
    hidden vertex is a blind guess): the armed one enlarged, placed ones in
    their colour, unplaced ones dimmed, and any corner the robust fit rejected
    drawn as a big opaque RED dot so the mislabel is obvious (shown even if the
-   refined pose has since occluded it, so it can still be re-clicked)."
+   refined pose has since occluded it, so it can still be re-clicked).
+
+   The predicted-position dots FOLLOW the names toggle ('n'): where the model
+   thinks the marks are is exactly where the real discs sit once the pose is
+   close, so on a cage the dots blanket the photograph and cover the very
+   discs being clicked (Vincenzo 2026-08-27). With names off only two kinds
+   survive: the ARMED one (the tool in hand, one dot) and the red outliers
+   (each an error demanding a re-click)."
   []
   (let [armed (:pnp-armed @session)
         placed (pnp-picks)
         outliers (pnp-outliers)
         occluded (pnp-occluded)
-        visible (visible-corner-set)]
+        visible (visible-corner-set)
+        names? (:show-names? @session)]
     (into
      [{:type :wireframe :data (:proxy-mesh @session)}
       {:type :dots
@@ -1390,15 +1410,18 @@
                      (cond
                        (contains? outliers i)
                        {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
+                       (and (= i armed) (contains? visible i))
+                       {:pos pos :radius 4.4 :opacity 0.3 :color (target-color i)}
+                       (not names?) nil
                        ;; marked hidden-by-the-part: a faint grey dot, so it reads
                        ;; as "dismissed" and no longer solicits a click
                        (contains? occluded i)
                        {:pos pos :radius 1.6 :color 0x555555 :opacity 0.2}
                        (contains? visible i)
                        {:pos pos
-                        :radius (if (= i armed) 4.4 2.4)
+                        :radius 2.4
                         :opacity 0.3
-                        :color (if (or (= i armed) (contains? placed i))
+                        :color (if (contains? placed i)
                                  (target-color i) 0x808080)}))
                    (corner-world-positions)))}]
      (trace-items))))
@@ -1607,7 +1630,19 @@
 
 (defn- toggle-mark-names! []
   (swap! session update :show-names? not)
-  (if (= :pnp (:mode @session)) (redraw-overlay-dots!) (redraw-mark-names!))
+  ;; the predicted dots follow this toggle and live in the 3D preview, so the
+  ;; preview of whichever mode draws them must rebuild along with the overlay:
+  ;; :pnp (its own dots) and gizmo/marker (the crown item). :retrace/:mark/stage
+  ;; previews carry no predicted dots — repainting them here would clobber the
+  ;; plane quad / frustum scenes they own, so they keep the names-only redraw.
+  (cond
+    (= :pnp (:mode @session))
+    (do (redraw-pnp-preview!) (redraw-overlay-dots!))
+
+    (and (not (:stage? @session)) (contains? #{:gizmo :marker} (:mode @session)))
+    (do (viewport/show-preview! (proxy-preview-items)) (redraw-mark-names!))
+
+    :else (redraw-mark-names!))
   (update-panel!)
   (set-status-message!
    (if (:show-names? @session)
@@ -2273,20 +2308,20 @@
                                       "nomi corretti. Il residuo non poteva accorgersene — è "
                                       "identico nei due casi — ma la camera finiva dietro i "
                                       "dischetti che avevi fotografato")))
-                    (if (and rescue (rename-worthy? (:sol rescue)) (not (sees-marks? retry)))
-                      (do (relabel-picks! idx (:flip rescue))
-                          (assoc (:sol rescue) :note
-                                 (str "erano i NOMI, non i click: " (:changed rescue)
-                                      " dischetti stavano sull'altra faccia del loro anello"
-                                      " (o contati nel verso opposto, che è la stessa cosa"
-                                      " vista dall'altro lato). Rinominati anello per anello"
-                                      " — i tuoi click non li ho toccati")))
-                      (if (sees-marks? retry)
-                      (assoc retry :note
-                             (str "la prima soluzione metteva la camera dietro i dischetti "
-                                  "cliccati (sono tutti su un anello solo, e un anello solo "
-                                  "ha il suo gemello specchiato): ripresa dall'allineamento "
-                                  "corrente"))
+                      (if (and rescue (rename-worthy? (:sol rescue)) (not (sees-marks? retry)))
+                        (do (relabel-picks! idx (:flip rescue))
+                            (assoc (:sol rescue) :note
+                                   (str "erano i NOMI, non i click: " (:changed rescue)
+                                        " dischetti stavano sull'altra faccia del loro anello"
+                                        " (o contati nel verso opposto, che è la stessa cosa"
+                                        " vista dall'altro lato). Rinominati anello per anello"
+                                        " — i tuoi click non li ho toccati")))
+                        (if (sees-marks? retry)
+                          (assoc retry :note
+                                 (str "la prima soluzione metteva la camera dietro i dischetti "
+                                      "cliccati (sono tutti su un anello solo, e un anello solo "
+                                      "ha il suo gemello specchiato): ripresa dall'allineamento "
+                                      "corrente"))
                       ;; A rescue that exists but could not buy an acceptable
                       ;; fit is reported, not applied — renaming on its strength
                       ;; would persist a guess (see rename-worthy? above)
@@ -2296,17 +2331,34 @@
                       ;; one ring, which on a real session was simply false and
                       ;; sent the user off to re-shoot a photograph that was fine
                       ;; (2026-08-19).
-                      (do (set-status-message!
-                           (str "NON applicata: ogni soluzione mette la camera DIETRO almeno "
-                                "uno dei dischetti che hai cliccato, che è impossibile — quel "
-                                "dischetto l'hai fotografato. Ho già provato a rinominarli "
-                                "anello per anello e non basta. Due cause possibili: i punti "
-                                "stanno tutti su UN anello (clicca qualche mark su un secondo "
-                                "anello), oppure qualche click è finito su un dischetto di un "
-                                "anello diverso da quello che dice l'etichetta. Intanto lascio "
-                                "la posa che hai adesso."))
-                          (swap! session assoc :last-solve ::refused)
-                          ::refused)))))
+                          (do ;; the refusal is the one outcome that PERSISTS
+                              ;; nothing — the picks live only in this window, so
+                              ;; a pasted log used to carry the verdict and none
+                              ;; of the evidence (2026-08-27: a live-grab refusal
+                              ;; could not be root-caused for exactly this). Put
+                              ;; the evidence in the log the user already pastes.
+                            (auto-log!
+                             (str "  rifiuto camera-dietro · focale "
+                                  (:focal-mm @session) "mm ("
+                                  (name (or (:focal-source @session) :default))
+                                  ") · fit di partenza "
+                                  (when first-try (.toFixed (:rms-px first-try) 1))
+                                  "px · pick: "
+                                  (pr-str (mapv (fn [{:keys [ci px]}]
+                                                  [(:id (nth targets ci))
+                                                   (mapv #(js/Math.round %) px)])
+                                                correspondences))))
+                            (set-status-message!
+                             (str "NON applicata: ogni soluzione mette la camera DIETRO almeno "
+                                  "uno dei dischetti che hai cliccato, che è impossibile — quel "
+                                  "dischetto l'hai fotografato. Ho già provato a rinominarli "
+                                  "anello per anello e non basta. Due cause possibili: i punti "
+                                  "stanno tutti su UN anello (clicca qualche mark su un secondo "
+                                  "anello), oppure qualche click è finito su un dischetto di un "
+                                  "anello diverso da quello che dice l'etichetta. Intanto lascio "
+                                  "la posa che hai adesso."))
+                            (swap! session assoc :last-solve ::refused)
+                            ::refused)))))
 
                   :else first-try))]
       ;; A refusal must not reach the apply body: (:pose ::refused) is nil, and
@@ -2543,9 +2595,26 @@
         targets (pnp-targets)
         marks (cage-crown-count)
         placed (pnp-picks)
-        picks-by-id (into {} (keep (fn [[ci {:keys [px]}]]
-                                     (when-let [t (nth targets ci nil)] [(:id t) px]))
-                                   placed))
+        ;; The seed is the USER's clicks — never the :proposed? picks. A proposal
+        ;; is the old pose's own guess written back as data (propose-and-snap!),
+        ;; and this reading exists precisely to overturn that pose: seeding the
+        ;; arbitration with the defendant's testimony let a rotation-consistent
+        ;; mislabel defend itself against fresh hand clicks (2026-08-27 evening:
+        ;; two ALT clicks discarded as outliers by fourteen proposals).
+        hand-picks (into {} (keep (fn [[ci {:keys [px proposed?]}]]
+                                    (when-not proposed?
+                                      (when-let [t (nth targets ci nil)] [(:id t) px])))
+                                  placed))
+        ;; read-crown's contract is the marks of ONE ring; hand clicks can span
+        ;; rings (a second ring gets clicked when a refusal suggests it), so the
+        ;; seed is the ring with the most clicks — the rest stay in the pool and
+        ;; the reading renames them with everything else.
+        ring-of-id (fn [id] (let [n (name id)]
+                              (if (str/starts-with? n "zero-") (subs n 5 6) (subs n 0 1))))
+        picks-by-id (if (seq hand-picks)
+                      (into {} (val (apply max-key (comp count val)
+                                           (group-by (comp ring-of-id key) hand-picks))))
+                      {})
         id->ci (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
         ;; `get` and not `nth`: with no session open :current-idx is nil, and nth
         ;; throws on a nil index even with a default. Found by calling this from
@@ -2647,6 +2716,16 @@
                                            ci))
                          canvas (viewport/get-canvas)]
                      (when-not nominal? (relabel-picks! idx flip))
+                     ;; the OLD pose's proposals die here: they were its testimony,
+                     ;; and the reading that just won may have overturned it. Left
+                     ;; alive they outvote the fresh clicks in the very next solve
+                     ;; (2026-08-27 evening: 'a' would have handed on-solve-pnp! the
+                     ;; same fourteen stale proposals that had been discarding the
+                     ;; user's ALT clicks as outliers). The reading's own corr
+                     ;; re-proposes every mark it accounts for, so nothing earned
+                     ;; is lost.
+                     (swap! session update-in [:pnp-picks idx]
+                            (fn [m] (into {} (remove (comp :proposed? val) m))))
                      ;; the marks the reading accounts for, minus the ones already
                      ;; clicked — the user's own pixels always win over a proposal
                      (let [kept (set (keys (get-in @session [:pnp-picks idx])))
@@ -3885,8 +3964,38 @@
                  (set-status-message! (str file ": registered, " (.toFixed (:rms-px sol) 1)
                                            "px over " n " marks")))))))
 
+(defn- keep-live-frame-unregistered!
+  "The cage's Grab: write the frame and put it in the film as an out-of-ring
+   photo (θ nil — the same standing session-json-from-folder gives a cage
+   folder's photos), leaving registration to the user's 'p'+'a' on it. The
+   plate's grab keeps a frame only if it registers, and on a cage that made
+   live capture a dead end: every frame bounced off the plate-shaped automatic
+   path, and the advice it bounced with — click 4 discs with 'p', press 'a' —
+   presupposes a photo that is IN the film (reported 2026-08-27, a whole
+   session of grabs discarded). Returns a Promise resolving when the session
+   is consistent again."
+  [^js canvas]
+  (let [idx (count (:photos @session))
+        file (next-grab-name)]
+    (-> (camera/canvas->jpeg canvas)
+        (.then (fn [blob] (stl/desktop-write-file blob (photo-path file))))
+        (.then (fn [_]
+                 (swap! session update :photos conj {:file file :theta nil})
+                 (write-session-json!)))
+        (.then (fn [_]
+                 (enter-photo! idx)
+                 (auto-log! (str "  " file " tenuta, non registrata (gabbia): "
+                                 "clicca 4 dischetti su UN anello con 'p' "
+                                 "(lo zero-indice vale doppio), poi premi 'a'."))
+                 (set-status-message!
+                  (str file ": tenuta, da registrare — 4 dischetti con 'p', poi 'a'.")))))))
+
 (defn- on-grab!
-  "'g' / the Grab button: one frame, measured, and kept only if it registers."
+  "'g' / the Grab button. Plate: one frame, measured, and kept only if it
+   registers. Cage: the frame is kept UNREGISTERED — there is no on-the-spot
+   automatic for a cage yet (auto-read stands at 2/8 with tens of seconds per
+   refusal, see dev-docs/HANDOVER-cage-zero-click.md), and a frame that is not
+   in the film cannot be hand-registered at all."
   []
   (cond
     (not (camera/active?))
@@ -3897,23 +4006,30 @@
 
     :else
     (if-let [{:keys [^js canvas size]} (camera/grab-frame)]
-      (let [[w h] size
-            sampler (backdrop/sampler-of canvas w h)]
+      (let [[w h] size]
         (auto-log! (str "=== presa dal vivo (" w "×" h ") ==="))
-        (set-status-message! "Grabbed — registering… (detail in the REPL)")
-        ;; hand the browser a frame first, so the status line paints before the
-        ;; (seconds-long) detection blocks the thread
-        (-> (yield-frame)
-            (.then (fn [_] (register-live-frame sampler)))
-            (.then (fn [outcome]
-                     (if (:ok? outcome)
-                       (accept-live-frame! canvas outcome)
-                       (do (auto-log! (str "  scartata: " (:message outcome)))
-                           (set-status-message! (str "Not kept — " (:message outcome)))
-                           (update-panel!)))))
-            (.catch (fn [err]
-                      (auto-log! (str "  errore: " err))
-                      (set-status-message! (str "Grab failed: " err))))))
+        (if (cage-proxy?)
+          ;; a cage frame cannot register on the spot (the automatic path is
+          ;; plate-shaped): keep it, and let 'p'+'a' register it in place
+          (-> (keep-live-frame-unregistered! canvas)
+              (.catch (fn [err]
+                        (auto-log! (str "  errore: " err))
+                        (set-status-message! (str "Grab failed: " err)))))
+          (let [sampler (backdrop/sampler-of canvas w h)]
+            (set-status-message! "Grabbed — registering… (detail in the REPL)")
+            ;; hand the browser a frame first, so the status line paints before
+            ;; the (seconds-long) detection blocks the thread
+            (-> (yield-frame)
+                (.then (fn [_] (register-live-frame sampler)))
+                (.then (fn [outcome]
+                         (if (:ok? outcome)
+                           (accept-live-frame! canvas outcome)
+                           (do (auto-log! (str "  scartata: " (:message outcome)))
+                               (set-status-message! (str "Not kept — " (:message outcome)))
+                               (update-panel!)))))
+                (.catch (fn [err]
+                          (auto-log! (str "  errore: " err))
+                          (set-status-message! (str "Grab failed: " err))))))))
       (set-status-message! "The camera has not delivered a frame yet."))))
 
 (def ^:private photo-indexed-keys
@@ -7493,8 +7609,15 @@
                                 (do (enter-photo! 0) (report-focal!))
                                 (do (viewport/set-camera-pose! (ensure-photo-pose 0))
                                     (set-status-message!
-                                     (str "Empty session: open the camera and grab a frame "
-                                          "— the first one measures the lens."))))))))))
+                                     (if (cage-proxy?)
+                                       ;; the plate's promise ("measures the lens")
+                                       ;; is not the cage's: its frames are kept
+                                       ;; unregistered, for 'p'+'a' by hand
+                                       (str "Empty session: open the camera and grab frames "
+                                            "— they are kept unregistered; on each, click 4 "
+                                            "discs on ONE ring with 'p', then press 'a'.")
+                                       (str "Empty session: open the camera and grab a frame "
+                                            "— the first one measures the lens.")))))))))))
       (.catch (fn [err]
                 ;; ALSO to the browser console: this runs after the evaluation has
                 ;; returned, so capture-println writes into a print buffer nobody
