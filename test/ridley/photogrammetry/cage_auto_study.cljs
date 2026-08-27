@@ -18,7 +18,10 @@
 (def path (js/require "path"))
 (def sharp (js/require "sharp"))
 
-(def dir "test-assets/cage-battiscopa")
+(def dir
+  "CAGE_AUTO_DIR points the bench at another session's folder (a live-grab
+   session, a new shoot) without touching the committed truth run."
+  (or (aget (.-env js/process) "CAGE_AUTO_DIR") "test-assets/cage-battiscopa"))
 
 (defn- fmt [x n] (.toFixed (js/Number. x) n))
 
@@ -83,15 +86,21 @@
     (doseq [t @tr] (println (str "  " (pr-str t))))))
 
 (defn- main* []
-  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
-                       :keywordize-keys true)
+  (let [state (if (.existsSync fs (str dir "/acquire-state.json"))
+                ;; the truth file: hand-registered poses. A live session that was
+                ;; never registered has none — the bench still runs, it just
+                ;; can't say how far the camera lands from anyone's hand.
+                (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                         :keywordize-keys true)
+                {})
         proxy (cage/registration-cage :d 176)
         targets (cage-targets proxy)
         disc-r (:mark-disc-r proxy)
         files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
-        [w h] [3024 4032]
-        focal (get-in state [:focal :mm] 48.0)
-        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+        ;; CAGE_AUTO_FOCAL sweeps a hypothesis lens over a session whose real
+        ;; one was never measured (a grabbed frame has no EXIF)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
         score (atom {:ok 0 :none 0 :far 0})]
     (println (str "\n=== auto-read (zero click) su battiscopa: " (count files)
                   " foto · focale della sessione " (fmt focal 1) "mm ==="))
@@ -105,6 +114,11 @@
                     (.then
                      (fn [res]
                        (let [{:keys [data lum-at w h]} (sampler res)
+                             ;; intrinsics from the photo's OWN size: the truth
+                             ;; fixture is all 3024×4032 (same numbers as the old
+                             ;; fixed pair), a live-grab folder is 1920×1440
+                             intr (cam/intrinsics-from-fov
+                                   (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
                              t0 (.now js/Date)
                              cands (mapv :center (bd/detect-blobs lum-at [w h]
                                                                   (assoc bd/cage-opts :rgba data)))
@@ -123,7 +137,9 @@
                                  c-auto (cam/camera-center pose)
                                  c-true (when truth (cam/camera-center truth))
                                  d (when c-true (la/v-norm (la/v-sub c-auto c-true)))
-                                 ok? (and d (< d 15.0))]
+                                 ;; no truth on file → registered is all the bench
+                                 ;; can attest; only a MEASURED distance flags far
+                                 ok? (if d (< d 15.0) true)]
                              (swap! score update (if ok? :ok :far) inc)
                              (println (str "  foto " (inc i) " (" (nth files i) "): "
                                            (count cands) " candidati · seme "
