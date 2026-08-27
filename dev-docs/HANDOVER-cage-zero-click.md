@@ -49,12 +49,20 @@ stato dei lavori per ripartire.
   l'indice di Y coi nomi accesi. Con `{:y 180}` dichiarato, Vincenzo confronta
   proxy e gabbia vera: anche **X è a 180°** (Z è giusto — il suo indice
   riproiettava a 9px). Stato finale della gabbia montata:
-  **`:phases {:y 180 :x 180}`**. SOSPETTO FORTE sul perché (da verificare nei
-  sorgenti: `key-pin-azim`/`joint-tabs`): «una tacca e una spina» messe a 180°
-  l'una dall'altra rendono la chiave 2-FOLD DEGENERE — uccide 90° e 270° ma
-  NON il 180°: tre anelli montati su una moneta a due facce → Z dritto, X e Y
-  girati, esattamente l'osservato. Se confermato, correzione di stampa: tacca
-  NON antipodale alla spina (es. a 90°). Il phase-probe resta cieco a 6 passi (i
+  **`:phases {:y 180 :x 180}`**. PERCHÉ — CONFERMATO DAL TEST FISICO
+  (Vincenzo, 28/8): la chiave NON è a una via — l'anello X si monta anche
+  RIBALTATO (facce m/p scambiate). Le fasi sono quindi un fatto
+  PER-MONTAGGIO: la gabbia si apre a ogni cambio pezzo (il portapezzi sta
+  dentro), ogni apertura rilancia la moneta di ogni anello, e i `:phases`
+  dichiarati muoiono con lo smontaggio (la sessione-verità del 25/8 senza
+  fasi era la STESSA gabbia in un altro giro). Due rami di cura, in ordine
+  di resa: (1) SOFTWARE, preferito perché copre anche le stampe esistenti —
+  scoprire le fasi DALLA FOTO: gli zero-indice cliccati o rilevati arbitrano
+  la fase di ogni anello, stesso meccanismo del veto già in lista; a regime
+  `:phases` diventa inutile. (2) STAMPA — una chiave che vieti ANCHE il
+  ribaltamento: il vincolo va rotto fuori dal piano dell'anello, non solo in
+  azimut (da progettare su `key-pin-azim`/`joint-tabs`).
+  Il phase-probe resta cieco a 6 passi (i
   dischetti ricadono identici, solo lo zero si sposta) e il solve scartava
   come outlier proprio i click sullo zero. **Fetta da fare**: gli
   zero-indice cliccati A MANO su anelli diversi dal seme diventano un VETO
