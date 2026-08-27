@@ -1,5 +1,10 @@
 # HANDOVER — riconoscimento automatico della gabbia
 
+> **Entry point attuale: `dev-docs/HANDOVER-cage-zero-click.md`** (stato dei
+> lavori e frontiera). Questo file resta la STORIA completa del fronte — perché
+> ogni scelta è com'è — e vale la pena leggerlo quando una decisione qui sotto
+> sembra strana.
+
 ## In una riga
 
 Dare alla GABBIA quello che il piatto ha già: premi un tasto, il programma trova

@@ -114,7 +114,8 @@ registrazione automatica sarà tutto inutile»): ZERO CLICK** —
 click col seeded come ripiego. Le sei rifiutate muoiono tutte allo stadio
 ellissi: frontiera = concentricità, identità condivisa fra famiglie di anello,
 recall del rilevatore. Banco `node out/cage-auto.js` su
-`test-assets/cage-battiscopa` (verità = la sessione a mano). Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
+`test-assets/cage-battiscopa` (verità = la sessione a mano). Entry point
+`dev-docs/HANDOVER-cage-zero-click.md`. Entry point `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
 `node out/cage-study.js` e `node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
