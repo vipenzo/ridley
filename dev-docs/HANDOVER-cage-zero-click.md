@@ -232,27 +232,73 @@ stato dei lavori per ripartire.
    identificare k=7 punti fra 12 mark enumera 11088 sottoinsiemi. Senza budget i
    rifiuti costavano 40–65s; con, 25–40. Ancora troppi: è UI bloccante.
 
-## La frontiera — perché 2/8 e non 8/8
+## La frontiera — perché 2/8 e non 8/8 (AGGIORNATA 29/8: ora è MISURATA)
 
-Le sei rifiutate muoiono tutte allo stadio ellissi: l'anello vero non emerge fra
-le ipotesi RANSAC (o non raccoglie 8 inlier puliti, o le coniche miste lo
-seppelliscono). Tre leve, in ordine di resa attesa:
+La campagna del 29/8 ha attaccato le leve 1 e 2 e ha lasciato il cablaggio di
+produzione ALLA BASELINE (2/8, zero falsi) **per scelta**: ogni arricchimento
+provato o non spostava il tasso o comprava un falso positivo. Ma la frontiera
+non è più una congettura — è un audit, foto per foto, con due strumenti nuovi
+nel banco (`CAGE_AUTO_RECALL=1`): la riga di **recall** (per anello visibile,
+quanti candidati cadono sui suoi mark sotto la posa-verità) e il
+**coverage-report** (per anello trovabile: quale ipotesi lo copre, e se è mai
+stata TENTATA sotto il budget). Cosa dicono:
 
-1. **Concentricità**: i tre anelli condividono il centro, e il RANSAC ancora non
-   lo sa — ipotizza coniche indipendenti. Un RANSAC che ipotizza la FAMIGLIA
-   concentrica (o anche solo: trovata un'ellisse, cerca le sorelle intorno allo
-   stesso centro) cambia il gioco.
-2. **Identità condivisa fra famiglie di anello**: X/Y/Z hanno la stessa
-   geometria a meno di scala — oggi la stessa ricerca C(12,k) si paga 6 volte
-   (una per faccia). Una ricerca sola, poi il raggio decide la famiglia.
-3. **Recall del rilevatore su queste foto**: 16–31 candidati contro i 19–30
-   pick della mano (foto 8: 16 contro 19). Ogni dischetto perso è un inlier in
-   meno per l'ellisse. `cage-opts` fu tarato sulle foto della gabbia vecchia
-   senza pezzo dentro.
+- **Gli anelli veri CI SONO**: su 5 delle 6 rifiutate un anello ha 8–9
+  dischetti rilevati (foto 3: xp 9; foto 4: xp 8 + ym 8; foto 5: ym 9;
+  foto 6: yp 8; foto 7: ym 9). Solo la foto 2 è affamata davvero (max 3) —
+  quella è territorio della leva 3 (recall del rilevatore).
+- **Il budget bruciava senza mai provarli**: 6 facce per ipotesi × budget 18 =
+  solo le prime 3 ipotesi (per regolarità) venivano tentate. L'anello vero,
+  quinto in lista, non veniva MAI provato.
+- **La famiglia concentrica** (`ellipse/fit-concentric-ranked` +
+  `sisters-about`: fit a centro bloccato, 3 incognite, terne esaustive; semi =
+  centri delle ipotesi dello stadio 1 — spazzatura inclusa, che è centrata
+  sulla gabbia anche lei — più il baricentro) fa emergere gli anelli veri…
+  **dentro soprainsiemi CONTAMINATI** (+2…+6 punti in banda Sampson ai passi
+  sbagliati): foto 7, i 9 ym completi in un'ipotesi da 11; foto 6, gli 8 yp in
+  una da 14, la cui corda gonfiata falsava pure il suggeritore d'asse.
+  ATTENZIONE al merge: le sorelle possono solo AGGIUNGERE anelli, mai
+  spodestare le ipotesi libere dello stadio 1 — la prima stesura giudicava per
+  taglia e il soprainsieme sporco CANCELLAVA l'insieme pulito (sintetico da
+  39/39 a RIFIUTATO; misurato, corretto).
+- **Il pettine** (`ellipse/comb-select`): la corona è equispaziata in anomalia
+  eccentrica (invariante affine), i contaminanti no — due passate (il fit sul
+  miscuglio classifica male; rifit sui denti, riselezione dall'insieme pieno).
+  Costruito e testato; da solo non basta perché l'identificazione a valle
+  (`assign-marks`) muore comunque sui set quasi-puliti di queste foto.
+- **IL GEMELLO-RIFLESSIONE, il pericolo vero**: con lo stream di ipotesi
+  arricchito, la foto 7 si è REGISTRATA dalla riflessione dell'intera gabbia —
+  camera a 764mm dalla verità, «spiega 19» — perché quando l'identificazione
+  vera fallisce il gemello vince INCONTRASTATO, e il conteggio di corr SATURA
+  quando le predizioni si infittiscono (posa più lontana → gabbia più piccola
+  → più coppie mutual-nearest entro 26px). `explained` ora conta candidati
+  DISTINTI (un dischetto conferma UN mark) — giusto in sé, ma non basta come
+  arbitro.
+- **La guardia degli zeri è SMENTITA dai pixel**: «sotto la posa vera gli
+  zero degli altri anelli cadono sui loro doppi pallini» vale per l'occhio e
+  per i click, NON per `disc-at?` sui frame veri — la guardia uccideva anche
+  foto 1 e 8 (0/8). Rimossa. L'arbitro automatico del gemello resta da
+  inventare.
+
+**Le prossime leve, riviste dall'audit** (in ordine):
+1. **Identificazione contamination-proof** — è QUI che muoiono foto 3/6/7:
+   `assign-marks` riceve 7–9 punti veri + 1–2 intrusi e non identifica. O si
+   fa digerire l'intruso (RANSAC dentro l'identità, o l'allineamento del
+   pettine passato come fase iniziale), o si paga l'identità UNA volta in
+   forma canonica e il raggio decide la famiglia (la leva 2 piena).
+2. **Arbitro del gemello per semi macchina** — il veto degli zero funziona coi
+   click; per l'auto serve un testimone che regga sui pixel veri (lo zero
+   RILEVATO dal detector — oggi il detector li manca spesso; o la chiralità
+   dell'indice fuori-asse, che è il suo scopo di progetto).
+3. **Recall del rilevatore** (foto 2, e +1 inlier ovunque): `cage-opts` fu
+   tarato sulla gabbia vecchia senza pezzo dentro.
 
 E il tempo: 25–40s di UI bloccata per un rifiuto non è spedibile oltre il
-prototipo — o si accorcia (le leve 1–2 aiutano anche qui), o si sposta su un
-worker.
+prototipo — o si accorcia, o si sposta su un worker. Il materiale della
+campagna (concentrico, pettine, audit) sta in `ellipse.cljs` + banco, testato
+(`concentric-family-recovers-the-sparse-ring`,
+`sisters-about-is-exhaustive-where-sampling-is-lucky`), pronto per essere
+ricablato quando la leva 1 (identificazione) è dentro.
 
 ## Il banco di prova, e usalo
 

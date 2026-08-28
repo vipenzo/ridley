@@ -81,17 +81,31 @@
                    (pos? (la/v-dot normal (la/v-sub c obj)))))
              targets)))
 
-(defn- nearest-px [pts [u v]]
-  (reduce (fn [b [cu cv]] (min b (Math/hypot (- cu u) (- cv v)))) js/Infinity pts))
-
 (defn explained
-  "How many of `targets` the pose puts within `tol-px` of a detected candidate —
-   the score a reading is judged by. Only front-facing targets count."
+  "How many DISTINCT candidates the pose puts a front-facing target on (within
+   `tol-px`) — the score a reading is judged by.
+
+   Distinct, and it is a guard, not tidiness: counting TARGETS lets a pose that
+   is too far away win the argument — the cage projects smaller, its marks
+   bunch up, and MANY targets crowd within tolerance of the SAME few discs.
+   Measured (2026-08-29, foto 7 del banco): a through-plastic twin 764mm out
+   'explained' 19 targets on 26 candidates and shipped as a registration; the
+   true pose explains 13, one disc each. A candidate is one physical disc and
+   can confirm one mark."
   [targets candidates intrinsics pose tol-px]
-  (count (for [{:keys [obj]} (front-facing targets pose)
-               :let [px (cam/project intrinsics pose obj)]
-               :when (and px (< (nearest-px candidates px) tol-px))]
-           true)))
+  (count
+   (into #{}
+         (keep (fn [{:keys [obj]}]
+                 (let [px (cam/project intrinsics pose obj)]
+                   (when px
+                     (let [[d i] (reduce (fn [[bd bi] [j [cu cv]]]
+                                           (let [dd (Math/hypot (- cu (nth px 0))
+                                                                (- cv (nth px 1)))]
+                                             (if (< dd bd) [dd j] [bd bi])))
+                                         [js/Infinity nil]
+                                         (map-indexed vector candidates))]
+                       (when (and i (< d tol-px)) i))))))
+         (front-facing targets pose))))
 
 (defn- relabel-picks
   "`picks` (anchor-id → pixel) re-read under one of `cage/crown-misreadings`'
@@ -479,6 +493,17 @@
          ;; cyclic candidates, 24 at k=12 but 11088 at k=7, and each face of
          ;; each hypothesis pays it. The first bench run at floor 6 took 40-57
          ;; seconds per frame, almost all of it on junk partial rings.
+         ;; NOTE 2026-08-29 — the concentric family (ellipse/fit-concentric-
+         ;; ranked) and the comb (ellipse/comb-select) were built, measured on
+         ;; the bench, and deliberately NOT wired here yet: they surface the
+         ;; true rings (audited: foto 7's nine ym discs complete inside a
+         ;; hypothesis) but the identity stage cannot digest their contaminated
+         ;; supersets, and the enriched stream let a whole-cage REFLECTION ship
+         ;; as a registration (foto 7: 19 corr, camera 764mm out — corr count
+         ;; saturates when predictions densify). Until identification is
+         ;; contamination-proof and the twin has an arbiter that works for
+         ;; machine seeds, the independent search stays: 2/8 with zero false
+         ;; positives beats any rate bought by shipping a reflection.
          hyps (ellipse/fit-inliers-ranked (vec candidates)
                                           {:iters 2000 :thr 0.04
                                            :min-inliers 8 :top-k 6})
@@ -516,7 +541,12 @@
          faces (ring-faces targets)
          by-id (into {} (map (juxt :id identity) targets))
          budget (volatile! (inc max-identify))]
-     (note! {:stage :hyps :sizes (mapv count hyps) :candidates (count candidates)})
+     (note! {:stage :hyps :sizes (mapv count hyps) :candidates (count candidates)
+             ;; the sets themselves and the axis votes: the bench compares them
+             ;; against the truth pose's per-ring candidates, which is how the
+             ;; 2026-08-29 budget starvation was caught — sizes alone could not
+             ;; say whether the true ring was IN the list and never tried
+             :sets hyps})
      ;; BEST accepted wins — never the first. The same 11 candidate discs
      ;; identify as ring X AND as ring Y (same circle, different radius: the
      ;; pose absorbs the scale into distance), both at clean rms, both past the
@@ -525,7 +555,7 @@
      ;; the 12, putting the camera 697mm out). The identity budget caps the
      ;; cost instead: the search stops grinding junk after :max-identify
      ;; attempts, which took refusals from 40-65s to 10-25.
-     (->> (for [hyp hyps
+     (->> (for [[hi hyp] (map-indexed vector hyps)
                 face faces
                 :let [pts (mapv #(nth candidates %) (take (count (:marks face)) hyp))
                       res (when (and (>= (count pts) 4)
@@ -534,7 +564,7 @@
                                              intrinsics judge
                                              {:disc-r disc-r
                                               :face-normal (:face-normal face)}))
-                      _ (note! {:stage :seed :hyp (count hyp)
+                      _ (note! {:stage :seed :hyp (count hyp) :hyp-i hi
                                 :face [(:axis face) (:sign face)]
                                 :crown-hits (:crown-hits res)
                                 :zero-hit? (:zero-hit? res)})]

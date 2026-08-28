@@ -60,6 +60,75 @@
     (when (and pp cam-pose)
       (bridge/editor->solver-pose cam-pose pp))))
 
+(defn- family-hits
+  "Under the TRUTH pose: for each visible (ring,face) family, which detector
+   candidates sit within 8px of one of its marks. {[axis sign] {:n-vis n
+   :idxs #{candidate-index …}}} — the ceiling any ellipse search works under,
+   and the ground truth the hypotheses are audited against."
+  [targets intr truth cands]
+  (when truth
+    (let [c (cam/camera-center truth)
+          fams (group-by (fn [t]
+                           (let [p (or (cage/mark-parts (:id t)) (cage/index-parts (:id t)))]
+                             [(:axis p) (:sign p)]))
+                         targets)]
+      (into {}
+            (for [[[axis sign] ts] fams
+                  :let [vis (filterv (fn [{:keys [normal obj]}]
+                                       (or (nil? normal)
+                                           (pos? (la/v-dot normal (la/v-sub c obj)))))
+                                     ts)
+                        idxs (set (for [{:keys [obj]} vis
+                                        :let [px (cam/project intr truth obj)]
+                                        :when px
+                                        [i [u v]] (map-indexed vector cands)
+                                        :when (< (Math/hypot (- u (nth px 0))
+                                                             (- v (nth px 1)))
+                                                 8.0)]
+                                    i))]
+                  :when (seq vis)]
+              [[axis sign] {:n-vis (count vis) :idxs idxs}])))))
+
+(defn- recall-line
+  "CAGE_AUTO_RECALL=1: per visible (ring,face), how many marks have a candidate
+   within 8px. Lever 3's instrument: when every ring of a refused frame sits
+   below the 8-inlier floor, the detector — not the geometry — is starving."
+  [fh]
+  (when fh
+    (apply str
+           (interpose " · "
+                      (for [[[axis sign] {:keys [n-vis idxs]}] (sort-by (comp str first) fh)]
+                        (str (name axis) (if (pos? sign) "p" "m") " "
+                             (count idxs) "/" n-vis))))))
+
+(defn- coverage-report!
+  "CAGE_AUTO_RECALL=1, on a refusal: for each family with enough detected discs
+   to be findable, WHICH hypothesis covers its candidates, what the size-ratio
+   hint said, and whether the pair (hypothesis, right axis) was ever attempted
+   under the identity budget — the questions that separate 'the ellipse stage
+   missed the ring' from 'the ring was found and never tried' from 'tried and
+   the identification itself failed'. Built the day sizes alone proved
+   unreadable (2026-08-29: five refusals, every true ring present at 8-9 discs,
+   none ever attempted — the budget burned six faces at a time on junk)."
+  [fh tr]
+  (let [hyps-note (first (filter #(= :hyps (:stage %)) tr))
+        sets (mapv set (:sets hyps-note))
+        hints (:hints hyps-note)
+        tried (set (keep (fn [t] (when (= :seed (:stage t))
+                                   [(:hyp-i t) (first (:face t))]))
+                         tr))]
+    (when (seq sets)
+      (doseq [[[axis sign] {:keys [idxs]}] (sort-by (comp str first) fh)
+              :when (>= (count idxs) 6)]
+        (let [cov (mapv #(count (filter % idxs)) sets)
+              best (apply max-key cov (range (count sets)))]
+          (println (str "      anello " (name axis) (if (pos? sign) "p" "m")
+                        ": " (count idxs) " dischetti rilevati · ipotesi #" best
+                        " ne copre " (nth cov best) " (taglia " (count (nth sets best))
+                        (when hints (str ", hint " (pr-str (nth hints best)))) ")"
+                        " · provata con asse " (name axis) "? "
+                        (if (contains? tried [best axis]) "sì" "NO"))))))))
+
 (defn- synth-run!
   "CAGE_AUTO_SYNTH=1: the synthetic scene of match-cage-test, with the full
    trace — for debugging why a refusal happens where sight says it should not."
@@ -128,10 +197,16 @@
                                               {:disc-r disc-r :trace tr})
                              ms (- (.now js/Date) t0)
                              truth (solver-camera state i)]
+                         (when (aget (.-env js/process) "CAGE_AUTO_RECALL")
+                           (when-let [rl (recall-line (family-hits targets intr truth cands))]
+                             (println (str "      recall (sotto la posa a mano): " rl))))
                          (if (nil? rr)
                            (do (swap! score update :none inc)
                                (println (str "  foto " (inc i) " (" (nth files i) "): "
                                              (count cands) " candidati · RIFIUTATA · " ms "ms"))
+                               (when (aget (.-env js/process) "CAGE_AUTO_RECALL")
+                                 (when-let [fh (family-hits targets intr truth cands)]
+                                   (coverage-report! fh @tr)))
                                (doseq [t @tr] (println (str "      " (pr-str t)))))
                            (let [pose (:pose rr)
                                  c-auto (cam/camera-center pose)

@@ -27,17 +27,19 @@
           (swap! s #(bit-and (+ (* % 1103515245) 12345) 0x7fffffff)) 0)
          2147483648.0))))
 
-(defn- normalize
-  "Hartley normalisation: translate `pts` to their centroid and scale so the mean
-   distance to the origin is √2. Returns the normalised points (raw coords are only
-   needed to fit — the caller wants inlier INDICES, which normalisation preserves)."
+(defn- norm-of
+  "Hartley normalisation with its transform kept: translate `pts` to their
+   centroid and scale so the mean distance to the origin is √2. Returns
+   {:np <normalised points> :cx :cy :s} — the transform matters to callers that
+   need to carry a point (an ellipse CENTRE) back to raw pixels."
   [pts]
   (let [n (count pts)
         cx (/ (reduce + 0.0 (map first pts)) n)
         cy (/ (reduce + 0.0 (map second pts)) n)
         md (/ (reduce + 0.0 (map (fn [[x y]] (Math/hypot (- x cx) (- y cy))) pts)) n)
         s (/ (Math/sqrt 2.0) (max 1e-9 md))]
-    (mapv (fn [[x y]] [(* s (- x cx)) (* s (- y cy))]) pts)))
+    {:np (mapv (fn [[x y]] [(* s (- x cx)) (* s (- y cy))]) pts)
+     :cx cx :cy cy :s s}))
 
 (defn- fit-conic-5
   "Conic [a b c d e f] through the 5 points, f pinned to 1. nil if singular."
@@ -69,6 +71,51 @@
       (vec acc)
       (recur (conj acc (min (dec n) (int (* (r) n))))))))
 
+(defn- distinct-rings
+  "Greedy over descending support, keeping only rings that are genuinely NEW: a
+   candidate sharing more than `max-overlap` of the smaller set with one already
+   kept is the same ring seen again. `hyps` is {inlier-vec conic}; returns
+   [[inl conic] …], at most `top-k`."
+  [hyps top-k max-overlap]
+  (loop [remaining (sort-by (fn [[inl _]] (- (count inl))) hyps)
+         kept []]
+    (if (or (empty? remaining) (>= (count kept) top-k))
+      kept
+      (let [[inl conic] (first remaining)
+            s (set inl)
+            same-ring? (some (fn [[kept-inl _]]
+                               (let [shared (count (filter s kept-inl))]
+                                 (> shared (* max-overlap (min (count inl) (count kept-inl))))))
+                             kept)]
+        (recur (rest remaining) (if same-ring? kept (conj kept [inl conic])))))))
+
+(defn- ransac-kept
+  "The independent-conic RANSAC over NORMALISED points `np`: every 5-point
+   sample that fits an ellipse gathering `:min-inliers`, keyed by its inlier
+   SET so the many samples that rediscover the same ellipse count once, then
+   distinct-rings. Returns [[inl conic] …] in the normalised frame — the
+   shared engine of fit-inliers-ranked and fit-concentric-ranked (which needs
+   the CONICS too, for their centres)."
+  [np {:keys [iters thr min-inliers seed top-k max-overlap]
+       :or {iters 150 thr 0.03 min-inliers 6 seed 1 top-k 1 max-overlap 0.5}}]
+  (let [n (count np)]
+    (if (< n 5)
+      []
+      (let [r (prng seed)
+            thr2 (* thr thr)
+            hyps (loop [i 0 acc {}]
+                   (if (>= i iters)
+                     acc
+                     (let [conic (fit-conic-5 (mapv #(nth np %) (pick5 r n)))]
+                       (if (and conic (ellipse? conic))
+                         (let [inl (filterv #(< (sampson-sq conic (nth np %)) thr2) (range n))]
+                           (recur (inc i)
+                                  (if (and (>= (count inl) min-inliers) (not (contains? acc inl)))
+                                    (assoc acc inl conic)
+                                    acc)))
+                         (recur (inc i) acc)))))]
+        (distinct-rings hyps top-k max-overlap)))))
+
 (defn fit-inliers-ranked
   "The RANSAC's top `:top-k` DISTINCT ellipse hypotheses through `pts`, each as its
    inlier INDICES sorted by fit (closest first), the largest inlier set first.
@@ -99,42 +146,11 @@
    is not hypothetical, it is what the first version of this did.
 
    Returns [] when fewer than 5 points or no ellipse gathers :min-inliers."
-  [pts {:keys [iters thr min-inliers seed top-k max-overlap]
-        :or {iters 150 thr 0.03 min-inliers 6 seed 1 top-k 1 max-overlap 0.5}}]
-  (let [n (count pts)]
-    (if (< n 5)
-      []
-      (let [np (normalize pts)
-            r (prng seed)
-            thr2 (* thr thr)
-            ;; every sample that gathered enough support, keyed by its inlier SET so
-            ;; the many samples that rediscover the same ellipse count once
-            hyps (loop [i 0 acc {}]
-                   (if (>= i iters)
-                     acc
-                     (let [conic (fit-conic-5 (mapv #(nth np %) (pick5 r n)))]
-                       (if (and conic (ellipse? conic))
-                         (let [inl (filterv #(< (sampson-sq conic (nth np %)) thr2) (range n))]
-                           (recur (inc i)
-                                  (if (and (>= (count inl) min-inliers) (not (contains? acc inl)))
-                                    (assoc acc inl conic)
-                                    acc)))
-                         (recur (inc i) acc)))))]
-        ;; Greedy over descending support, keeping only rings that are genuinely NEW:
-        ;; a candidate sharing more than `max-overlap` of the smaller set with one
-        ;; already kept is the same ring seen again.
-        (loop [remaining (sort-by (fn [[inl _]] (- (count inl))) hyps)
-               kept []]
-          (if (or (empty? remaining) (>= (count kept) top-k))
-            (mapv (fn [[inl conic]] (vec (sort-by #(sampson-sq conic (nth np %)) inl)))
-                  kept)
-            (let [[inl conic] (first remaining)
-                  s (set inl)
-                  same-ring? (some (fn [[kept-inl _]]
-                                     (let [shared (count (filter s kept-inl))]
-                                       (> shared (* max-overlap (min (count inl) (count kept-inl))))))
-                                   kept)]
-              (recur (rest remaining) (if same-ring? kept (conj kept [inl conic]))))))))))
+  [pts {:keys [top-k] :or {top-k 1} :as opts}]
+  (let [{:keys [np]} (norm-of pts)]
+    (->> (ransac-kept np (assoc opts :top-k top-k))
+         (mapv (fn [[inl conic]]
+                 (vec (sort-by #(sampson-sq conic (nth np %)) inl)))))))
 
 (defn fit-inliers
   "The single best-supported ellipse's inlier INDICES through `pts`, sorted by fit.
@@ -143,3 +159,277 @@
    judge than inlier count should ask for several hypotheses instead of this one."
   [pts opts]
   (or (first (fit-inliers-ranked pts (assoc opts :top-k 1))) []))
+
+;; ── the concentric family: the cage's rings share their centre ───────────────
+;;
+;; Lever 1 of the zero-click frontier (2026-08-29). Six of eight bench refusals
+;; die because the true ring never emerges from the independent RANSAC above:
+;; with ~25 candidates a ring showing eight clean discs is found by a 5-point
+;; sample with probability (8/25)⁵ ≈ 0.3% per draw, and junk conics threading
+;; the stragglers of three interleaved crowns gather more support than any true
+;; ring. But the cage GIVES AWAY the constraint the search is missing: its three
+;; rings share one centre, so every true ring — and every junk conic threading
+;; three true crowns — is centred on (nearly) the same image point. Pin the
+;; centre and an ellipse has THREE unknowns, not five: 3-point samples, cheap
+;; enough to try EVERY triple deterministically, and a ring with eight discs
+;; among thirty candidates cannot hide from an exhaustive search.
+;;
+;; "Nearly": the projected centre of a circle is not the centre of its image
+;; ellipse, and the three rings' projected centres spread a little with
+;; obliquity — which is why the pinned fit is only the DISCOVERY tool (its
+;; threshold a shade wider), and everything it finds still faces the caller's
+;; regularity ranking, the identity solve and the physical guards.
+
+(defn- conic-center
+  "Centre of conic [a b c d e f] — where the gradient vanishes; nil when
+   degenerate (a parabola has none)."
+  [[a b c d e _]]
+  (let [det (- (* 4.0 a c) (* b b))]
+    (when (> (Math/abs det) 1e-12)
+      [(/ (- (* b e) (* 2.0 c d)) det)
+       (/ (- (* b d) (* 2.0 a e)) det)])))
+
+(defn- central-fit-3
+  "[A B C] of the central conic A·u² + B·uv + C·v² = 1 through three CENTRED
+   points; nil when singular (near-collinear sample)."
+  [[[u1 v1] [u2 v2] [u3 v3]]]
+  (when-let [sol (la/solve [[(* u1 u1) (* u1 v1) (* v1 v1)]
+                            [(* u2 u2) (* u2 v2) (* v2 v2)]
+                            [(* u3 u3) (* u3 v3) (* v3 v3)]]
+                           [1.0 1.0 1.0])]
+    (vec sol)))
+
+(defn- central-ellipse?
+  "Is A·u² + B·uv + C·v² = 1 an ellipse? Its matrix must be positive definite."
+  [[A B C]]
+  (and (pos? A) (pos? (- (* A C) (* 0.25 B B)))))
+
+(defn- triples
+  "Every 3-subset of [0,n) when there are at most `cap` of them — deterministic
+   and exhaustive, the point of pinning the centre — else `cap` LCG-sampled
+   ones (n(n−1)(n−2)/6 passes cap around n≈45 at the default; a frame with that
+   many candidates has bigger problems than sampling luck)."
+  [n cap seed]
+  (let [total (quot (* n (dec n) (- n 2)) 6)]
+    (if (<= total cap)
+      (for [i (range n) j (range (inc i) n) k (range (inc j) n)] [i j k])
+      (let [r (prng seed)
+            pick3 (fn [] (loop [acc #{}]
+                           (if (>= (count acc) 3)
+                             (vec (sort acc))
+                             (recur (conj acc (min (dec n) (int (* (r) n))))))))]
+        (into #{} (repeatedly cap pick3))))))
+
+(defn sisters-about
+  "Ellipse hypotheses CENTRED (to first order) on `center` — each a vector of
+   inlier indices into `pts`, sorted by fit, largest set first. The pinned form
+   has 3 unknowns, so every 3-point triple is tried (see `triples`); a sampled
+   5-point search needs luck a sparse ring cannot afford.
+
+   opts: :thr (Sampson, normalised units — default 0.05, wider than the free
+   search because the pin is approximate), :min-inliers (default 8, the
+   identity solve's cost wall, not an ellipse-quality bar), :top-k (default 4),
+   :max-overlap (default 0.5), :max-triples (default 15000), :seed."
+  [pts [cx cy] {:keys [thr min-inliers top-k max-overlap max-triples seed]
+                :or {thr 0.05 min-inliers 8 top-k 4 max-overlap 0.5
+                     max-triples 15000 seed 1}}]
+  (let [n (count pts)]
+    (if (< n min-inliers)
+      []
+      (let [cu (mapv (fn [[x y]] [(- x cx) (- y cy)]) pts)
+            md (/ (reduce + 0.0 (map (fn [[u v]] (Math/hypot u v)) cu)) n)
+            s (/ (Math/sqrt 2.0) (max 1e-9 md))
+            np (mapv (fn [[u v]] [(* s u) (* s v)]) cu)
+            thr2 (* thr thr)
+            hyps (reduce (fn [acc [i j k]]
+                           (let [abc (central-fit-3 [(nth np i) (nth np j) (nth np k)])]
+                             (if (and abc (central-ellipse? abc))
+                               (let [conic [(nth abc 0) (nth abc 1) (nth abc 2) 0.0 0.0 -1.0]
+                                     inl (filterv #(< (sampson-sq conic (nth np %)) thr2)
+                                                  (range n))]
+                                 (if (and (>= (count inl) min-inliers)
+                                          (not (contains? acc inl)))
+                                   (assoc acc inl conic)
+                                   acc))
+                               acc)))
+                         {}
+                         (triples n max-triples seed))]
+        (->> (distinct-rings hyps top-k max-overlap)
+             (mapv (fn [[inl conic]]
+                     (vec (sort-by #(sampson-sq conic (nth np %)) inl)))))))))
+
+(defn fit-concentric-ranked
+  "fit-inliers-ranked plus the CONCENTRIC SISTERS of everything it found.
+
+   Centre seeds are the centres of every stage-1 hypothesis — JUNK INCLUDED,
+   and that is the trick: a junk conic threading the stragglers of three
+   interleaved crowns is worthless as a ring but still CENTRED on the cage, so
+   it hands the pinned search exactly the point it needs — plus the candidate
+   cloud's centroid (marks surround the cage centre from every vantage). For
+   each seed, `sisters-about` re-searches in centre-pinned form.
+
+   Returns stage-1 and sister hypotheses together, deduped by inlier overlap,
+   largest first, capped at twice `:top-k` — the same shape fit-inliers-ranked
+   returns (vectors of point indices), so a caller swaps it in place and its
+   own stronger judges (regularity, identity, the physical guards) still
+   decide. Extra opts over fit-inliers-ranked: :sister-thr (default 1.25×
+   :thr), :max-triples, :center-merge-px (seeds closer than this are one seed,
+   default 25)."
+  [pts {:keys [thr top-k max-overlap sister-thr max-triples seed center-merge-px]
+        :or {thr 0.03 top-k 1 max-overlap 0.5 seed 1 center-merge-px 25.0}
+        :as opts}]
+  (let [n (count pts)]
+    (if (< n 5)
+      []
+      (let [{:keys [np cx cy s]} (norm-of pts)
+            stage1 (ransac-kept np opts)
+            unnorm (fn [[x y]] [(+ (/ x s) cx) (+ (/ y s) cy)])
+            centroid [(/ (reduce + 0.0 (map first pts)) n)
+                      (/ (reduce + 0.0 (map second pts)) n)]
+            seeds (reduce (fn [acc c]
+                            (if (some (fn [[ax ay]]
+                                        (< (Math/hypot (- (nth c 0) ax) (- (nth c 1) ay))
+                                           center-merge-px))
+                                      acc)
+                              acc
+                              (conj acc c)))
+                          []
+                          (concat (keep (fn [[_ conic]]
+                                          (some-> (conic-center conic) unnorm))
+                                        stage1)
+                                  [centroid]))
+            stage1-idx (mapv (fn [[inl conic]]
+                               (vec (sort-by #(sampson-sq conic (nth np %)) inl)))
+                             stage1)
+            sisters (into []
+                          (mapcat #(sisters-about pts %
+                                                  (assoc opts
+                                                         :thr (or sister-thr (* 1.25 thr))
+                                                         :top-k top-k
+                                                         :max-triples (or max-triples 15000))))
+                          seeds)
+            ;; STAGE-1 HAS PRIORITY: sisters may only ADD rings, never displace
+            ;; a free-fit hypothesis. The pinned fit's wider band gathers
+            ;; supersets — the true ring plus a straggler — and judged by size
+            ;; alone such a superset would win the dedupe and DELETE the clean
+            ;; set (measured: the synthetic scene, previously read at 39/39,
+            ;; REFUSED on the first draft of this merge). The free fit is the
+            ;; unbiased witness; the sisters exist for the rings it missed.
+            merged (loop [remaining (sort-by (comp - count) sisters)
+                          kept (vec stage1-idx)]
+                     (if (or (empty? remaining) (>= (count kept) (* 2 top-k)))
+                       kept
+                       (let [inl (first remaining)
+                             is (set inl)
+                             same? (some (fn [k] (let [shared (count (filter is k))]
+                                                   (> shared (* max-overlap
+                                                                (min (count inl) (count k))))))
+                                         kept)]
+                         (recur (rest remaining) (if same? kept (conj kept inl))))))]
+        merged))))
+
+;; ── the comb: a crown is equally spaced, and contaminants are not ────────────
+;;
+;; The audit of 2026-08-29 (bench, coverage-report!): the concentric search DOES
+;; surface the true rings — foto 7's nine ym discs sat complete inside a
+;; hypothesis — but always inside a CONTAMINATED superset, two to six stray
+;; points riding within the Sampson band, and the identity solve cannot digest
+;; them: it fits a pose to the mixture and lands nowhere. Worse, the strays
+;; inflate the max chord, so the size-ratio hint votes for the wrong ring
+;; (foto 6: eight true discs inside a 14-point set, hinted :x, never tried :y).
+;;
+;; What separates crown points from riders is not distance to the ellipse — the
+;; riders are ON it — but SPACING: twelve discs sit equally spaced on the
+;; circle, and an affine image of a circle keeps them equally spaced in the
+;; ellipse's ECCENTRIC ANOMALY (perspective's non-affine residue at this
+;; framing is a few degrees, absorbed by the tooth tolerance). So: fit the
+;; hypothesis's own ellipse, read each point's anomaly, align an N-tooth comb,
+;; and keep what sits on teeth.
+
+(defn- conic-lsq
+  "Least-squares conic (f pinned to 1) over ≥5 points, via normal equations —
+   fit-conic-5's big sibling. nil when singular."
+  [pts]
+  (let [rows (mapv (fn [[x y]] [(* x x) (* x y) (* y y) x y]) pts)
+        ata (vec (for [i (range 5)]
+                   (vec (for [j (range 5)]
+                          (reduce + 0.0 (map #(* (nth % i) (nth % j)) rows))))))
+        atb (vec (for [i (range 5)]
+                   (reduce + 0.0 (map #(- (nth % i)) rows))))]
+    (when-let [sol (la/solve ata atb)]
+      (conj (vec sol) 1.0))))
+
+(defn- ellipse-params
+  "conic → {:c [cx cy] :theta :a :b} (semi-axes, axis angle); nil when not a
+   real ellipse."
+  [[a b c d e f :as conic]]
+  (when-let [[cx cy] (conic-center conic)]
+    (let [;; Q at the centre: u^T M u = −Q(c0) on the translated conic
+          q0 (+ (* a cx cx) (* b cx cy) (* c cy cy) (* d cx) (* e cy) f)
+          tr (+ a c)
+          det-root (Math/sqrt (+ (* (- a c) (- a c)) (* b b)))
+          l1 (/ (+ tr det-root) 2.0)
+          l2 (/ (- tr det-root) 2.0)
+          k (- q0)]
+      (when (and (pos? (* l1 k)) (pos? (* l2 k)))
+        {:c [cx cy]
+         :theta (* 0.5 (Math/atan2 b (- a c)))
+         :a (Math/sqrt (/ k l1))
+         :b (Math/sqrt (/ k l2))}))))
+
+(defn- anomaly
+  "The eccentric anomaly of `[x y]` on the ellipse `params` — the angle that is
+   EQUALLY SPACED for equally spaced points on the pre-image circle."
+  [{:keys [c theta a b]} [x y]]
+  (let [ux (- x (nth c 0)) uy (- y (nth c 1))
+        ct (Math/cos (- theta)) st (Math/sin (- theta))
+        rx (- (* ct ux) (* st uy))
+        ry (+ (* st ux) (* ct uy))]
+    (Math/atan2 (/ ry (max 1e-9 b)) (/ rx (max 1e-9 a)))))
+
+(defn comb-select
+  "The indices in `idxs` (into `pts`) that sit on the teeth of an N-tooth comb
+   in eccentric anomaly — the hypothesis stripped of its riders. Falls back to
+   `idxs` unchanged when the purified set would drop below `keep-floor` (a
+   too-aggressive comb must not delete a ring the identity solve could still
+   read) or when no ellipse fits.
+
+   `tooth-frac` is the tolerance as a fraction of one tooth spacing (default
+   0.25 — ±7.5° of the 30° at twelve marks, room for the perspective residue
+   the affine argument ignores)."
+  ([pts idxs n] (comb-select pts idxs n nil))
+  ([pts idxs n {:keys [tooth-frac keep-floor] :or {tooth-frac 0.25 keep-floor 8}}]
+   (let [pass (fn [fit-idxs]
+                ;; comb built on `fit-idxs`' own ellipse, applied to ALL of
+                ;; `idxs` — so a refined fit can also RECLAIM a true point the
+                ;; polluted first fit had misplaced
+                (let [sub (mapv #(nth pts %) fit-idxs)]
+                  (when (>= (count sub) 5)
+                    (let [{:keys [np cx cy s]} (norm-of sub)
+                          params (some-> (conic-lsq np) ellipse-params)]
+                      (when params
+                        (let [t-of (fn [idx]
+                                     (let [[x y] (nth pts idx)]
+                                       (anomaly params [(* s (- x cx)) (* s (- y cy))])))
+                              ts (mapv t-of idxs)
+                              sins (reduce + 0.0 (map #(Math/sin (* n %)) ts))
+                              coss (reduce + 0.0 (map #(Math/cos (* n %)) ts))
+                              phase (/ (Math/atan2 sins coss) n)
+                              spacing (/ (* 2.0 Math/PI) n)
+                              on-tooth? (fn [t]
+                                          (let [d (mod (- t phase) spacing)
+                                                d (min d (- spacing d))]
+                                            (< d (* tooth-frac spacing))))]
+                          (vec (keep-indexed (fn [k idx] (when (on-tooth? (nth ts k)) idx))
+                                             idxs))))))))
+         ;; two passes: the first fit is over the MIXTURE and its riders drag
+         ;; the ellipse, misreading anomalies near them (measured: a 14-point
+         ;; hypothesis with six riders combed down to 5 of its 8 true discs);
+         ;; refitting on the first selection and re-combing the FULL set
+         ;; classifies against a cleaner curve
+         sel1 (pass idxs)
+         sel2 (when (and sel1 (>= (count sel1) 5) (< (count sel1) (count idxs)))
+                (pass sel1))
+         best (or (when (and sel2 (>= (count sel2) keep-floor)) sel2)
+                  (when (and sel1 (>= (count sel1) keep-floor)) sel1))]
+     (or best idxs))))
