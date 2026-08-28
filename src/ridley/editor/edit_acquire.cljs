@@ -1927,7 +1927,8 @@
             (set-status-message!
              (str "gomma: tolto " lbl
                   (if (:proposed? v) " (era una proposta automatica)" " (era un tuo click)")
-                  " — per rimetterlo clicca il suo bottone nel pannello, poi il punto nella foto"))
+                  " — 'r' per registrare sui restanti; per rimetterlo clicca il suo "
+                  "bottone nel pannello, poi il punto nella foto"))
             (redraw-pnp-preview!)
             (redraw-overlay-dots!)
             (update-panel!)
@@ -5500,7 +5501,9 @@
                 (str "✓ registrata" (when rms (str " (rms " (.toFixed rms 1) "px)")) " — "
                      (if (> (count outliers) 1) "i punti " "il punto ") (corner-labels outliers)
                      (if (> (count outliers) 1) " non si allineano" " non si allinea")
-                     " (rosso): riclicca più preciso, o 'o' per scartarl"
+                     " (rosso): riclicca più preciso, toglil"
+                     (if (> (count outliers) 1) "i" "o")
+                     " con la gomma (clic destro), o 'o' per scartarl"
                      (if (> (count outliers) 1) "i" "o") " (nascosto o non allineabile), poi 'r'"
                      " — oppure vai avanti così.")
                 (and rms (> rms pnp/accept-rms-px))

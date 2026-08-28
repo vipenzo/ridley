@@ -99,8 +99,19 @@ stato dei lavori per ripartire.
   una diagnosi + dichiarazione da riaprire; l'auto-apply — ruotare gli anchor
   dell'anello nel proxy-mesh, che visivamente è invariante — è la prossima
   fetta naturale, ed è ciò che rende `:phases` davvero inutile a regime).
-  GATE LIVE: da fare su una foto vera di Vincenzo (i due test sintetici e la
-  suite a 982/0 sono il collaudo a freddo).
+  **GATE LIVE DEL VETO: PASSATO (Vincenzo, 28/8, log)** — 8 click ALT su Y +
+  lo zero di Z, `a` → «i nomi che avevi dato erano giusti · 20 dischetti
+  piazzati · lo zero cliccato sull'altro anello ha fatto da arbitro: 42
+  riletture contraddette», solve a 8.6px. Nello stesso giro la GOMMA ha tolto
+  le due proposte outlier (zp03, zp07) — passata anche lei. NON ancora
+  esercitati dal vivo: il soccorso a k passi (serve una gabbia RIMONTATA
+  girata — scatterà al prossimo cambio pezzo senza `:phases` dichiarate) e il
+  ramo `:moot`. NOTA scoperta dal log: `propose-and-snap!` (l'aggancio blob
+  di fetta A) gira ANCHE sulla gabbia — `plate-proxy?` guarda gli `:anchors`,
+  che una gabbia ha — e nel gate ha agganciato 1 marker in più; la sua
+  guardia interna `claimed` (mezzo passo dal vicino predetto) è la terza
+  gamba della difesa anti-doppioni, e il culling per-anchor le mostra una
+  faccia sola per anello.
 
   Il workaround «rendi dominante l'anello conteso» NON è bastato: la
   lettura seminata dall'anello Y pieno (13 click, zero incluso) ha DICHIARATO
