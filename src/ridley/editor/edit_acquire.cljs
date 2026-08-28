@@ -2718,6 +2718,56 @@
    frames — so thirty is comfortably both above the one and below the other."
   30.0)
 
+;; ── the session's cage mounting (zero-click lever 2) ─────────────────────────
+;;
+;; One session is one mounting: the cage opens only at part changes, and each
+;; ring's zero-index sits at ONE pose-absolute (sense, slot) that every true
+;; registration reads identically (match-cage/index-witness). Accumulating
+;; those observations per photo and VOTING gives the machine the arbiter the
+;; through-plastic/reflection twins cannot pass — measured on battiscopa
+;; (2026-08-30): with it, foto 7 registers TRUE at 1.1mm where before it
+;; shipped the twin at 764mm, and the vote itself exposed a twin among the
+;; session's own HAND registrations. In-memory only, like :pnp?: a reloaded
+;; session rebuilds it as photos are read.
+
+(defn- remember-cage-mounting!
+  "Store one photo's index observations — every accepted cage reading measures
+   the mounting, hand-seeded or machine."
+  [idx obs]
+  (when (seq obs)
+    (swap! session assoc-in [:cage-mounting-obs idx] obs)))
+
+(defn- session-cage-mounting
+  "The session's mounting vote, photo `idx` excluded: its own earlier reading
+   must never arbitrate its re-read."
+  [idx]
+  (match-cage/vote-mounting (vals (dissoc (or (:cage-mounting-obs @session) {}) idx))))
+
+(defn- cage-mounting-suffix
+  "The diagnosis lines the index observations earn — and only when they earn
+   them (a caveat that always prints stops being read). A `:rev` ring is
+   mounted FLIPPED: the reading stays good (crowns are flip-blind), but the
+   assembly is not what the model says and the printed key does not yet
+   forbid it. An observation that reads a ring AGAINST the session's own vote
+   means a twin sits among the session's registrations — this one or the
+   others."
+  [mounting obs]
+  (str
+   (when-let [revs (seq (sort (distinct (for [{:keys [axis sense]} obs
+                                              :when (= :rev sense)]
+                                          (str/upper-case (name axis))))))]
+     (str " · l'indice dell'anello " (str/join "/" revs)
+          " si vede SPECCHIATO: quell'anello è montato RIBALTATO. La lettura "
+          "resta buona; quando riapri la gabbia, rimontalo dritto"))
+   (when-let [dis (seq (sort (distinct (for [{:keys [axis sense k]} obs
+                                             :let [m (get mounting axis)]
+                                             :when (and m (or (not= sense (:sense m))
+                                                              (not= k (:k m))))]
+                                         (str/upper-case (name axis))))))]
+     (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" dis)
+          " si legge DIVERSAMENTE dalle altre foto della sessione — una delle "
+          "due registrazioni è il GEMELLO"))))
+
 (defn- cage-read-and-place!
   "Cage 'a': the crown you clicked, read by the REST OF THE CAGE — then every
    other mark it accounts for placed for you, and the pose solved on all of them.
@@ -2808,8 +2858,20 @@
                                                         (assoc blob-detect/cage-opts :rgba data))
                         judge (fn [px r] (blob/disc-at? lum-at px r))
                         disc-r (or (:mark-disc-r (:proxy-mesh @session)) 1.25)
+                        mounting (session-cage-mounting idx)
                         rr (match-cage/auto-read (mapv :center cands) targets k
-                                                 judge marks {:disc-r disc-r})]
+                                                 judge marks
+                                                 {:disc-r disc-r
+                                                  :mounting mounting
+                                                  :blobs cands
+                                                  ;; the comb identity (lever 1)
+                                                  ;; rides only where the
+                                                  ;; mounting arbiter has
+                                                  ;; jurisdiction: with no
+                                                  ;; session context its extra
+                                                  ;; reach registered the twins
+                                                  ;; (misurato 30/8, 548/764mm)
+                                                  :teeth? (boolean (seq mounting))})]
                     (if (nil? rr)
                       (set-status-message!
                        (str "Da sola non ci riesco su questa foto (" (count cands)
@@ -2834,6 +2896,7 @@
                                                             :proposed? true})
                                                     (inc n)))))
                                           0 (:corr rr))]
+                        (remember-cage-mounting! idx (:index-obs rr))
                         (set-status-message!
                          (str "Gabbia letta DA SOLA: anello "
                               (name (:axis (:seed rr))) " + zero-indice trovati nella foto, "
@@ -2842,7 +2905,8 @@
                                 (str " · ATTENZIONE: l'anello "
                                      (name (:axis (:phase-suspect rr)))
                                      " sembra incollato girato di "
-                                     (.toFixed (:deg (:phase-suspect rr)) 0) "°"))))
+                                     (.toFixed (:deg (:phase-suspect rr)) 0) "°"))
+                              (cage-mounting-suffix mounting (:index-obs rr))))
                         (on-solve-pnp!))))))
                (.catch (fn [e]
                          (set-status-message! (str "Lettura automatica fallita: " (str e)))))))
@@ -2925,7 +2989,18 @@
                                              [(inc n) s]))))
                                    [0 0] corr)
                            zv (:zero-veto res)
+                           ;; the hand reading measures the mounting too — and
+                           ;; is measured BY it: an index read against the
+                           ;; session's vote is the twin diagnosis, on either
+                           ;; side (misurato 30/8: foto 1 della sessione-verità
+                           ;; era registrata A MANO dal gemello, e a dirlo sono
+                           ;; state le altre cinque)
+                           wit-obs (when-let [fp (:pose (:full res))]
+                                     (:obs (match-cage/index-witness targets cands k
+                                                                     fp marks {})))
+                           _ (remember-cage-mounting! idx wit-obs)
                            suffix (str
+                                   (cage-mounting-suffix (session-cage-mounting idx) wit-obs)
                                    (when (and zv (pos? (:killed zv)))
                                      (str " · lo zero cliccato sull'altro anello ha fatto da "
                                           "arbitro: " (:killed zv) " riletture contraddette da "

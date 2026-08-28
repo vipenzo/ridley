@@ -129,6 +129,70 @@
                         " · provata con asse " (name axis) "? "
                         (if (contains? tried [best axis]) "sì" "NO"))))))))
 
+(defn- witness-line
+  "CAGE_AUTO_ZERO=1: mc/index-witness under one pose, printably. Lever 2's
+   instrument — per visible face: distance from the projected model zero to
+   the nearest crown-free detector candidate, and every index-slot
+   observation [sense k dist-px]."
+  [label targets blobs intr pose]
+  (when pose
+    (let [{:keys [faces]} (mc/index-witness targets blobs intr pose 12 {})]
+      (str "      testimone-zero (" label "): ["
+           (apply str
+                  (interpose " | "
+                             (for [{:keys [axis sign zero-d hits]} faces]
+                               (str (name axis) (if (pos? sign) "p" "m")
+                                    " zero→" (if zero-d (str (fmt zero-d 0) "px") "?")
+                                    (when (seq hits)
+                                      (str " " (pr-str (mapv (fn [{:keys [sense k d]}]
+                                                               [sense k (js/Math.round d)])
+                                                             hits))))))))
+           "]"))))
+
+(defn- fmt-mounting [m]
+  (if (seq m)
+    (apply str (interpose " " (for [[axis {:keys [sense k d votes against]}] (sort-by (comp str first) m)]
+                                (str (name axis) "=" (name sense)
+                                     (when k (str "(k" k ")"))
+                                     (when votes (str " " votes (when (pos? (or against 0))
+                                                                  (str " contro " against))
+                                                      " voti"))
+                                     ", " (fmt d 0) "px"))))
+    "nessuno"))
+
+(defn- mounting-pass
+  "Decode every photo once and read its index observations under the HAND
+   pose. Returns (via `done`) {photo-idx obs}. This is the bench's stand-in
+   for the session context edit_acquire accumulates from accepted
+   registrations: battiscopa IS a hand-registered session, so photo i's
+   zero-click attempt legitimately runs under the mounting the OTHER photos
+   establish — leave-one-out, its own hand pose never informs its own run."
+  [files state targets focal done]
+  (let [acc (atom {})]
+    (letfn [(step [i]
+              (if (>= i (count files))
+                (done @acc)
+                (-> (decode (.join path dir (nth files i)))
+                    (.then
+                     (fn [res]
+                       (let [{:keys [data lum-at w h]} (sampler res)
+                             intr (cam/intrinsics-from-fov
+                                   (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                             truth (solver-camera state i)
+                             obs (when truth
+                                   (let [blobs (bd/detect-blobs lum-at [w h]
+                                                                (assoc bd/cage-opts :rgba data))]
+                                     (:obs (mc/index-witness targets blobs intr truth 12 {}))))]
+                         (when (aget (.-env js/process) "CAGE_AUTO_CTXONLY")
+                           (println (str "  pass1 " i " (" (nth files i) "): "
+                                         (if truth (pr-str obs) "senza posa a mano"))))
+                         (swap! acc assoc i (or obs []))
+                         (step (inc i)))))
+                    (.catch (fn [_]
+                              (swap! acc assoc i [])
+                              (step (inc i)))))))]
+      (step 0))))
+
 (defn- synth-run!
   "CAGE_AUTO_SYNTH=1: the synthetic scene of match-cage-test, with the full
    trace — for debugging why a refusal happens where sight says it should not."
@@ -182,12 +246,17 @@
         ;; twin's zero passes the pixel judge — the measured reason the gate
         ;; stays closed until the twin arbiter (lever 2) exists.
         teeth? (boolean (aget (.-env js/process) "CAGE_AUTO_TEETH"))
+        ;; CAGE_AUTO_NOCTX=1: run WITHOUT the session-mounting context — the
+        ;; pure cold-start ordering, for measuring what the arbiter buys
+        noctx? (boolean (aget (.-env js/process) "CAGE_AUTO_NOCTX"))
         score (atom {:ok 0 :none 0 :far 0})]
     (println (str "\n=== auto-read (zero click) su battiscopa: " (count files)
                   " foto · focale della sessione " (fmt focal 1) "mm"
                   (when conc? " · ipotesi CONCENTRICHE")
-                  (when teeth? " · identità COI DENTI") " ==="))
-    (letfn [(step [i]
+                  (when teeth? " · identità COI DENTI")
+                  (if noctx? " · SENZA contesto di montaggio"
+                      " · arbitro del montaggio (leave-one-out)") " ==="))
+    (letfn [(step [i obs-by-photo]
               (if (>= i (count files))
                 (let [{:keys [ok none far]} @score]
                   (println (str "\n  BILANCIO: " ok " registrate da sola, " far
@@ -202,19 +271,36 @@
                              ;; fixed pair), a live-grab folder is 1920×1440
                              intr (cam/intrinsics-from-fov
                                    (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                             ;; the session's mounting as the OTHER photos'
+                             ;; hand registrations VOTED it — never its own
+                             mounting (when-not noctx?
+                                        (mc/vote-mounting
+                                         (for [[j obs] obs-by-photo
+                                               :when (not= j i)]
+                                           obs)))
                              t0 (.now js/Date)
-                             cands (mapv :center (bd/detect-blobs lum-at [w h]
-                                                                  (assoc bd/cage-opts :rgba data)))
+                             blobs (bd/detect-blobs lum-at [w h]
+                                                    (assoc bd/cage-opts :rgba data))
+                             cands (mapv :center blobs)
                              judge (fn [px r] (blob/disc-at? lum-at px r))
                              tr (atom [])
                              rr (mc/auto-read cands targets intr judge 12
                                               {:disc-r disc-r :trace tr
-                                               :concentric? conc? :teeth? teeth?})
+                                               :concentric? conc? :teeth? teeth?
+                                               :mounting mounting :blobs blobs})
                              ms (- (.now js/Date) t0)
                              truth (solver-camera state i)]
+                         (when (seq mounting)
+                           (println (str "      montaggio (dalle altre foto): "
+                                         (fmt-mounting mounting))))
                          (when (aget (.-env js/process) "CAGE_AUTO_RECALL")
                            (when-let [rl (recall-line (family-hits targets intr truth cands))]
                              (println (str "      recall (sotto la posa a mano): " rl))))
+                         (when (aget (.-env js/process) "CAGE_AUTO_ZERO")
+                           (when-let [l (witness-line "posa a mano" targets blobs intr truth)]
+                             (println l))
+                           (when-let [l (witness-line "posa auto" targets blobs intr (:pose rr))]
+                             (println l)))
                          (if (nil? rr)
                            (do (swap! score update :none inc)
                                (println (str "  foto " (inc i) " (" (nth files i) "): "
@@ -229,23 +315,84 @@
                                  d (when c-true (la/v-norm (la/v-sub c-auto c-true)))
                                  ;; no truth on file → registered is all the bench
                                  ;; can attest; only a MEASURED distance flags far
-                                 ok? (if d (< d 15.0) true)]
+                                 ok? (if d (< d 15.0) true)
+                                 ;; far from the hand pose, but the hand pose is
+                                 ;; the session's DISSENTER while the result
+                                 ;; agrees with the majority on every observed
+                                 ;; index: the truth is the suspect, not the
+                                 ;; result (foto 1, 2026-08-30: hand centre =
+                                 ;; auto centre with x,y negated — the 180°
+                                 ;; impostor, in the truth file)
+                                 truth-suspect?
+                                 (when (and (not ok?) (seq mounting))
+                                   (let [dis? (fn [os]
+                                                (some (fn [{:keys [axis sense k]}]
+                                                        (when-let [m (get mounting axis)]
+                                                          (or (not= sense (:sense m))
+                                                              (not= k (:k m)))))
+                                                      os))]
+                                     (boolean (and (dis? (get obs-by-photo i))
+                                                   (seq (:index-obs rr))
+                                                   (not (dis? (:index-obs rr)))))))]
                              (swap! score update (if ok? :ok :far) inc)
                              (println (str "  foto " (inc i) " (" (nth files i) "): "
                                            (count cands) " candidati · seme "
                                            (name (:axis (:seed rr))) (if (pos? (:sign (:seed rr))) "p" "m")
                                            " (" (:crown-hits (:seed rr)) " corona)"
                                            " · spiega " (:explained rr)
+                                           " (fuori-anello " (:off-ring rr) ")"
                                            " · rms " (fmt (:rms-px rr) 1)
                                            (when (:phase-suspect rr) " · SOSPETTO ANELLO GIRATO")
+                                           (when (seq (:index-obs rr))
+                                             (str " · indice visto "
+                                                  (fmt-mounting (mc/mounting-of (:index-obs rr)))))
                                            " · camera a " (if d (str (fmt d 1) "mm") "?")
                                            " dalla tua · " ms "ms"
-                                           (when-not ok? "   ← LONTANA")))))
-                         (step (inc i)))))
+                                           (when-not ok?
+                                             (if truth-suspect?
+                                               "   ← LONTANA, ma dalla POSA A MANO FUORI DAL VOTO: la verità qui è il sospetto"
+                                               "   ← LONTANA"))))
+                             ;; a FAR registration is either the bug being
+                             ;; hunted or a poisoned truth — print both camera
+                             ;; centres so the reflection relation can be read
+                             ;; off (a hand pose that is the through-plastic
+                             ;; twin sits at the auto centre mirrored through
+                             ;; the ring's plane), and the trace
+                             (when-not ok?
+                               (println (str "      camera auto "
+                                             (pr-str (mapv #(js/Math.round %) c-auto))
+                                             " · a mano "
+                                             (pr-str (mapv #(js/Math.round %) c-true))))
+                               (doseq [t @tr] (println (str "      " (pr-str t)))))))
+                         (step (inc i) obs-by-photo))))
                     (.catch (fn [e]
                               (println (str "  foto " (inc i) " ERRORE: " (str e)))
-                              (step (inc i)))))))]
-      (step 0))))
+                              (step (inc i) obs-by-photo))))))]
+      (if noctx?
+        (step 0 {})
+        (mounting-pass files state targets focal
+                       (fn [obs]
+                         (println (str "  contesto: osservazioni-indice sotto le pose a mano: "
+                                       (apply str (interpose " · "
+                                                             (for [[j o] (sort obs) :when (seq o)]
+                                                               (str "foto " (inc j) " "
+                                                                    (fmt-mounting (mc/mounting-of o))))))))
+                         ;; a contested ring is a twin among the HAND poses —
+                         ;; say so, and say who dissents
+                         (doseq [[axis {:keys [sense votes against contested?]}]
+                                 (mc/vote-mounting (vals obs))
+                                 :when contested?]
+                           (println (str "  ⚠ SESSIONE CONTESA sull'anello " (name axis)
+                                         ": " votes " pose leggono " (name sense)
+                                         ", " against " il senso opposto (foto "
+                                         (apply str (interpose ", "
+                                                               (for [[j o] (sort obs)
+                                                                     :let [r (get (mc/mounting-of o) axis)]
+                                                                     :when (and r (not= sense (:sense r)))]
+                                                                 (inc j))))
+                                         ") — una registrazione a mano è il gemello")))
+                         (when-not (aget (.-env js/process) "CAGE_AUTO_CTXONLY")
+                           (step 0 obs))))))))
 
 (defn ^:export main [& _]
   (if (aget (.-env js/process) "CAGE_AUTO_SYNTH")

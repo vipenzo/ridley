@@ -13,7 +13,83 @@ anello incollato a 90°, chiave di montaggio, portapezzi, la settimana
 dell'avvelenamento): `dev-docs/HANDOVER-cage-auto-detect.md`. Questo file è lo
 stato dei lavori per ripartire.
 
-**STATO AL 30/8, per chi riparte da qui**: l'IDENTIFICAZIONE
+**STATO AL 31/8, per chi riparte da qui**: la LEVA 2 — l'arbitro del gemello
+per semi macchina — è COSTRUITA, TESTATA (991/0) e MISURATA, e strada facendo
+ha CONDANNATO UNA POSA A MANO della sessione-verità. Il meccanismo, nato da
+tre giri di banco che hanno ucciso tre specie di impostori una per volta:
+
+- **`index-witness`** (match_cage): sotto una posa, l'indice di ogni faccia
+  visibile può stare solo in 24 ALLOGGI (12 per senso, ±⅓ di passo dai mark);
+  un candidato del DETECTOR non spiegato da corone che cade in un alloggio è
+  un'osservazione `{:axis :sense :k :d}`. Senso E slot k sono ASSOLUTI DI
+  POSA (gli alloggi si calcolano dagli azimut del modello, nessun gauge di
+  lettura) — ogni posa vera di una sessione legge lo stesso (senso,k) su un
+  anello, perché QUELLA COPPIA È IL MONTAGGIO. Scoperta collaterale che
+  rifonda la leva: gli indici sul banco SONO rilevati (Y a 4–11px su 5 foto)
+  ma in alloggio SPECCHIATO — **l'anello Y della gabbia battiscopa è montato
+  RIBALTATO** (il ribaltamento che la chiave non vieta, test fisico 28/8), e
+  il "gemello" di foto 6/7 era la lettura che spiegava l'indice VERO meglio
+  del modello nominale. Con montaggio libero per-assemblaggio la SINGOLA foto
+  non può distinguere gemello da vero: l'arbitro è la SESSIONE (un montaggio
+  solo per sessione).
+- **`vote-mounting`**: il montaggio di sessione per VOTO DI MAGGIORANZA
+  sulle coppie (senso,k) — mai per nitidezza (la posa avvelenata di foto 1
+  era più nitida di 0.05px e da sola ribaltava tutto), mai per senso solo
+  (la gabbia girata di 180° attorno a un ALTRO asse conserva il senso e
+  sposta k di 6: foto 7 a 643mm, spiega 18, morta solo sul k). Un anello
+  CONTESO è di suo una diagnosi: c'è un gemello TRA le registrazioni della
+  sessione — ed è così che si è scoperto che **la posa A MANO di foto 1
+  è l'impostore a 180°** (centro camera = quello vero con x,y negati;
+  5 foto concordi contro 1; nessuno aveva mai verificato gli indici).
+- **In `auto-read`** (opts `:mounting`, `:blobs`): VETO (osservazione che
+  contraddice il voto → lettura scartata, qualunque punteggio), CONFERMA
+  RICHIESTA (anello-seme a montaggio noto con ≥2 voti: la sola luminanza
+  non basta più — è ciò su cui il gemello cavalcava), AVALLO nel rango (una
+  lettura col disco-indice rilevato sull'alloggio di sessione batte
+  qualunque `explained` — che satura, misurato 19 per il gemello), **sweep
+  dei 12 GAUGE** del seme quando il montaggio è noto (senza zero il seme
+  elegge una rotazione arbitraria = camera orbitata di k passi: foto 7 a
+  325mm con indice a 1px), e **pavimento `:min-off-ring` 2** (le due pose
+  lontane spiegavano ZERO fuori-anello; l'indice è complanare alla corona e
+  non vincola la profondità — il principio fondativo del namespace applicato
+  anche alla macchina).
+
+**Il banco, dopo (leave-one-out sulle pose a mano = il contesto che una
+sessione mista ha davvero)**: foto 7 — quella dove la leva 2 "moriva" —
+registra VERA a **1.1mm** (spiega 18, fuori-anello 8, indice y=rev(k11)@4px);
+foto 8 vera a 1.0mm; foto 1 elegge la lettura concorde con la maggioranza su
+DUE indici a 1px — "823mm dalla tua" perché la SUA verità è il gemello (il
+banco ora lo annota: «LA VERITÀ QUI È IL SOSPETTO»); foto 6 rifiuto onesto
+(il suo frame non ha NESSUN indice rilevato — territorio leva 4); 2–5
+rifiutate come prima (selezione, leva 3). **Zero falsi, con e senza denti.**
+E il vecchio «2/8 zero falsi» della baseline va riletto: era 1 vera + 1
+GEMELLO mai scoperto (foto 1 combaciava con la sua verità avvelenata).
+Sintetico: 39/39 a 0.00mm intatto; suite 991 test / 0 fail; warning 16/:app
+invariati.
+
+**Cablaggio di produzione (edit_acquire, FATTO ma gate live da fare)**: le
+osservazioni-indice si accumulano per foto (`:cage-mounting-obs`, in
+memoria come `:pnp?`) da OGNI lettura accettata ('a' seminato e zero-click);
+il ramo zero-click passa `:mounting` (voto leave-one-out) + `:blobs`, e
+**`:teeth?` si accende da solo quando la sessione ha montaggio** (denti solo
+dove l'arbitro ha giurisdizione — contextless coi denti = i gemelli del
+30/8). Messaggi nuovi, solo quando c'è da dirlo: «anello X montato
+RIBALTATO — rimontalo dritto» e «qui l'indice si legge DIVERSAMENTE dalle
+altre foto: una delle due registrazioni è il GEMELLO» (vale anche per il
+flusso a mano — è così che si sarebbe scoperta foto 1).
+
+**BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
+montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
+luminanza può ancora registrare (misurato sul sintetico nel test
+`the-session-mounting-convicts-the-machine-twin`, che lo asserisce come
+fatto motivante). Le foto registrate a mano nutrono il voto, quindi in una
+sessione reale la finestra è stretta; la chiusura vera è la prossima fetta:
+**riconciliazione di sessione** (quando il montaggio matura, ri-giudicare le
+registrazioni fatte prima — foto 1 insegna che vale anche per la mano) e/o
+la **chiave anti-ribaltamento** in coda di ristampa, che ridà alla chiralità
+il valore assoluto per cui era stata disegnata.
+
+**STATO AL 30/8** (tutto ancora valido, la leva 1 in particolare): l'IDENTIFICAZIONE
 CONTAMINATION-PROOF (leva 1) è COSTRUITA, TESTATA (988/0) e MISURATA AL BANCO —
 e il banco ha spostato la frontiera. Il meccanismo: `ellipse/comb-teeth` (il
 pettine come PRIMA MOSSA dell'identità — gap-snapping ciclico in anomalia
@@ -329,20 +405,26 @@ leva 1):
    malattia è la SELEZIONE, non l'identità. Il gate `:teeth?` resta CHIUSO in
    produzione finché non c'è la leva 2: due registrazioni a mezzo metro non
    sono un tasso, sono falsi.
-2. **Arbitro del gemello per semi macchina — ORA È QUI CHE SI MUORE**
-   (foto 6/7): il veto degli zero funziona coi click; per l'auto serve un
-   testimone che regga sui pixel veri (lo zero RILEVATO dal detector — oggi il
-   detector li manca spesso; o la chiralità dell'indice fuori-asse, che è il
-   suo scopo di progetto). NB misurato: `explained` non arbitra (15-19 per il
-   gemello contro 13 delle vere — satura con le predizioni fitte), rms non
-   arbitra (5.5-6.1 contro 1.6-6.1), la guardia fisica passa su entrambi.
-3. **Selezione dell'anello povero** (foto 3, e 4/5 da riverificare): il
+2. ~~**Arbitro del gemello per semi macchina**~~ — **FATTA (31/8)**: il
+   montaggio di sessione votato sulle coppie (senso,k) degli indici rilevati
+   (vedi STATO AL 31/8). Quello che il 30/8 sembrava mancare («il detector
+   manca gli indici») era falso: li vedeva, ma negli alloggi del montaggio
+   REALE (Y ribaltato), non in quelli del modello. Confermato il NB del
+   30/8: `explained` satura (19 il gemello), rms non arbitra — arbitra solo
+   l'indice, e solo ATTRAVERSO la sessione.
+3. **Riconciliazione di sessione + cold start** (il buco residuo della
+   leva 2): quando il voto matura, ri-giudicare le registrazioni accettate
+   prima — a mano comprese (foto 1 della sessione-verità È un gemello a
+   mano) — e dare un principio d'ordine alle sessioni tutte-auto. La cura
+   fisica parallela è la chiave anti-ribaltamento (coda di ristampa).
+4. **Selezione dell'anello povero** (foto 3, e 4/5 da riverificare): il
    concentrico di oggi non lo fa emergere (misurato 30/8: stream identico al
    libero su tutte le 8). Serve un'idea nuova — o un pettine che PESCHI
    (denti noti → cerca i dischetti mancanti sulle posizioni previste), o la
    sorella con centro più libero.
-4. **Recall del rilevatore** (foto 2, e +1 inlier ovunque): `cage-opts` fu
-   tarato sulla gabbia vecchia senza pezzo dentro.
+5. **Recall del rilevatore** (foto 2 — max 3 candidati — e foto 6, che oggi
+   rifiuta SOLO perché nessun indice è rilevato nel frame; +1 inlier
+   ovunque): `cage-opts` fu tarato sulla gabbia vecchia senza pezzo dentro.
 
 E il tempo: 25–40s di UI bloccata per un rifiuto non è spedibile oltre il
 prototipo — o si accorcia, o si sposta su un worker. Il materiale della
@@ -359,8 +441,18 @@ ricablato quando la leva 1 (identificazione) è dentro.
   **a quanti mm atterra la camera dalla mano**. Su un rifiuto stampa la traccia
   (`:trace`) — stadio ipotesi e ogni tentativo di identità.
   `CAGE_AUTO_TEETH=1` accende l'identità coi denti (misurato 30/8: 2 vere + 2
-  GEMELLI a 548/764 — il motivo del gate); `CAGE_AUTO_CONC=1` lo stream
-  concentrico (misurato 30/8: identico foto per foto).
+  GEMELLI a 548/764 — il motivo del gate di allora; col montaggio, 31/8, i
+  gemelli muoiono); `CAGE_AUTO_CONC=1` lo stream concentrico (misurato 30/8:
+  identico foto per foto). NUOVI del 31/8: il banco fa una PRIMA PASSATA che
+  legge le osservazioni-indice sotto le pose a mano e arma il voto
+  leave-one-out per ogni foto (stampa il contesto, denuncia la SESSIONE
+  CONTESA con le foto dissidenti, e annota una LONTANA la cui verità è fuori
+  dal voto come «LA VERITÀ QUI È IL SOSPETTO»); `CAGE_AUTO_NOCTX=1` spegne il
+  contesto (cold start puro); `CAGE_AUTO_ZERO=1` stampa il testimone-zero per
+  posa (mano e auto); `CAGE_AUTO_CTXONLY=1` si ferma dopo la prima passata.
+  Le tracce ora portano `:gauge`, `:obs`, `:mounting-veto`,
+  `:mounting-confirmed`, `:off-ring`, e si stampano anche sui successi
+  LONTANI.
 - **`CAGE_AUTO_SYNTH=1 node out/cage-auto.js`** — la scena sintetica (39
   candidati perfetti, 3 anelli): deve dare 39/39 a 0.00mm. Se la rompi, hai
   rotto la catena, non le tarature.
@@ -430,8 +522,12 @@ ricablato quando la leva 1 (identificazione) è dentro.
 
 - `src/ridley/photogrammetry/match_cage.cljs` — `read-crown` (seeded, ora con
   `:zero-picks`/`:zero-veto`), `rescue-hand-zeros` (rilettura a k passi),
-  `auto-read` (zero click; `:teeth?` = identità coi denti, GATE chiuso in
-  produzione; `:concentric?` = stream concentrico), `ring-faces`, `phase-probe`
+  `auto-read` (zero click; `:teeth?` = identità coi denti — in produzione si
+  accende da solo col montaggio; `:concentric?` = stream concentrico;
+  `:mounting`/`:blobs`/`:min-off-ring` = leva 2), `index-witness` (gli
+  alloggi dell'indice, osservazioni (senso,k) pose-assolute),
+  `mounting-of`/`vote-mounting` (il voto di sessione), `ring-faces`,
+  `phase-probe`
 - `src/ridley/photogrammetry/blob_detect.cljs` — rilevatore, `cage-opts`,
   `enclosed-frac`
 - `src/ridley/photogrammetry/match_plate.cljs` — `crown-ring-hypotheses`,
@@ -445,7 +541,9 @@ ricablato quando la leva 1 (identificazione) è dentro.
   `:phases`
 - `src/ridley/editor/edit_acquire.cljs` — `cage-read-and-place!` (il tasto
   `a`, tre rami: 0 click → auto, ≥4 → seeded, 1–3 → messaggio; costruisce
-  `:zero-picks`, filtra le proposte con `propose-clear-px`),
+  `:zero-picks`, filtra le proposte con `propose-clear-px`; ora accumula il
+  montaggio con `remember-cage-mounting!`/`session-cage-mounting` e appende
+  le diagnosi di `cage-mounting-suffix` — RIBALTATO / sessione col gemello),
   `cage-zero-phase-rescue!` (cabla `rescue-hand-zeros` in `solve-and-apply!`),
   `erase-pick-at!`/`pnp-on-contextmenu` (la gomma),
   `on-refine-session!` (le guardie della rifinitura)
@@ -455,4 +553,5 @@ ricablato quando la leva 1 (identificazione) è dentro.
   stick, punta-tricuspide, culla
 - Commit della settimana: `834c92b` detector → `fee7154`/`ab79a8b` read-crown →
   `c2dbee1` tasto a → `06eee7e` zero-indice/90° → `1e300b6` chiave → `c5d7692`
-  portapezzi → `c341015`…`fdbfe01` guardie rifinitura → `1626c0a` zero click.
+  portapezzi → `c341015`…`fdbfe01` guardie rifinitura → `1626c0a` zero click →
+  `b8a4bb8` leva 1 (denti) → `6282dec` leva 2 (arbitro del montaggio).

@@ -349,6 +349,105 @@
         (is (< d 5.0) (str "e la posa è quella vera (" (.toFixed d 1) "mm)"))
         (is (pos? (:off-ring rr)) "confermata anche fuori dall'anello del seme")))))
 
+;; ── the mounting arbiter (zero-click lever 2) ───────────────────────────────
+;;
+;; The cage's disc constellation is invariant under reflection through any
+;; ring's plane and under 180° turns about any axis; only the six zero-indices
+;; are chiral. And on the REAL cage the mounting is per-assembly (rings turn in
+;; whole steps and — until the anti-flip key is printed — mount flipped), so a
+;; single photograph cannot tell the twin from the truth: the SESSION can,
+;; because one session is one mounting and every true pose reads each ring's
+;; index at the same pose-absolute (sense, slot). All measured on battiscopa
+;; (2026-08-30) before these tests were written.
+
+(defn- flipped-y-targets
+  "The truth of a cage whose Y ring is mounted FLIPPED with no extra turn: the
+   nominal model with the Y indices moved to the mirror slot (a third of a
+   step BEFORE mark 0 instead of after — 2·10° back). Crown discs do not move:
+   flips and whole-step turns are invisible on them, which is the disease."
+  [targets]
+  (mapv (fn [{:keys [id obj] :as t}]
+          (if (#{:zero-yp :zero-ym} id)
+            (assoc t :obj (cage/turn-about-axis :y obj -20.0))
+            t))
+        targets))
+
+(deftest the-index-witness-reads-the-mounting
+  (println "\n=== gabbia: il testimone legge il montaggio, non il modello ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        truth (flipped-y-targets targets)
+        cands (scene nil truth intr pose)
+        {:keys [obs]} (mc/index-witness targets cands intr pose marks {})
+        by-axis (into {} (map (juxt :axis identity) obs))]
+    (println (str "  osservazioni: " (pr-str (mapv (juxt :axis :sense :k) obs))))
+    (is (= [:rev 0] ((juxt :sense :k) (by-axis :y)))
+        "l'anello ribaltato si legge nel senso specchiato, slot 0")
+    (is (= [:fwd 0] ((juxt :sense :k) (by-axis :x)))
+        "l'anello nominale si legge dritto")
+    (is (< (:d (by-axis :y)) 2.0) "e l'osservazione è nitida, non un caso")))
+
+(deftest vote-mounting-majority-beats-sharpness
+  ;; foto 1's poisoned hand pose was sharper by 0.05px than four honest ones —
+  ;; keep-the-sharpest inverted the whole session. The vote must not.
+  (let [obs-seq [[{:axis :y :sense :fwd :k 0 :d 2.0}]   ; the twin, sharpest
+                 [{:axis :y :sense :rev :k 11 :d 4.0}]
+                 [{:axis :y :sense :rev :k 11 :d 8.0}]
+                 [{:axis :y :sense :rev :k 11 :d 11.0}]
+                 [{:axis :z :sense :fwd :k 3 :d 5.0}
+                  {:axis :x :sense :fwd :k 0 :d 6.0}]
+                 [{:axis :z :sense :fwd :k 9 :d 5.0}]]  ; z: dead even, 1-1
+        m (mc/vote-mounting obs-seq)]
+    (println (str "\n=== gabbia: il voto del montaggio ===\n  " (pr-str m)))
+    (is (= {:sense :rev :k 11} (select-keys (:y m) [:sense :k]))
+        "la maggioranza batte la nitidezza")
+    (is (:contested? (:y m)) "e il dissenso resta scritto: c'è un gemello nella sessione")
+    (is (= 3 (:votes (:y m))))
+    (is (nil? (:z m)) "un anello in parità non decide niente")
+    (is (false? (:contested? (:x m))) "un anello unanime non è conteso")))
+
+(deftest the-session-mounting-convicts-the-machine-twin
+  ;; End-to-end, the foto 6/7 mechanism reproduced: the Y ring is mounted
+  ;; flipped, so the TRUE reading's model zero lands on empty plastic (its
+  ;; luminance judge says no) while the twin's zero lands exactly on the real
+  ;; flipped index disc — the twin is the reading that explains the index
+  ;; best under the nominal model. Without session context that twin SHIPS
+  ;; (the cold-start hole, asserted as the motivating fact); with two photos'
+  ;; worth of mounting the twin is vetoed on (sense, k) and the truth —
+  ;; endorsed by the same disc, gauge swept, held to the off-ring floor —
+  ;; registers instead.
+  (println "\n=== gabbia: il montaggio della sessione condanna il gemello ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        truth (flipped-y-targets targets)
+        cands (scene nil truth intr pose)
+        judge (fn [px _r] (boolean (some (fn [[u v]]
+                                           (< (Math/hypot (- u (first px)) (- v (second px))) 4.0))
+                                         cands)))
+        naked (mc/auto-read cands targets intr judge marks {:disc-r 1.25})
+        d-of (fn [rr] (la/v-norm (la/v-sub (cam/camera-center (:pose rr))
+                                           (cam/camera-center pose))))
+        session {:y {:sense :rev :k 0 :votes 2 :d 3.0}}
+        rr (mc/auto-read cands targets intr judge marks
+                         {:disc-r 1.25 :mounting session})]
+    (println (str "  senza contesto: "
+                  (if naked (str "REGISTRA a " (.toFixed (d-of naked) 1) "mm — il gemello")
+                      "rifiuta")
+                  " · col montaggio: "
+                  (if rr (str "seme " (name (:axis (:seed rr)))
+                              " · spiega " (:explained rr)
+                              " · a " (.toFixed (d-of rr) 1) "mm")
+                      "RIFIUTATA")))
+    ;; the motivating fact: context-free, the twin wins or nothing does —
+    ;; never the truth with the wrong zero
+    (when naked
+      (is (> (d-of naked) 100.0)
+          "senza contesto il gemello vince: è il buco che l'arbitro esiste per chiudere"))
+    (is (some? rr) "col montaggio della sessione la foto si registra")
+    (when rr
+      (is (< (d-of rr) 5.0) (str "sulla posa VERA (" (.toFixed (d-of rr) 1) "mm)"))
+      (is (some #(and (= :y (:axis %)) (= :rev (:sense %)) (= 0 (:k %)))
+                (:index-obs rr))
+          "e il risultato porta l'osservazione che alimenta il montaggio della sessione"))))
+
 (deftest mutual-nearest-refuses-a-shared-disc
   (testing "due mark non possono rivendicare lo stesso dischetto"
     (let [{:keys [targets intr pose]} (setup eye)

@@ -464,6 +464,186 @@
             :zero-obj (:obj zero)
             :face-normal (:normal zero)}))))
 
+(defn- ring-azim
+  "Azimuth (rad) of an object point in its ring's own (u,v) plane — the angular
+   coordinate `cage/turn-about-axis` turns."
+  [axis obj]
+  (let [[u v _] (cage/unplace axis obj)]
+    (Math/atan2 v u)))
+
+(def index-obs-px
+  "How close (px) a detected candidate must sit to an index SLOT before it
+   testifies about the mounting. Half the matching tolerance, and measured on
+   the battiscopa bench before it was chosen: the real (flipped) Y index reads
+   4-11px from its slot across five photographs and five different poses,
+   while the two junk hits on the whole bench sat at 24 and 25px. The model's
+   slop that justifies 26px for MATCHING does not apply here: an observation
+   is evidence, and evidence this instrument acts on has to be the sharp
+   kind."
+  13.0)
+
+(defn index-witness
+  "The index discs of a cage, read off the DETECTOR's candidates under `pose` —
+   the through-plastic/reflection twin's arbiter for machine seeds (zero-click
+   lever 2), and the mounting's measuring instrument.
+
+   WHY THE INDICES AND NOTHING ELSE. The cage's disc constellation is invariant
+   under reflection through any ring's plane and under whole-step turns of any
+   ring — BY DESIGN everything except the six zero-indices
+   (`cage/default-index-phase`): a third of a step past a crown mark, the one
+   chiral figure on the object. A twin pose and the true pose therefore
+   disagree ONLY about the indices, and an arbiter is built on them or on
+   nothing.
+
+   WHY THE SENSE, NOT THE SLOT. An index disc can only sit in one of 24
+   azimuthal SLOTS at index radius: a third of a step PAST each of the 12
+   crown marks (`:fwd` — slot k=0 is the model's own zero) or a third of a
+   step BEFORE each (`:rev`, the mirror family). Which SLOT it occupies is a
+   fact about the mounting (rings turn in whole steps and — until the anti-flip
+   key is printed — mount flipped, per assembly) COMPOSED with the reading's
+   own rotation gauge, so it cannot be checked against the model. But the
+   SENSE survives both: a whole-step turn moves the index between `:fwd`
+   slots, a reading's rotation shifts k and never the family — while a
+   REFLECTION maps `:fwd` to `:rev` exactly. One session = one mounting (the
+   cage opens only at part changes), so every true pose of a session reads
+   each ring's index in the SAME sense, and a twin pose reads it flipped.
+   Measured on battiscopa (2026-08-30) before this was written: the Y index
+   reads `:rev` slot 11 at 4-11px on five photographs under the hand-truth
+   poses — and the 548mm twin of foto 6 is the reading that claims that same
+   disc as its own `:fwd` zero.
+
+   Only candidates no CROWN mark explains may testify (the other rings' discs
+   crossing this ring's index ellipse in the image are explained by their own
+   marks and excluded); a candidate the pose claims as an INDEX still
+   testifies — it is index evidence by definition, and the twin's conviction
+   is precisely the disc it claimed as its zero.
+
+   `blobs`   detector candidates, [{:center [u v]} …] or bare [[u v] …]
+   `claimed` (opts) pixels already assigned to CROWN marks — pass the accepted
+             solution's own corr so witness and solution read one assignment;
+             computed via `assign` when absent.
+
+   Returns {:obs [{:axis :sense :k :d} …]     hits within `index-obs-px`
+            :faces [{:axis :sign :zero-d :hits [{:sense :k :d} …]} …]}
+   — `:obs` is what arbitration and mounting bookkeeping consume, `:faces`
+   the full per-face report the bench prints."
+  [targets blobs intrinsics pose marks {:keys [tol-px claimed]
+                                        :or {tol-px (:tol-px default-opts)}}]
+  (let [step (/ 360.0 marks)
+        centers (mapv (fn [b] (vec (if (map? b) (:center b) b))) blobs)
+        crown-claimed (set (keep (fn [{:keys [ci px]}]
+                                   (when (cage/mark-parts ci) (vec px)))
+                                 (or claimed
+                                     (assign targets centers intrinsics pose tol-px))))
+        free (vec (remove crown-claimed centers))
+        cam-c (cam/camera-center pose)
+        nearest (fn [px]
+                  (when (and px (seq free))
+                    (reduce min js/Infinity
+                            (map (fn [[u v]] (Math/hypot (- u (nth px 0))
+                                                         (- v (nth px 1))))
+                                 free))))
+        faces (filterv (fn [{:keys [face-normal zero-obj]}]
+                         (or (nil? face-normal)
+                             (pos? (la/v-dot face-normal (la/v-sub cam-c zero-obj)))))
+                       (ring-faces targets))
+        rep (vec (for [{:keys [axis zero-obj] :as face} faces
+                       :let [a0 (ring-azim axis (:obj (first (:marks face))))
+                             az (ring-azim axis zero-obj)
+                             ;; the index's offset from mark 0, read off the
+                             ;; geometry itself (not assumed 1/3 step), degrees
+                             delta (let [d (- az a0)]
+                                     (* (Math/atan2 (Math/sin d) (Math/cos d))
+                                        (/ 180.0 Math/PI)))
+                             slot-d (fn [deg]
+                                      (nearest (cam/project intrinsics pose
+                                                            (cage/turn-about-axis
+                                                             axis zero-obj deg))))
+                             zero-d (slot-d 0.0)
+                             slots (vec (for [i (range marks)
+                                              [sense deg] [[:fwd (* i step)]
+                                                           [:rev (+ (* -2.0 delta)
+                                                                    (* i step))]]
+                                              ;; at index-phase 1/2 the two
+                                              ;; families coincide — keep one
+                                              :let [n (let [m (mod deg 360.0)]
+                                                        (min m (- 360.0 m)))]
+                                              :when (or (= [sense i] [:fwd 0])
+                                                        (> n (/ step 6.0)))
+                                              :let [d (slot-d deg)]
+                                              :when d]
+                                          {:sense sense :k i :d d}))]]
+                   {:axis axis :sign (:sign face)
+                    :zero-d zero-d
+                    :hits (filterv #(<= (:d %) index-obs-px) slots)}))]
+    {:obs (vec (for [{:keys [axis hits]} rep
+                     h hits]
+                 (assoc h :axis axis)))
+     :faces rep}))
+
+(defn mounting-of
+  "One pose's index observations folded into a per-ring reading: {axis {:sense
+   :k :d}}, keeping the sharpest observation per ring. Both the sense AND the
+   slot k are POSE-ABSOLUTE: the witness measures slots against the model's
+   own azimuths under the final pose, no reading gauge involved — so every
+   true pose of a session reads the same (sense, k) on a ring, because that
+   pair IS the ring's mounting. For the session-level aggregate use
+   `vote-mounting`."
+  [obs]
+  (reduce (fn [m {:keys [axis] :as o}]
+            (if (or (nil? (get m axis)) (< (:d o) (:d (get m axis))))
+              (assoc m axis (select-keys o [:sense :k :d]))
+              m))
+          {}
+          obs))
+
+(defn vote-mounting
+  "The SESSION's mounting from many poses' observations, by MAJORITY VOTE per
+   ring over the pair (sense, k) — never by sharpness, and never sense alone.
+
+   Sharpness lost first (2026-08-30): foto 1's hand registration of the
+   battiscopa truth session is itself a reflection twin — it reads both
+   visible indices in the exact mirror of what five mutually-consistent
+   photographs read — and its observations were sharper by 0.05px, so ONE
+   poisoned pose inverted the whole session's mounting, vetoed true readings
+   and confirmed foto 7's twin. Democracy over acuity: a twin flips every
+   ring's sense at once, so it loses the vote as many times as the session
+   has honest poses.
+
+   Sense-alone lost the same day: the cage turned 180° ABOUT ANOTHER AXIS is
+   an exact symmetry of the disc constellation that PRESERVES every index's
+   sense and shifts its slot by half the marks — foto 7 shipped 643mm out,
+   explaining 18, index on a sense-correct slot at k5 where every true pose
+   of the session reads k11. The slot k is pose-absolute (see `mounting-of`),
+   so the session votes on the full pair and that family dies too.
+
+   `obs-seq` is a seq of observation vectors (one per pose, each as
+   `index-witness` returns under `:obs`). Returns
+   {axis {:sense :fwd|:rev :k n :votes n :against n :d px :contested? bool}} —
+   `:votes` for the winning pair, `:against` for every other, `:d` the winning
+   side's sharpest. A `:contested?` ring is itself a DIAGNOSIS the caller
+   must surface: (sense, k) is a pose-fact, so a session that reads one ring
+   two ways contains a twin among its own registrations."
+  [obs-seq]
+  (let [by-axis (group-by :axis (apply concat obs-seq))]
+    (into {}
+          (for [[axis os] by-axis
+                :let [pairs (group-by (juxt :sense :k) os)
+                      ranked (sort-by (fn [[_ v]] [(- (count v))
+                                                   (reduce min (map :d v))])
+                                      pairs)
+                      [[sense k] winners] (first ranked)
+                      votes (count winners)
+                      against (- (count os) votes)]
+                ;; a dead-even ring decides nothing — reported by the caller
+                ;; via the per-photo readings, enforced by nobody
+                :when (> votes against)]
+            [axis {:sense sense :k k
+                   :votes votes
+                   :against against
+                   :d (reduce min (map :d winners))
+                   :contested? (pos? against)}]))))
+
 (defn auto-read
   "Read the cage from a frame with NO clicks at all: `candidates` from
    blob-detect, `targets` from pnp-target-points, `judge` a disc-presence test
@@ -489,11 +669,38 @@
    seeds — see the gate comment below for the measured reason. `:concentric?`
    swaps in the centre-pinned hypothesis stream; measured adding nothing on
    the bench today (2026-08-30, identical photo-for-photo), kept wired for
-   when the selection lever moves (foto 3's ring dies THERE, not at identity)."
+   when the selection lever moves (foto 3's ring dies THERE, not at identity).
+
+   `:mounting` is the SESSION's mounting — {axis {:sense :fwd|:rev}} from
+   `mounting-of`/`merge-mounting` over the already-accepted registrations —
+   and it is lever 2, the twin's arbiter. Two rules, both sense-based
+   (gauge-free, see `index-witness`):
+
+   1. VETO: a solution whose index observation contradicts the session's sense
+      on any ring is a reflection twin — one session is one mounting — and is
+      dropped, whatever its score. Measured need (2026-08-30): foto 6's 548mm
+      twin is exactly the reading that claims the flipped Y index as its own
+      `:fwd` zero.
+   2. REQUIRED CONFIRMATION: when the session knows the seed ring's sense, the
+      solution must OBSERVE that ring's index in that sense — the luminance
+      zero-judge is no longer allowed to decide alone (it is exactly what the
+      twin rode in on: `disc-at?` is any dark patch, the part included). In
+      exchange the seed gate relaxes for such rings: a reading whose model
+      zero lands on nothing may still be the true one when the ring is
+      mounted turned/flipped, so it proceeds to the solve and the observation
+      decides. On rings the session knows nothing about, behavior is exactly
+      as before — the bar can only move UP.
+
+   Every result carries `:index-obs` (this pose's observations) so the caller
+   can fold them into the session mounting and DIAGNOSE the assembly — never
+   compensate it (direttiva 2026-08-28): a `:rev` sense on a ring is the
+   software recognizing 'questo anello è montato RIBALTATO', and the remedy
+   is the declaration or the remount, not a silent relabel."
   ([candidates targets intrinsics judge marks] (auto-read candidates targets intrinsics judge marks nil))
   ([candidates targets intrinsics judge marks opts]
-   (let [{:keys [disc-r min-seed-crown tol-px trace max-identify concentric? teeth?]
-          :or {disc-r 1.25 min-seed-crown 8 max-identify 18
+   (let [{:keys [disc-r min-seed-crown tol-px trace max-identify concentric? teeth?
+                 mounting blobs min-off-ring]
+          :or {disc-r 1.25 min-seed-crown 8 max-identify 18 min-off-ring 2
                tol-px (:tol-px default-opts)}} opts
          note! (fn [m] (when trace (swap! trace conj m)) nil)
          cands (vec candidates)
@@ -611,13 +818,57 @@
                                            {:disc-r disc-r
                                             :face-normal (:face-normal face)
                                             :teeth (:teeth attempt)})
+                      known-sense (get-in mounting [(:axis face) :sense])
+                      ;; the confirmation is DEMANDED only of a sense the
+                      ;; session has seen at least twice: a single observation
+                      ;; can be junk, and demanding agreement with junk would
+                      ;; refuse honest readings. A single observation still
+                      ;; vetoes an OPPOSITE observation below — that collision
+                      ;; needs two detected discs, not one
+                      demand? (and known-sense
+                                   (>= (get-in mounting [(:axis face) :votes] 1) 2))
                       _ (note! {:stage :seed :hyp (count hyp) :hyp-i hi
                                 :face [(:axis face) (:sign face)]
                                 :teeth (some-> (:teeth attempt) count)
                                 :crown-hits (:crown-hits res)
                                 :zero-hit? (:zero-hit? res)})]
-                :when (and res (:zero-hit? res) (>= (:crown-hits res) min-seed-crown))
-                :let [corr (assign targets cands intrinsics (:pose res) tol-px)
+                ;; a ring the session knows is mounted turned/flipped puts its
+                ;; index NOWHERE NEAR the model's zero slot: the pixel-judge
+                ;; zero cannot be demanded of the true reading there — the
+                ;; index observation decides after the solve instead. Relaxed
+                ;; only where the observation WILL be demanded, so the bar
+                ;; never drops: it moves from the luminance judge to the
+                ;; detector's discs
+                :when (and res (>= (:crown-hits res) min-seed-crown)
+                           (or (:zero-hit? res) demand?))
+                ;; THE GAUGE. Without a trusted zero the seed's ROTATION is
+                ;; arbitrary: the 12 whole-step turns of the crown labels all
+                ;; fit the seed ring exactly, and each puts the camera
+                ;; somewhere else — orbited k steps about the ring's axis.
+                ;; Measured (foto 7, 2026-08-30): the endorsed true-face
+                ;; reading shipped 325mm out because its gauge was two steps
+                ;; round — index on its slot (sense is gauge-free), crown
+                ;; perfect, camera orbited. On a session-known ring EVERY
+                ;; gauge is tried and the off-ring floor + endorsement decide:
+                ;; only the true turn explains marks beyond the seed's ring.
+                ;; (A luminance-pinned gauge is not exempt — on a mounted ring
+                ;; the model-slot zero is junk by construction, which is
+                ;; exactly what elected foto 6's 548mm twin.)
+                gauge (if demand? (range marks) [0])
+                :let [pose-g (if (zero? gauge)
+                               (:pose res)
+                               (let [m (count (:marks face))
+                                     corr-g (vec (for [[ci mi] (:assignment res)]
+                                                   {:world (:obj (nth (:marks face)
+                                                                      (mod (+ mi gauge) m)))
+                                                    :px (nth (:pts attempt) ci)}))
+                                     seed (pnp/estimate-homography corr-g intrinsics)]
+                                 (when seed
+                                   (or (:pose (pnp/refine corr-g intrinsics seed
+                                                          {:sigma-px 1.0}))
+                                       seed))))]
+                :when pose-g
+                :let [corr (assign targets cands intrinsics pose-g tol-px)
                       full (when (>= (count corr) 6)
                              (pnp/solve-pnp corr intrinsics {}))
                       suspect (when full
@@ -628,25 +879,85 @@
                                    {:picks (into {} (map (fn [c] [(:ci c) (:px c)]) corr))
                                     :pose (:pose full)}
                                    by-id))
+                      wit (when full
+                            (index-witness targets (or blobs cands) intrinsics
+                                           (:pose full) marks {:claimed corr}))
+                      obs (:obs wit)
+                      ;; every check below matches the FULL pair (sense, k) —
+                      ;; both pose-absolute. Sense alone lets the cage turned
+                      ;; 180° about another axis through (sense-preserving,
+                      ;; k shifted by half the marks; foto 7, 643mm, spiega 18)
+                      agrees? (fn [{:keys [axis sense k]}]
+                                (let [m (get mounting axis)]
+                                  (and m (= sense (:sense m)) (= k (:k m)))))
+                      contradiction (first (filter (fn [{:keys [axis] :as o}]
+                                                     (and (get mounting axis)
+                                                          (not (agrees? o))))
+                                                   obs))
+                      confirmed? (or (not demand?)
+                                     (boolean (some #(and (= (:axis face) (:axis %))
+                                                          (agrees? %))
+                                                    obs)))
+                      ;; ENDORSEMENT: the sharpest observation on ANY ring
+                      ;; that agrees with the session's mounting — the ranking
+                      ;; currency below. Infinity when nothing endorses
+                      endorse-d (reduce min js/Infinity
+                                        (keep (fn [o] (when (agrees? o) (:d o)))
+                                              obs))
+                      ;; marks the pose accounts for BEYOND the seed's own
+                      ;; ring. Twice a currency: it separates the ring-family
+                      ;; twins (same circle, other radius), and it is the
+                      ;; ACCEPTANCE floor — the namespace's founding
+                      ;; measurement says a pose standing on one ring alone
+                      ;; does not generalize to the rest of the cage, and the
+                      ;; bench confirmed it for machine seeds (2026-08-30:
+                      ;; both far registrations, 325 e 807mm, explained ZERO
+                      ;; off-ring marks — the index is coplanar with its
+                      ;; crown, so even an endorsed one-ring solve leaves
+                      ;; depth and tilt standing on nothing; foto 8's true
+                      ;; pose explained 4)
+                      off-ring (count (remove (fn [{:keys [ci]}]
+                                                (= (:axis face)
+                                                   (:axis (or (cage/mark-parts ci)
+                                                              (cage/index-parts ci)))))
+                                              corr))
                       _ (note! {:stage :solve :face [(:axis face) (:sign face)]
+                                :gauge gauge
                                 :corr (count corr)
+                                :off-ring off-ring
                                 :rms (some-> full :rms-px)
                                 :guard guard-ok?
+                                :obs obs
+                                :mounting-veto (some? contradiction)
+                                :mounting-confirmed confirmed?
                                 :suspect (some? suspect)})]
                 :when (and full
                            (<= (:rms-px full) pnp/accept-rms-px)
-                           guard-ok?)]
+                           guard-ok?
+                           (>= off-ring min-off-ring)
+                           (nil? contradiction)
+                           confirmed?)]
             {:pose (:pose full) :rms-px (:rms-px full)
              :corr corr :explained (count corr)
-             ;; marks the pose accounts for BEYOND the seed's own ring — the
-             ;; only currency that separates the ring-family twins above
-             :off-ring (count (remove (fn [{:keys [ci]}]
-                                        (= (:axis face)
-                                           (:axis (or (cage/mark-parts ci)
-                                                      (cage/index-parts ci)))))
-                                      corr))
+             :off-ring off-ring
+             :index-obs obs
+             :endorse-d endorse-d
              :phase-suspect (some-> suspect (assoc :axis (:axis face)))
              :seed {:axis (:axis face) :sign (:sign face)
                     :crown-hits (:crown-hits res)}})
-          (sort-by (juxt (comp - :explained) (comp - :off-ring) :rms-px))
+          ;; ENDORSED READINGS OUTRANK EVERYTHING, sharpest endorsement first —
+          ;; and only then the old key. Measured reason (foto 7, 2026-08-30):
+          ;; with the twins vetoed, the race came down to the TRUE reading
+          ;; (index observed on its slot at 1.4px, rms 1.4) against the same
+          ;; circle read as the Z ring — a ring-family twin with a
+          ;; luminance-only zero, NO index evidence, and 11 explained to the
+          ;; truth's 10. `explained` is a measured liar under twins (it
+          ;; saturated at 19 for the reflection); a detected index disc ON its
+          ;; slot is the evidence class this channel already trusts over dark
+          ;; luminance everywhere else (blob-judge vs disc-at?). Within the
+          ;; endorsed class the sharper observation wins: the family twin can
+          ;; BORROW the same disc through another ring's slots, but the wrong
+          ;; interpretation predicts it off by the scale mismatch (11.7px
+          ;; against the true reading's 1.4)
+          (sort-by (juxt :endorse-d (comp - :explained) (comp - :off-ring) :rms-px))
           first))))

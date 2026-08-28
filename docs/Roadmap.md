@@ -132,14 +132,32 @@ spostato la frontiera: coi denti accesi foto 6/7 si registrano DAL GEMELLO
 attraverso-la-plastica (548/764mm — la corona identifica a pari merito su
 tutte e sei le facce e decide solo lo zero al giudice dei pixel, che lì passa
 sul gemello), quindi il gate `:teeth?` resta CHIUSO in produzione (2/8, zero
-falsi) finché non c'è l'arbitro del gemello per semi macchina — la prossima
-fetta. Foto 3 muore invece alla SELEZIONE (il suo anello non si assembla mai
-in un'ipotesi, nemmeno col concentrico — cablato dietro `:concentric?`,
-misurato identico). Banco `node out/cage-auto.js` su
+falsi) finché non c'è l'arbitro del gemello per semi macchina. *Leva 2 —
+l'ARBITRO DEL MONTAGGIO — FATTA (2026-08-31)*: gli indici sul banco erano
+RILEVATI ma in alloggio specchiato (l'anello Y della gabbia battiscopa è
+montato RIBALTATO — la chiave non lo vieta), quindi il "gemello" era la
+lettura che spiegava l'indice vero meglio del modello; con montaggio libero
+per-assemblaggio la singola foto non decide, la SESSIONE sì:
+`index-witness` legge per ogni posa le osservazioni (senso,k) POSE-ASSOLUTE
+dell'indice di ogni anello, `vote-mounting` le vota a maggioranza sulle
+foto, e `auto-read` veta le letture che contraddicono il voto, esige la
+conferma sull'anello-seme noto, avalla nel rango il disco-indice rilevato
+(explained satura — 19 il gemello), spazza i 12 gauge del seme ed esige
+≥2 mark fuori-anello. Risultato: foto 7 da gemello-a-764mm a VERA a 1.1mm,
+zero falsi con e senza denti, e il voto ha SCOPERTO che la posa A MANO di
+foto 1 della sessione-verità è un gemello a 180° (il vecchio «2/8» era
+1 vera + 1 falso mai visto). Cablato in `a`: il montaggio si accumula per
+sessione, i denti si accendono da soli dove il voto ha giurisdizione, e i
+messaggi diagnosticano «anello RIBALTATO» e «sessione col gemello». Resta
+il COLD START (sessione senza voto = senza arbitro) → prossima fetta:
+riconciliazione di sessione; foto 3 muore invece alla SELEZIONE (il suo
+anello non si assembla mai in un'ipotesi, nemmeno col concentrico — cablato
+dietro `:concentric?`, misurato identico). Banco `node out/cage-auto.js` su
 `test-assets/cage-battiscopa` (verità = la sessione a mano; `CAGE_AUTO_TEETH`
-/ `CAGE_AUTO_CONC`). Entry point `dev-docs/HANDOVER-cage-zero-click.md`;
-storia in `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
-`node out/cage-study.js` e `node out/cage-fit.js`.
+/ `CAGE_AUTO_CONC` / `CAGE_AUTO_NOCTX` / `CAGE_AUTO_ZERO`). Entry point
+`dev-docs/HANDOVER-cage-zero-click.md`; storia in
+`dev-docs/HANDOVER-cage-auto-detect.md`; banchi `node out/cage-study.js` e
+`node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già
