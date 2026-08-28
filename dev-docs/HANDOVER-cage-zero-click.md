@@ -13,6 +13,17 @@ anello incollato a 90°, chiave di montaggio, portapezzi, la settimana
 dell'avvelenamento): `dev-docs/HANDOVER-cage-auto-detect.md`. Questo file è lo
 stato dei lavori per ripartire.
 
+**STATO AL 29/8, per chi riparte da qui**: le fette del veto degli zero, della
+rilettura a k passi (solo DIAGNOSI: mai supplire a `:phases` — direttiva),
+dell'anti-doppioni e della gomma sono DENTRO e col gate live passato (veto: 42
+riletture contraddette sul log di Vincenzo; gomma collaudata). Il triangolino
+del palcoscenico ora giudica la gabbia col suo metro (`registration-verdict`).
+La campagna sullo zero-click ha MISURATO la frontiera (sezione «La frontiera»,
+aggiornata): il cablaggio di produzione resta 2/8 con zero falsi PER SCELTA, e
+la prossima fetta è l'IDENTIFICAZIONE CONTAMINATION-PROOF (foto 3/6/7 muoiono
+lì), poi l'arbitro del gemello per semi macchina, poi il recall. Commits della
+giornata: 2228e4a → 2f61f5b → a7cc17c → cab7375 → 332981c.
+
 ## Lo stato, tutto insieme
 
 - **Rilevatore** (`blob_detect.cljs`, `cage-opts`): fatto e stabile. Riferimento
