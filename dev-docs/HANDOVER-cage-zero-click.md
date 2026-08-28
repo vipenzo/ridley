@@ -368,6 +368,16 @@ ricablato quando la leva 1 (identificazione) è dentro.
   recall per anello su IMG_9014).
 - **`node out/cage-fit.js`** — le premesse della fetta 2 (riletture, fasi,
   facce) su `test-assets/cage-presa`.
+- **Sondare una foto singola SENZA cicli di compile** (è così che il 30/8 si è
+  inchiodato il meccanismo del gemello): `(shadow.cljs.devtools.api/node-repl)`
+  via nREPL 7888 → `js/require` di fs+sharp funziona lì dentro → decodifica
+  asincrona in un atom (`.then` + reset!, si legge all'eval successiva) →
+  ricostruire la catena di auto-read a mano (detect-blobs → fit-inliers-ranked
+  → comb-teeth → assign-marks per faccia → assign+solve-pnp) stampando per
+  ogni (ipotesi × faccia): denti, corona, zero, rms, distanza della camera
+  dalla verità (`bridge/editor->solver-pose` su `acquire-state.json`).
+  TRAPPOLA PAGATA: nel node-repl `dir` è un'utility del REPL — un `(def dir
+  …)` fallisce in silenzio e l'eval si tronca a metà: usare un altro nome.
 - Build: `:cage-auto`, `:cage-study`, `:cage-fit` in shadow-cljs.edn. Compila
   SEMPRE via nREPL (`(shadow.cljs.devtools.api/compile :cage-auto)`), mai un
   secondo processo CLI col watcher attivo.
