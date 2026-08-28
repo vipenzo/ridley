@@ -554,4 +554,4 @@ ricablato quando la leva 1 (identificazione) è dentro.
 - Commit della settimana: `834c92b` detector → `fee7154`/`ab79a8b` read-crown →
   `c2dbee1` tasto a → `06eee7e` zero-indice/90° → `1e300b6` chiave → `c5d7692`
   portapezzi → `c341015`…`fdbfe01` guardie rifinitura → `1626c0a` zero click →
-  `b8a4bb8` leva 1 (denti) → `6282dec` leva 2 (arbitro del montaggio).
+  `b8a4bb8` leva 1 (denti) → `3a81ce4` leva 2 (arbitro del montaggio).
