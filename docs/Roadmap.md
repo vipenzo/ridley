@@ -118,8 +118,12 @@ fasi degli anelli sono per-montaggio, e ora le scopre la foto — gli zero-indic
 cliccati su altri anelli VETANO i gemelli in `read-crown` (46 riletture
 contraddette sul pareggio sintetico) e uno zero che il solve scarterebbe come
 outlier viene prima riletto a k passi (`rescue-hand-zeros`: anello montato a
-90° misurato dal suo zero); più il filtro anti-doppioni sulle proposte e la
-gomma per i pick (clic destro). Gate live da fare. Banco `node
+90° misurato dal suo zero — DIAGNOSI + suggerimento `:phases`, mai
+compensazione: direttiva di Vincenzo 28/8, la gabbia deve essere giusta); più
+il filtro anti-doppioni sulle proposte e la gomma per i pick (clic destro).
+Gate live di veto e gomma PASSATO (28/8: 42 riletture contraddette, 2
+proposte outlier tolte con la gomma); la diagnosi a k passi aspetta una
+gabbia rimontata girata. Banco `node
 out/cage-auto.js` su `test-assets/cage-battiscopa` (verità = la sessione a
 mano). Entry point `dev-docs/HANDOVER-cage-zero-click.md`; storia in
 `dev-docs/HANDOVER-cage-auto-detect.md`; banchi `node out/cage-study.js` e

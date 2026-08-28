@@ -371,9 +371,13 @@
    only if the fit stays acceptable and the hand's zero is now an inlier.
 
    Returns {:sol sol' :corr corr' :phases {axis {:steps k :deg d}}} — the
-   re-solve to apply and the mounting the photo just measured, the number
-   `:phases` on `registration-cage` wants declared — or nil when no hand zero
-   was outliered or no turn explains it."
+   mounting the photo just measured (the number `:phases` on
+   `registration-cage` wants declared), with the confirming re-solve as
+   EVIDENCE — or nil when no hand zero was outliered or no turn explains it.
+   The caller ships the diagnosis, not the substitution (Vincenzo,
+   2026-08-28: «la gabbia deve essere giusta» — registering photos as if the
+   phase were declared buys work and uncertainty to paper over a mounting
+   that the declaration fixes outright)."
   [sol correspondences intrinsics marks hand-zero-axis index-axis]
   (let [step (/ 360.0 marks)]
     (loop [sol sol corr correspondences phases {} tried #{}]

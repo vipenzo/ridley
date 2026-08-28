@@ -294,8 +294,11 @@
   ;; every part change — while the model declares nothing. Every disc of Z still
   ;; lands on a disc position, so the marks fit and the pose is right; only the
   ;; ZERO moved, and the solve, doing its job, throws away the one pick that
-  ;; tells the truth. The rescue must catch it: find k=3, re-solve keeping the
-  ;; zero, and hand back the mounting the photo just measured.
+  ;; tells the truth. The probe must catch it: find k=3, confirm by re-solving
+  ;; with the zero kept, and hand back the mounting the photo just measured.
+  ;; This tests the PURE measuring fn; the editor ships only the diagnosis and
+  ;; the suggested :phases, never the substitute registration (Vincenzo,
+  ;; 2026-08-28: la gabbia deve essere giusta).
   (println "\n=== gabbia: l'anello montato girato si misura dal suo zero ===")
   (let [truth (cage/registration-cage :d 176 :phases {:z 90})
         model (cage/registration-cage :d 176)

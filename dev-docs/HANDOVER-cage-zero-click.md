@@ -55,13 +55,18 @@ stato dei lavori per ripartire.
   PER-MONTAGGIO: la gabbia si apre a ogni cambio pezzo (il portapezzi sta
   dentro), ogni apertura rilancia la moneta di ogni anello, e i `:phases`
   dichiarati muoiono con lo smontaggio (la sessione-verità del 25/8 senza
-  fasi era la STESSA gabbia in un altro giro). Due rami di cura, in ordine
-  di resa: (1) SOFTWARE, preferito perché copre anche le stampe esistenti —
-  scoprire le fasi DALLA FOTO: gli zero-indice cliccati o rilevati arbitrano
-  la fase di ogni anello, stesso meccanismo del veto già in lista; a regime
-  `:phases` diventa inutile. (2) STAMPA — una chiave che vieti ANCHE il
-  ribaltamento: il vincolo va rotto fuori dal piano dell'anello, non solo in
-  azimut (da progettare su `key-pin-azim`/`joint-tabs`).
+  fasi era la STESSA gabbia in un altro giro). Due rami di cura — e la
+  DIRETTIVA di Vincenzo (28/8) su come dividerli: «non mi sembra una cosa
+  furba supplire alla mancanza di :phases — ci accolliamo lavoro e incertezza
+  in più per niente: la gabbia deve essere giusta. Se mai serve qualcosa che
+  riconosca che è montata sbagliata e suggerisca di aggiungere il :phases
+  opportuno». Quindi: (1) SOFTWARE = solo DIAGNOSI — riconoscere dalla foto
+  il montaggio girato e suggerire il `:phases` esatto, mai registrare come se
+  la fase fosse dichiarata (una sessione che crede a due geometrie insieme è
+  proprio l'incertezza in più). (2) STAMPA = la CURA — una chiave che vieti
+  ANCHE il ribaltamento: il vincolo va rotto fuori dal piano dell'anello, non
+  solo in azimut (da progettare su `key-pin-azim`/`joint-tabs`; è in coda di
+  ristampa).
   Il phase-probe resta cieco a 6 passi (i
   dischetti ricadono identici, solo lo zero si sposta) e il solve scartava
   come outlier proprio i click sullo zero.
@@ -85,20 +90,26 @@ stato dei lavori per ripartire.
      pura, cablata in `solve-and-apply!` via `cage-zero-phase-rescue!`): uno
      zero a mano che il solve vuole scartare come outlier viene prima provato
      a ogni giro di passo intero del suo anello (proiezione sotto la posa
-     degli ALTRI pick, soglia 26px); se un k spiega il click, si riadotta il
-     re-solve che TIENE lo zero (accettato solo se rms non peggiora e lo zero
-     è inlier) e la scoperta — «l'anello R è MONTATO girato di k passi» — va
-     in `:note` (status line), in `auto-log!`, e in `:zero-phases` (il
-     phase-report ignora gli zero già girati per non avvelenare la misura
-     sub-passo). Il messaggio suggerisce la dichiarazione TOTALE
-     (`:phases` già dichiarate + scoperta). Test:
+     degli ALTRI pick, soglia 26px). Se un k spiega il click, la foto NON
+     viene registrata come se la fase fosse dichiarata — direttiva di
+     Vincenzo 28/8, che ha ribaltato la prima stesura (adottava il re-solve
+     con lo zero girato): il solve che scarta lo zero RESTA quello valido, lo
+     zero resta un outlier onesto del modello in uso, e la scoperta —
+     «l'anello R risulta MONTATO girato di k passi» — va in `:note` (status
+     line), in `auto-log!`, e in `:zero-phases` (il phase-report ignora lo
+     zero stantio per non avvelenare la misura sub-passo). Il re-solve di
+     prova gira comunque, come PROVA: il messaggio dice a quanti px
+     chiuderebbe il fit con la fase dichiarata (mai un suggerimento a
+     indovinare) e dà la dichiarazione TOTALE (`:phases` già dichiarate +
+     scoperta) pronta da copiare. Test:
      `a-mounted-ring-is-measured-from-its-clicked-zero` (anello Z montato a
-     90°: senza soccorso lo zero vero è outlier; col soccorso k=3, 90°, rms
-     sotto 1px, zero inlier; su un solve pulito il soccorso resta muto).
-  NON ANCORA: applicare la fase scoperta ai TARGET della sessione (oggi resta
-  una diagnosi + dichiarazione da riaprire; l'auto-apply — ruotare gli anchor
-  dell'anello nel proxy-mesh, che visivamente è invariante — è la prossima
-  fetta naturale, ed è ciò che rende `:phases` davvero inutile a regime).
+     90°: senza soccorso lo zero vero è outlier; la misura dà k=3, 90°, rms
+     sotto 1px con lo zero dentro; su un solve pulito la sonda resta muta —
+     il test collauda la funzione pura, che misura; il chiamante spedisce
+     solo la diagnosi).
+  NIENTE AUTO-APPLY, per scelta e non per rinvio (stessa direttiva): la
+  gabbia deve essere giusta — la cura vera è la chiave anti-ribaltamento in
+  coda di ristampa; il software riconosce e suggerisce, non supplisce.
   **GATE LIVE DEL VETO: PASSATO (Vincenzo, 28/8, log)** — 8 click ALT su Y +
   lo zero di Z, `a` → «i nomi che avevi dato erano giusti · 20 dischetti
   piazzati · lo zero cliccato sull'altro anello ha fatto da arbitro: 42

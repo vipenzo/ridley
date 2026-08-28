@@ -2214,16 +2214,23 @@
                        ci))})))))
 
 (defn- cage-zero-phase-rescue!
-  "A hand-clicked zero-index is never discarded as an outlier without first
-   trying the k-step re-reading of its ring (match-cage/rescue-hand-zeros — the
-   mechanism, measured and argued, lives there). Cage only; anything else passes
-   through untouched, ::refused included.
+  "A hand-clicked zero-index the solve wants to discard as an outlier gets the
+   k-step re-reading of its ring first (match-cage/rescue-hand-zeros) — as a
+   DIAGNOSIS, never as a substitute for the declaration. Vincenzo's call
+   (2026-08-28), overturning this function's first draft, which adopted the
+   re-solve and registered the photo as if the phase were declared: «non mi
+   sembra una cosa furba supplire alla mancanza di :phases — ci accolliamo
+   lavoro e incertezza in più per niente: la gabbia deve essere giusta».
+   A session that half-believes two geometries (the fit on the turned zero,
+   the predictions on the model) is exactly that uncertainty.
 
-   When a whole-step turn explains the zero, the re-solve that KEEPS it is
-   adopted, and what the photo just measured — the ring is MOUNTED k steps round
-   from the model, a fact of THIS assembly, since the cage opens at every part
-   change — is logged (the pasted log is the bench's instrument) and attached as
-   `:note` for the status line and `:zero-phases` for the phase report."
+   So the solve that discarded the zero STANDS — the zero stays an honest
+   outlier of the model in use — and what the probe measured goes in `:note`
+   and the log: which ring, how many steps, and the rms the declaration would
+   buy (the trial re-solve runs as EVIDENCE, so the suggestion is never a
+   guess), with the exact `:phases` line to declare. `:zero-phases` tags the
+   diagnosis so the phase report skips the stale zero. Cage only; anything
+   else passes through untouched, ::refused included."
   [sol correspondences targets k]
   (if-not (and (map? sol) (:pose sol) (cage-proxy?))
     sol
@@ -2245,21 +2252,23 @@
                                 (into {} (map (fn [[a p]] [a (:deg p)]) (:phases r))))
               decl (str/join " " (for [[axis deg] (sort-by key total)]
                                    (str ":" (name axis) " " (.toFixed deg 0))))]
-          (auto-log! (str "  fase scoperta dallo zero cliccato: anello " phrase
-                          " · rms " (.toFixed (:rms-px (:sol r)) 1) "px (era "
-                          (.toFixed (:rms-px sol) 1) " scartando lo zero)"))
-          (assoc (:sol r)
+          (auto-log! (str "  anello montato girato, misurato dallo zero cliccato: " phrase
+                          " · col :phases dichiarato il fit chiuderebbe a "
+                          (.toFixed (:rms-px (:sol r)) 1) "px con lo zero dentro (ora "
+                          (.toFixed (:rms-px sol) 1) "px scartandolo)"))
+          (assoc sol
                  :zero-phases (:phases r)
                  :note (str (when-let [n (:note sol)] (str n " · "))
-                            "lo zero che avevi cliccato stava per essere SCARTATO come "
-                            "outlier, e non è lui l'errore: l'anello " phrase
-                            " è MONTATO girato — i dischetti ricadono su altri dischetti, "
-                            "solo lo zero lo può dire. Su questa foto ora conta. Vale per "
-                            "questo montaggio (la gabbia si apre a ogni cambio pezzo): "
-                            "finché non la smonti, riapri la sessione con "
+                            "lo zero che hai cliccato non è sbagliato: l'anello " phrase
+                            " risulta MONTATO girato (i dischetti ricadono su altri "
+                            "dischetti, solo lo zero lo può dire). Non lo compenso: "
+                            "dichiara la fase e riapri la sessione con "
                             "(registration-cage :d "
                             (or (:cage-d (:proxy-mesh @session)) "…")
-                            " :phases {" decl "})")))))))
+                            " :phases {" decl "}) — così il fit chiude a "
+                            (.toFixed (:rms-px (:sol r)) 1)
+                            "px con lo zero dentro (misurato, non indovinato). "
+                            "Intanto qui lo zero resta fuori dal fit.")))))))
 
 (defn- solve-and-apply!
   "Solve the current photo's placed correspondences and APPLY the pose (move the
