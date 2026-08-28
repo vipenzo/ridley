@@ -230,9 +230,20 @@
    intrinsics {…}                        camera intrinsics
    disc-at?   (fn [px r] -> bool)        cheap dark-disc presence judge
    opts       {:disc-r mm                physical disc radius (default 1.25)
-               :face-normal [x y z]}     marked-face outward normal (object frame,
+               :face-normal [x y z]      marked-face outward normal (object frame,
                                          toward the camera) — rejects the mirror
                                          twin; omit only in tests that ignore it
+               :teeth [t …]}             one COMB TOOTH (integer cyclic position
+                                         on the crown, ellipse/comb-teeth) per
+                                         click, same order as `clicks` — locks
+                                         the subset structure, so the search is
+                                         m rotations × 2 handednesses (24)
+                                         instead of C(m,k)·k·2 (thousands). The
+                                         zero-click lever 1: a partial ring's
+                                         GAPS are read off the teeth instead of
+                                         enumerated, and a contaminating rider
+                                         never reaches the homography because
+                                         its caller left it off the teeth
 
    Two passes, because the seedless homography from k clicks reprojects the rest of
    the crown only coarsely (tens of px on real data, comparable to the disc size —
@@ -249,12 +260,23 @@
    a crown-hits threshold), then feeds the assignment to the armed solve. Returns
    nil for <4 clicks, fewer marks than clicks, a missing zero-index, or when no
    candidate produced a valid (front-facing) homography at all."
-  [clicks marks zero-obj intrinsics disc-at? {:keys [disc-r face-normal] :or {disc-r 1.25}}]
-  (when (and (>= (count clicks) 4) (>= (count marks) (count clicks)) zero-obj)
-    (let [click-order (cyclic-order-2d clicks)
-          objs (mapv :obj marks)
+  [clicks marks zero-obj intrinsics disc-at? {:keys [disc-r face-normal teeth] :or {disc-r 1.25}}]
+  (when (and (>= (count clicks) 4) (>= (count marks) (count clicks)) zero-obj
+             (or (nil? teeth) (= (count teeth) (count clicks))))
+    (let [objs (mapv :obj marks)
           plane (plane-basis objs)
           mark-order (cyclic-order-3d objs plane)
+          m (count mark-order)
+          ;; the comb already fixed each click's cyclic position, so only the
+          ;; crown's rotation and the image's handedness remain unknown: tooth t
+          ;; goes to the mark at cyclic position rot + dir·t
+          assignments (if teeth
+                        (for [dir [1 -1] rot (range m)]
+                          (into {} (map-indexed
+                                    (fn [ci t]
+                                      [ci (nth mark-order (mod (+ rot (* dir t)) m))])
+                                    teeth)))
+                        (candidate-assignments (cyclic-order-2d clicks) mark-order))
           ;; COARSE: seed each candidate, tolerant hit count
           coarse (keep (fn [assignment]
                          (let [corr (mapv (fn [[ci mi]]
@@ -264,7 +286,7 @@
                              {:assignment assignment :corr corr :seed seed
                               :coarse (:crown (disc-hits seed objs zero-obj intrinsics
                                                          disc-at? disc-r plane true))})))
-                       (candidate-assignments click-order mark-order))
+                       assignments)
           shortlist (take max-refine (sort-by :coarse > coarse))
           ;; FINE: refine each shortlisted pose, drop the back-facing mirror, score tight
           fine (keep (fn [{:keys [assignment corr seed]}]

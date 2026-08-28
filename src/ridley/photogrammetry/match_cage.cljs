@@ -481,32 +481,40 @@
    collect every mark of the WHOLE cage it accounts for (mutual-nearest), solve
    on all of them, and hold the result to the session's own acceptance bar plus
    the physical guard and the glued-ring probe. Junk constellations die at those
-   gates: they solve wide of the bar or claim discs the camera cannot see."
+   gates: they solve wide of the bar or claim discs the camera cannot see.
+
+   opts worth knowing: `:teeth?` turns on the comb-locked identity (zero-click
+   lever 1 — contamination-proof, 24 candidates per face instead of C(12,k));
+   OFF in production until the through-plastic twin has an arbiter for machine
+   seeds — see the gate comment below for the measured reason. `:concentric?`
+   swaps in the centre-pinned hypothesis stream; measured adding nothing on
+   the bench today (2026-08-30, identical photo-for-photo), kept wired for
+   when the selection lever moves (foto 3's ring dies THERE, not at identity)."
   ([candidates targets intrinsics judge marks] (auto-read candidates targets intrinsics judge marks nil))
   ([candidates targets intrinsics judge marks opts]
-   (let [{:keys [disc-r min-seed-crown tol-px trace max-identify]
+   (let [{:keys [disc-r min-seed-crown tol-px trace max-identify concentric? teeth?]
           :or {disc-r 1.25 min-seed-crown 8 max-identify 18
                tol-px (:tol-px default-opts)}} opts
          note! (fn [m] (when trace (swap! trace conj m)) nil)
+         cands (vec candidates)
          ;; Ring hypotheses with a floor of EIGHT inliers — a cost wall, not a
          ;; taste: identifying a k-point ring among 12 marks enumerates C(12,k)
          ;; cyclic candidates, 24 at k=12 but 11088 at k=7, and each face of
          ;; each hypothesis pays it. The first bench run at floor 6 took 40-57
          ;; seconds per frame, almost all of it on junk partial rings.
-         ;; NOTE 2026-08-29 — the concentric family (ellipse/fit-concentric-
-         ;; ranked) and the comb (ellipse/comb-select) were built, measured on
-         ;; the bench, and deliberately NOT wired here yet: they surface the
-         ;; true rings (audited: foto 7's nine ym discs complete inside a
-         ;; hypothesis) but the identity stage cannot digest their contaminated
-         ;; supersets, and the enriched stream let a whole-cage REFLECTION ship
-         ;; as a registration (foto 7: 19 corr, camera 764mm out — corr count
-         ;; saturates when predictions densify). Until identification is
-         ;; contamination-proof and the twin has an arbiter that works for
-         ;; machine seeds, the independent search stays: 2/8 with zero false
-         ;; positives beats any rate bought by shipping a reflection.
-         hyps (ellipse/fit-inliers-ranked (vec candidates)
-                                          {:iters 2000 :thr 0.04
-                                           :min-inliers 8 :top-k 6})
+         ;; `:concentric?` swaps in the centre-pinned family search
+         ;; (ellipse/fit-concentric-ranked): the cage's rings share their
+         ;; centre, so the junk conics of the free search SEED an exhaustive
+         ;; 3-point search that surfaces the sparse rings the 5-point RANSAC
+         ;; cannot (audited 2026-08-29: foto 7's nine ym discs complete inside
+         ;; a hypothesis). Its hypotheses arrive CONTAMINATED by construction
+         ;; (+2…+6 riders in the Sampson band) — which is why it stays behind a
+         ;; flag until the bench clears it: the comb-locked identity below
+         ;; digests the riders, but the enriched stream also feeds the
+         ;; whole-cage REFLECTION twin, and that arbiter is the next slice.
+         hyps ((if concentric? ellipse/fit-concentric-ranked ellipse/fit-inliers-ranked)
+               cands
+               {:iters 2000 :thr 0.04 :min-inliers 8 :top-k 6})
          ;; NO competitive-size filter — the plate's rule, and wrong here. On a
          ;; plate the crown is the biggest ring in the picture; on a cage a junk
          ;; conic threading three interleaved crowns gathers MORE inliers than
@@ -523,7 +531,7 @@
          ;; identity check's signature in cheap form: coefficient of variation
          ;; of the angular gaps about the inliers' own centroid.
          regularity (fn [hyp]
-                      (let [pts (mapv #(nth candidates %) hyp)
+                      (let [pts (mapv #(nth cands %) hyp)
                             n (count pts)
                             cx (/ (reduce + (map first pts)) n)
                             cy (/ (reduce + (map second pts)) n)
@@ -538,15 +546,43 @@
                             var (/ (reduce + (map #(let [d (- % mean)] (* d d)) gaps)) n)]
                         (/ (Math/sqrt var) mean)))
          hyps (vec (sort-by regularity hyps))
+         ;; THE COMB, once per hypothesis (the ellipse lives in the image — it
+         ;; does not depend on the face being tried): each point gets a TOOTH,
+         ;; an integer cyclic position on the crown, and the riders that
+         ;; poisoned the identity get none. With the subset structure read off
+         ;; the teeth, assign-marks tries 24 candidates instead of C(12,k)·k·2
+         ;; — so tooth-locked attempts are NOT charged to the identity budget,
+         ;; and the budget starvation of 2026-08-29 (the true ring fifth in
+         ;; list, never tried) cannot recur.
+         ;; GATED (`:teeth?`, off in production) — by the bench, not by doubt
+         ;; about the mechanism (measured 2026-08-30): with teeth on, foto 6
+         ;; and 7 REGISTER — from the through-plastic twin, camera 548/764mm
+         ;; out. The true ring's crown identifies too (foto 6: the 8 yp discs,
+         ;; inside the 14-point hypothesis, corona 11), but the crown count
+         ;; ties across ALL SIX faces by symmetry and only the zero-index
+         ;; pixel-judge decides — and on those frames it passes exactly on the
+         ;; twin face (the true face's zero is not visible to `disc-at?`).
+         ;; That arbiter — a zero witness that works for machine seeds — is
+         ;; the next slice; until it exists, 2/8 with zero false positives
+         ;; beats 2 registrations at half a metre.
+         seeds (when teeth?
+                 (mapv (fn [hyp]
+                         (when-let [ct (ellipse/comb-teeth cands hyp marks)]
+                           (let [ids (vec (sort (keys (:teeth ct))))]
+                             {:pts (mapv #(nth cands %) ids)
+                              :teeth (mapv (:teeth ct) ids)
+                              :riders (count (:riders ct))})))
+                       hyps))
          faces (ring-faces targets)
          by-id (into {} (map (juxt :id identity) targets))
          budget (volatile! (inc max-identify))]
-     (note! {:stage :hyps :sizes (mapv count hyps) :candidates (count candidates)
+     (note! {:stage :hyps :sizes (mapv count hyps) :candidates (count cands)
              ;; the sets themselves and the axis votes: the bench compares them
              ;; against the truth pose's per-ring candidates, which is how the
              ;; 2026-08-29 budget starvation was caught — sizes alone could not
              ;; say whether the true ring was IN the list and never tried
-             :sets hyps})
+             :sets hyps
+             :teeth (mapv (fn [s] (some-> (:teeth s) count)) (or seeds []))})
      ;; BEST accepted wins — never the first. The same 11 candidate discs
      ;; identify as ring X AND as ring Y (same circle, different radius: the
      ;; pose absorbs the scale into distance), both at clean rms, both past the
@@ -557,23 +593,35 @@
      ;; attempts, which took refusals from 40-65s to 10-25.
      (->> (for [[hi hyp] (map-indexed vector hyps)
                 face faces
-                :let [pts (mapv #(nth candidates %) (take (count (:marks face)) hyp))
-                      res (when (and (>= (count pts) 4)
-                                     (pos? (vswap! budget dec)))
-                            (mp/assign-marks pts (:marks face) (:zero-obj face)
-                                             intrinsics judge
-                                             {:disc-r disc-r
-                                              :face-normal (:face-normal face)}))
+                ;; two attempts per (hypothesis, face), not either-or: the
+                ;; tooth-locked identity is free and digests riders, but at a
+                ;; pathological obliquity the comb itself can misfile (measured:
+                ;; ring X seen from 150mm off its own plane — anomaly gaps past
+                ;; a quarter tooth), so the baseline enumeration keeps running
+                ;; under the SAME budget rules as before. The bench cannot go
+                ;; below baseline by construction; the teeth add wins.
+                :let [{:keys [pts teeth]} (when seeds (nth seeds hi))
+                      enum-pts (mapv #(nth cands %) (take marks hyp))]
+                attempt (cond-> []
+                          teeth (conj {:pts pts :teeth teeth})
+                          (and (>= (count enum-pts) 4) (pos? (vswap! budget dec)))
+                          (conj {:pts enum-pts}))
+                :let [res (mp/assign-marks (:pts attempt) (:marks face)
+                                           (:zero-obj face) intrinsics judge
+                                           {:disc-r disc-r
+                                            :face-normal (:face-normal face)
+                                            :teeth (:teeth attempt)})
                       _ (note! {:stage :seed :hyp (count hyp) :hyp-i hi
                                 :face [(:axis face) (:sign face)]
+                                :teeth (some-> (:teeth attempt) count)
                                 :crown-hits (:crown-hits res)
                                 :zero-hit? (:zero-hit? res)})]
                 :when (and res (:zero-hit? res) (>= (:crown-hits res) min-seed-crown))
-                :let [corr (assign targets candidates intrinsics (:pose res) tol-px)
+                :let [corr (assign targets cands intrinsics (:pose res) tol-px)
                       full (when (>= (count corr) 6)
                              (pnp/solve-pnp corr intrinsics {}))
                       suspect (when full
-                                (phase-probe targets candidates intrinsics
+                                (phase-probe targets cands intrinsics
                                              (:pose full) (:axis face) marks tol-px))
                       guard-ok? (when full
                                   (sees-its-own-picks?

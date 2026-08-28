@@ -103,6 +103,46 @@
                                " promuovi questa stampa ad asserzione")
                         "NON trovato (limite misurato di oggi)"))))))
 
+(deftest comb-teeth-names-positions-and-benches-riders
+  ;; The comb as the identity's opening move (lever 1): a sparse crown — eight
+  ;; of twelve positions, gaps included — plus two riders ON the ellipse at
+  ;; half-step anomalies (the audited shape of the concentric family's
+  ;; contaminated supersets) plus a through-plastic twin 2px from a true disc.
+  ;; Every true point must get a TOOTH consistent with its construction
+  ;; position under one rotation+handedness, the riders must get none, and a
+  ;; tooth takes ONE claimant.
+  (println "\n=== ellisse: il pettine dà a ogni punto il suo dente ===")
+  (let [r (synth/rng 3)
+        step (/ (* 2 Math/PI) 12)
+        pos [0 1 2 3 4 6 8 9]
+        at (fn [p] (ellipse-pt 950.0 700.0 520.0 340.0 0.6 (* p step)))
+        on (mapv at pos)
+        riders [(at 5.5) (at 10.5)]
+        twin (let [[x y] (at 2)] [(+ x 2.0) (+ y 1.5)])
+        jitter (fn [pts] (mapv (fn [[x y]] [(+ x (synth/gauss r)) (+ y (synth/gauss r))]) pts))
+        pts (vec (concat (jitter on) riders [twin]))    ; 0-7 true, 8-9 riders, 10 twin
+        res (ellipse/comb-teeth pts (vec (range (count pts))) 12)
+        teeth (:teeth res)
+        ;; the twin claims the same position as true point 2
+        pos-of (into {10 2} (map-indexed (fn [i p] [i p]) pos))]
+    (println (str "  11 punti (8 corona + 2 intrusi sull'ellisse + 1 gemello) → "
+                  (if res (str (count teeth) " denti, intrusi " (pr-str (:riders res)))
+                      "NIENTE pettine")))
+    (is (some? res) "il pettine si costruisce")
+    (when res
+      (is (= 8 (count teeth)) "otto denti occupati, uno per posizione")
+      (is (every? #(contains? teeth %) (range 2)) "i punti veri stanno sui denti")
+      (is (every? #(contains? teeth %) (range 3 8)) "tutti loro")
+      (is (= 1 (count (filter #(contains? teeth %) [2 10])))
+          "il dente conteso fra vero e gemello prende UN claimant")
+      (is (every? (set (:riders res)) [8 9])
+          "gli intrusi a mezzo passo sono in panchina")
+      (is (some (fn [[dir rot]]
+                  (every? (fn [[i t]] (= t (mod (+ rot (* dir (pos-of i))) 12)))
+                          teeth))
+                (for [dir [1 -1] rot (range 12)] [dir rot]))
+          "e i denti rispettano le posizioni di costruzione (a meno di rotazione e verso)"))))
+
 (deftest sisters-about-is-exhaustive-where-sampling-is-lucky
   ;; The pinned search from the TRUE centre: eight ring points drowned in
   ;; twenty junk points. Exhaustive over triples, so finding the ring is not

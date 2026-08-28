@@ -123,11 +123,23 @@ compensazione: direttiva di Vincenzo 28/8, la gabbia deve essere giusta); più
 il filtro anti-doppioni sulle proposte e la gomma per i pick (clic destro).
 Gate live di veto e gomma PASSATO (28/8: 42 riletture contraddette, 2
 proposte outlier tolte con la gomma); la diagnosi a k passi aspetta una
-gabbia rimontata girata. Banco `node
-out/cage-auto.js` su `test-assets/cage-battiscopa` (verità = la sessione a
-mano). Entry point `dev-docs/HANDOVER-cage-zero-click.md`; storia in
-`dev-docs/HANDOVER-cage-auto-detect.md`; banchi `node out/cage-study.js` e
-`node out/cage-fit.js`.
+gabbia rimontata girata. *Leva 1 — identificazione contamination-proof —
+FATTA (2026-08-30)*: il pettine come prima mossa dell'identità
+(`ellipse/comb-teeth`: gap-snapping ciclico in anomalia eccentrica, tolleranza
+scalata con la campata; `assign-marks :teeth`: 24 candidati al posto di
+C(12,k)·k·2, l'intruso non arriva mai all'omografia). Il banco però ha
+spostato la frontiera: coi denti accesi foto 6/7 si registrano DAL GEMELLO
+attraverso-la-plastica (548/764mm — la corona identifica a pari merito su
+tutte e sei le facce e decide solo lo zero al giudice dei pixel, che lì passa
+sul gemello), quindi il gate `:teeth?` resta CHIUSO in produzione (2/8, zero
+falsi) finché non c'è l'arbitro del gemello per semi macchina — la prossima
+fetta. Foto 3 muore invece alla SELEZIONE (il suo anello non si assembla mai
+in un'ipotesi, nemmeno col concentrico — cablato dietro `:concentric?`,
+misurato identico). Banco `node out/cage-auto.js` su
+`test-assets/cage-battiscopa` (verità = la sessione a mano; `CAGE_AUTO_TEETH`
+/ `CAGE_AUTO_CONC`). Entry point `dev-docs/HANDOVER-cage-zero-click.md`;
+storia in `dev-docs/HANDOVER-cage-auto-detect.md`; banchi
+`node out/cage-study.js` e `node out/cage-fit.js`.
 
 **Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
 webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già

@@ -13,16 +13,41 @@ anello incollato a 90°, chiave di montaggio, portapezzi, la settimana
 dell'avvelenamento): `dev-docs/HANDOVER-cage-auto-detect.md`. Questo file è lo
 stato dei lavori per ripartire.
 
-**STATO AL 29/8, per chi riparte da qui**: le fette del veto degli zero, della
+**STATO AL 30/8, per chi riparte da qui**: l'IDENTIFICAZIONE
+CONTAMINATION-PROOF (leva 1) è COSTRUITA, TESTATA (988/0) e MISURATA AL BANCO —
+e il banco ha spostato la frontiera. Il meccanismo: `ellipse/comb-teeth` (il
+pettine come PRIMA MOSSA dell'identità — gap-snapping ciclico in anomalia
+eccentrica; tolleranza scalata con la campata del gap perché la deriva
+prospettica si ACCUMULA coi passi attraversati, misurato 2.70 per un gap da 3;
+riparazione guidata da Σgap=12) + `assign-marks :teeth` (24 candidati — 12
+rotazioni × 2 versi — al posto di C(12,k)·k·2: i buchi dell'anello parziale si
+leggono dai denti invece di enumerarli, e l'intruso non arriva MAI
+all'omografia perché non ha dente) + doppio tentativo per (ipotesi × faccia)
+in `auto-read` (denti gratis, enumerazione baseline sotto lo STESSO budget —
+la baseline non può peggiorare per costruzione). MA il cablaggio di produzione
+resta col gate CHIUSO (`:teeth?` off, stesso criterio del 29/8: zero falsi
+batte qualunque tasso): coi denti accesi foto 6 e 7 si REGISTRANO DAL GEMELLO
+attraverso-la-plastica (548/764mm dalla verità) — la corona ora si identifica
+A PARI MERITO su tutte e sei le facce (misurato: corona 11 su ognuna) e decide
+SOLO lo zero-indice al giudice dei pixel, che su quei frame passa esattamente
+sulla faccia del gemello (lo zero del lato vero non si vede). La frontiera,
+foto per foto (sonde al REPL, 30/8): **6/7 = arbitro del gemello per semi
+macchina (leva 2 — PROSSIMA FETTA)**; **3 = selezione** (il vero xp da 9
+dischetti non si assembla MAI in un'ipotesi — nemmeno col concentrico,
+misurato identico foto per foto e cablato dietro `:concentric?`); **2 =
+recall del detector (leva 3)**. Il pettine intanto RIFIUTA onestamente 4
+ipotesi-spazzatura su 5 (foto 6) — l'enumerazione le pagava a budget. Banco:
+`CAGE_AUTO_TEETH=1` / `CAGE_AUTO_CONC=1`. Stato 29/8 (veto zero, gomma,
+k passi, registration-verdict) qui sotto, tutto ancora valido.
+
+**STATO AL 29/8**: le fette del veto degli zero, della
 rilettura a k passi (solo DIAGNOSI: mai supplire a `:phases` — direttiva),
 dell'anti-doppioni e della gomma sono DENTRO e col gate live passato (veto: 42
 riletture contraddette sul log di Vincenzo; gomma collaudata). Il triangolino
 del palcoscenico ora giudica la gabbia col suo metro (`registration-verdict`).
 La campagna sullo zero-click ha MISURATO la frontiera (sezione «La frontiera»,
-aggiornata): il cablaggio di produzione resta 2/8 con zero falsi PER SCELTA, e
-la prossima fetta è l'IDENTIFICAZIONE CONTAMINATION-PROOF (foto 3/6/7 muoiono
-lì), poi l'arbitro del gemello per semi macchina, poi il recall. Commits della
-giornata: 2228e4a → 2f61f5b → a7cc17c → cab7375 → 332981c.
+aggiornata): il cablaggio di produzione resta 2/8 con zero falsi PER SCELTA.
+Commits della giornata: 2228e4a → 2f61f5b → a7cc17c → cab7375 → 332981c.
 
 ## Lo stato, tutto insieme
 
@@ -291,17 +316,32 @@ stata TENTATA sotto il budget). Cosa dicono:
   foto 1 e 8 (0/8). Rimossa. L'arbitro automatico del gemello resta da
   inventare.
 
-**Le prossime leve, riviste dall'audit** (in ordine):
-1. **Identificazione contamination-proof** — è QUI che muoiono foto 3/6/7:
-   `assign-marks` riceve 7–9 punti veri + 1–2 intrusi e non identifica. O si
-   fa digerire l'intruso (RANSAC dentro l'identità, o l'allineamento del
-   pettine passato come fase iniziale), o si paga l'identità UNA volta in
-   forma canonica e il raggio decide la famiglia (la leva 2 piena).
-2. **Arbitro del gemello per semi macchina** — il veto degli zero funziona coi
-   click; per l'auto serve un testimone che regga sui pixel veri (lo zero
-   RILEVATO dal detector — oggi il detector li manca spesso; o la chiralità
-   dell'indice fuori-asse, che è il suo scopo di progetto).
-3. **Recall del rilevatore** (foto 2, e +1 inlier ovunque): `cage-opts` fu
+**Le prossime leve, riviste dall'audit** (in ordine — AGGIORNATE 30/8 dopo la
+leva 1):
+1. ~~**Identificazione contamination-proof**~~ — **FATTA (30/8)**: il pettine
+   come fase iniziale dell'identità (`comb-teeth` → `assign-marks :teeth`).
+   Cosa ha INSEGNATO il banco: su foto 6 gli 8 yp veri stanno nell'ipotesi da
+   14, il pettine ne tiene 10 e l'identità li legge — corona 11 su TUTTE E SEI
+   le facce (la simmetria del gemello, ora misurata anche qui) — e a decidere
+   resta solo lo zero al giudice dei pixel, che elegge il GEMELLO (ym, 548mm;
+   foto 7 idem, 764mm). Su foto 3 invece il vero xp (9 dischetti) non entra
+   MAI intero in un'ipotesi — le migliori ne coprono 5/9 — quindi lì la
+   malattia è la SELEZIONE, non l'identità. Il gate `:teeth?` resta CHIUSO in
+   produzione finché non c'è la leva 2: due registrazioni a mezzo metro non
+   sono un tasso, sono falsi.
+2. **Arbitro del gemello per semi macchina — ORA È QUI CHE SI MUORE**
+   (foto 6/7): il veto degli zero funziona coi click; per l'auto serve un
+   testimone che regga sui pixel veri (lo zero RILEVATO dal detector — oggi il
+   detector li manca spesso; o la chiralità dell'indice fuori-asse, che è il
+   suo scopo di progetto). NB misurato: `explained` non arbitra (15-19 per il
+   gemello contro 13 delle vere — satura con le predizioni fitte), rms non
+   arbitra (5.5-6.1 contro 1.6-6.1), la guardia fisica passa su entrambi.
+3. **Selezione dell'anello povero** (foto 3, e 4/5 da riverificare): il
+   concentrico di oggi non lo fa emergere (misurato 30/8: stream identico al
+   libero su tutte le 8). Serve un'idea nuova — o un pettine che PESCHI
+   (denti noti → cerca i dischetti mancanti sulle posizioni previste), o la
+   sorella con centro più libero.
+4. **Recall del rilevatore** (foto 2, e +1 inlier ovunque): `cage-opts` fu
    tarato sulla gabbia vecchia senza pezzo dentro.
 
 E il tempo: 25–40s di UI bloccata per un rifiuto non è spedibile oltre il
@@ -318,6 +358,9 @@ ricablato quando la leva 1 (identificazione) è dentro.
   verità: pose camera a mano). Stampa per foto: candidati, seme, spiega, rms, e
   **a quanti mm atterra la camera dalla mano**. Su un rifiuto stampa la traccia
   (`:trace`) — stadio ipotesi e ogni tentativo di identità.
+  `CAGE_AUTO_TEETH=1` accende l'identità coi denti (misurato 30/8: 2 vere + 2
+  GEMELLI a 548/764 — il motivo del gate); `CAGE_AUTO_CONC=1` lo stream
+  concentrico (misurato 30/8: identico foto per foto).
 - **`CAGE_AUTO_SYNTH=1 node out/cage-auto.js`** — la scena sintetica (39
   candidati perfetti, 3 anelli): deve dare 39/39 a 0.00mm. Se la rompi, hai
   rotto la catena, non le tarature.
@@ -377,13 +420,17 @@ ricablato quando la leva 1 (identificazione) è dentro.
 
 - `src/ridley/photogrammetry/match_cage.cljs` — `read-crown` (seeded, ora con
   `:zero-picks`/`:zero-veto`), `rescue-hand-zeros` (rilettura a k passi),
-  `auto-read` (zero click), `ring-faces`, `phase-probe`
+  `auto-read` (zero click; `:teeth?` = identità coi denti, GATE chiuso in
+  produzione; `:concentric?` = stream concentrico), `ring-faces`, `phase-probe`
 - `src/ridley/photogrammetry/blob_detect.cljs` — rilevatore, `cage-opts`,
   `enclosed-frac`
 - `src/ridley/photogrammetry/match_plate.cljs` — `crown-ring-hypotheses`,
-  `assign-marks` (l'identità che auto-read riusa)
+  `assign-marks` (l'identità che auto-read riusa; opz. `:teeth` = via
+  comb-locked, 24 candidati)
 - `src/ridley/photogrammetry/ellipse.cljs` — `fit-inliers-ranked` (lo stadio
-  dove muoiono le sei rifiutate)
+  dove muoiono le rifiutate), `comb-teeth`+`gap-classify` (leva 1: denti per
+  l'identità, intrusi in panchina), `fit-concentric-ranked`, `comb-select`
+  (superato da comb-teeth, nessun chiamante)
 - `src/ridley/photogrammetry/cage.cljs` — geometria, `stick-slots`, chiave,
   `:phases`
 - `src/ridley/editor/edit_acquire.cljs` — `cage-read-and-place!` (il tasto

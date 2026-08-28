@@ -10,8 +10,10 @@
   (:require [cljs.test :refer-macros [deftest is testing async]]
             [ridley.photogrammetry.cage :as cage]
             [ridley.photogrammetry.camera :as cam]
+            [ridley.photogrammetry.ellipse :as ellipse]
             [ridley.photogrammetry.linalg :as la]
             [ridley.photogrammetry.match-cage :as mc]
+            [ridley.photogrammetry.match-plate :as mp]
             [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.blob-detect :as bd]
             [ridley.photogrammetry.synth :as synth]))
@@ -215,6 +217,134 @@
       (let [c-auto (cam/camera-center (:pose rr))
             c-true (cam/camera-center pose)
             d (la/v-norm (la/v-sub c-auto c-true))]
+        (println (str "  camera a " (.toFixed d 2) "mm dalla verità"))
+        (is (< d 5.0) (str "e la posa è quella vera (" (.toFixed d 1) "mm)"))
+        (is (pos? (:off-ring rr)) "confermata anche fuori dall'anello del seme")))))
+
+;; ── contamination: the identity must digest an intruder (zero-click lever 1) ─
+
+(defn- visible-face
+  "The face of ring `axis` whose marked side is toward the camera under `pose`."
+  [targets pose axis]
+  (let [c (cam/camera-center pose)]
+    (first (filter #(and (= axis (:axis %))
+                         (pos? (la/v-dot (:face-normal %) (la/v-sub c (:zero-obj %)))))
+                   (mc/ring-faces targets)))))
+
+(defn- contaminated-ring
+  "One ring's contaminated hypothesis under `pose`: 8 true discs of ring `axis`
+   (positions with gaps) + 2 riders ON the ring's own image ellipse at
+   half-step anomalies. Returns {:face :pts} — pts 0-7 true, 8-9 riders."
+  [targets intr pose axis]
+  (let [face (visible-face targets pose axis)
+        ring-px (mapv (fn [i] (cam/project intr pose (:obj (nth (:marks face) i))))
+                      [0 1 2 3 4 6 8 9])
+        rider-px (mapv (fn [half]
+                         (cam/project intr pose
+                                      (cage/turn-about-axis axis
+                                                            (:obj (nth (:marks face) 0))
+                                                            (* half 30.0))))
+                       [5.5 10.5])]
+    {:face face :pts (vec (concat ring-px rider-px))}))
+
+(deftest a-rider-on-the-ellipse-poisons-the-free-search-not-the-comb
+  ;; Foto 3/6/7's disease, synthesized: a ring hypothesis of 8 true discs (with
+  ;; gaps) + 2 riders ON the ring's own image ellipse (points of the cage that
+  ;; ride the conic at half-step anomalies — the audited shape of the
+  ;; contaminated supersets). assign-marks must explain EVERY click as a mark,
+  ;; so the free search hands the riders to the homography and least squares
+  ;; spreads the damage (PREMISE, asserted). The comb's teeth leave the riders
+  ;; off the correspondences entirely, and the same identity closes on the
+  ;; truth — at 24 candidates instead of C(12,10)·10·2.
+  ;;
+  ;; Framed like the bench frames it (~640mm from the cage). From the CLOSE
+  ;; test eye (320mm — ring X seen from 150mm off its own plane) the comb's
+  ;; affine argument itself breaks: perspective drifts the anomaly GAPS past a
+  ;; quarter tooth. That limit is printed, not asserted — auto-read survives
+  ;; it because the baseline enumeration still runs beside the teeth.
+  (println "\n=== gabbia: l'intruso sull'ellisse avvelena la ricerca libera, non il pettine ===")
+  (let [{:keys [targets intr pose]} (setup (mapv #(* 2.0 %) eye))
+        cands (scene nil targets intr pose)
+        judge (fn [px _r] (boolean (some (fn [[u v]]
+                                           (< (Math/hypot (- u (first px)) (- v (second px))) 4.0))
+                                         cands)))
+        {:keys [face pts]} (contaminated-ring targets intr pose :x)
+        base {:disc-r 1.25 :face-normal (:face-normal face)}
+        free (mp/assign-marks pts (:marks face) (:zero-obj face) intr judge base)
+        ct (ellipse/comb-teeth pts (vec (range (count pts))) 12)
+        ids (vec (sort (keys (:teeth ct))))
+        combed (when ct
+                 (mp/assign-marks (mapv pts ids) (:marks face) (:zero-obj face) intr judge
+                                  (assoc base :teeth (mapv (:teeth ct) ids))))]
+    (println (str "  ricerca libera sui 10 punti: "
+                  (if free (str "corona " (:crown-hits free) " · zero " (:zero-hit? free))
+                      "niente")))
+    (println (str "  pettine: " (when ct (str (count (:teeth ct)) " denti, intrusi "
+                                              (pr-str (:riders ct))))
+                  " · identità coi denti: "
+                  (when combed (str "corona " (:crown-hits combed)
+                                    " · zero " (:zero-hit? combed)))))
+    (is (not (and free (:zero-hit? free) (>= (:crown-hits free) 8)))
+        "PREMESSA: con gli intrusi dentro, la ricerca libera non arriva all'asticella")
+    (is (some? ct) "il pettine legge l'ipotesi contaminata")
+    (when ct
+      (is (= 8 (count (:teeth ct))) "otto denti: i punti veri")
+      (is (= #{8 9} (set (:riders ct))) "e i due intrusi in panchina"))
+    (is (and combed (:zero-hit? combed) (>= (:crown-hits combed) 8))
+        "coi denti l'identità chiude sopra l'asticella")
+    (when combed
+      (let [d (la/v-norm (la/v-sub (cam/camera-center (:pose combed))
+                                   (cam/camera-center pose)))]
+        (println (str "  camera a " (.toFixed d 2) "mm dalla verità"))
+        (is (< d 5.0) (str "e la posa è quella vera (" (.toFixed d 1) "mm)"))))
+    ;; the measured limit, on the record: the same ring from the close eye
+    (let [{:keys [pose intr targets]} (setup eye)
+          {:keys [pts]} (contaminated-ring targets intr pose :x)
+          close (ellipse/comb-teeth pts (vec (range (count pts))) 12)]
+      (println (str "  dall'occhio ravvicinato (320mm, anello X a 150mm dal suo piano): "
+                    (if (and close (= 8 (count (:teeth close)))
+                             (= #{8 9} (set (:riders close))))
+                      "il pettine REGGE — il limite è caduto, promuovi ad asserzione"
+                      (str "il pettine sbanda ("
+                           (when close (str (count (:teeth close)) " denti, intrusi "
+                                            (pr-str (:riders close))))
+                           ") — limite misurato, il fallback enumerativo lo copre")))))))
+
+(deftest auto-read-digests-contaminated-hypotheses
+  ;; End-to-end WITH `:teeth?` on (the lever-1 mechanism — gated off in
+  ;; production until the twin arbiter exists, see auto-read): every visible
+  ;; ring's ellipse carries two riders (so every hypothesis the search
+  ;; surfaces is a contaminated superset — the bench's real shape), plus
+  ;; scattered junk. Zero clicks. The read must still land on the truth: the
+  ;; comb benches the riders before the identity ever sees them.
+  (println "\n=== gabbia: lettura senza click su ipotesi contaminate ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        base (scene nil targets intr pose)
+        riders (vec (for [axis [:x :y :z]
+                          :let [face (visible-face targets pose axis)]
+                          :when face
+                          half [5.5 8.5]
+                          :let [px (cam/project intr pose
+                                                (cage/turn-about-axis axis
+                                                                      (:obj (nth (:marks face) 0))
+                                                                      (* half 30.0)))]
+                          :when px]
+                      px))
+        junk [[300.0 300.0] [2500.0 3600.0] [500.0 3500.0] [1600.0 400.0]]
+        cands (vec (concat base riders junk))
+        judge (fn [px _r] (boolean (some (fn [[u v]]
+                                           (< (Math/hypot (- u (first px)) (- v (second px))) 4.0))
+                                         cands)))
+        rr (mc/auto-read cands targets intr judge marks {:disc-r 1.25 :teeth? true})]
+    (println (str "  " (count base) " candidati veri + " (count riders) " intrusi sulle ellissi + "
+                  (count junk) " spazzatura · "
+                  (if rr (str "seme " (name (:axis (:seed rr)))
+                              " · spiega " (:explained rr)
+                              " · rms " (.toFixed (:rms-px rr) 2))
+                      "RIFIUTATA")))
+    (is (some? rr) "la gabbia contaminata si legge lo stesso")
+    (when rr
+      (let [d (la/v-norm (la/v-sub (cam/camera-center (:pose rr)) (cam/camera-center pose)))]
         (println (str "  camera a " (.toFixed d 2) "mm dalla verità"))
         (is (< d 5.0) (str "e la posa è quella vera (" (.toFixed d 1) "mm)"))
         (is (pos? (:off-ring rr)) "confermata anche fuori dall'anello del seme")))))

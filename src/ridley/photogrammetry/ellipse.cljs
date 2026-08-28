@@ -433,3 +433,125 @@
          best (or (when (and sel2 (>= (count sel2) keep-floor)) sel2)
                   (when (and sel1 (>= (count sel1) keep-floor)) sel1))]
      (or best idxs))))
+
+(def ^:private long-gap-frac
+  "Off-integer tolerance for a gap spanning TWO OR MORE steps, as a fraction of
+   one step. The perspective drift of the eccentric anomaly ACCUMULATES with
+   the steps a gap crosses (measured on the projected cage, bench framing
+   ~640mm: one-step gaps land within ±0.17 of integer while a three-step gap
+   reads 2.70), so a single quarter-tooth tolerance either strangles long gaps
+   or lets riders through short ones — it must scale with the span. 0.45 is
+   the ceiling that keeps rounding itself meaningful (at 0.5 the nearest
+   integer is undefined), and an exact half-step rider gap (1.5, 2.5, …) sits
+   AT 0.5, so it is flagged at any span. Long gaps lean on the sum check
+   below for the rest."
+  0.45)
+
+(defn- gap-classify
+  "Cyclic integer GAP snapping: `entries` [{:idx :t} …] (t = eccentric
+   anomaly) → the on-tooth subset with RELATIVE tooth positions
+   [{:idx :t :tooth} …], or nil when it cannot converge above `min-teeth`.
+
+   Gaps, not absolute positions, and it is measured, not taste: perspective's
+   residue over the affine argument is a SMOOTH drift δ(t) of each point's
+   anomaly, and at a close framing (the cage test view, 320mm from a 176mm
+   cage) it grows past a quarter tooth — a global comb phase misfiled two true
+   points and promoted a rider. The drift's DIFFERENCES stay small where its
+   accumulation does not: consecutive true marks sit a near-integer number of
+   steps apart even when neither sits near an absolute tooth, and a rider
+   betrays itself by splitting one integer gap into two half-integer ones.
+
+   Greedy: while any gap is off-integer (beyond `tooth-frac` of a step for a
+   one-step gap, `long-gap-frac` for a longer span) or zero (two claimants on
+   one tooth — the through-plastic double, measured proposing both faces onto
+   one pixel), drop the point whose adjacent gaps are jointly worst and
+   re-close the cycle. On convergence the rounded gaps must sum to exactly n
+   — the angles sum to a full turn, so the roundings must too; when they do
+   not and nothing is over tolerance, the most fractional point is the
+   suspect and is dropped (a rider's half-steps are where the missing count
+   hides). A set that never closes the count is refused, not patched: the
+   caller has an enumeration fallback, and a guessed rounding would hand the
+   identity a poisoned correspondence dressed as a clean one."
+  [entries n tooth-frac min-teeth]
+  (let [spacing (/ (* 2.0 Math/PI) n)
+        ferr (fn [r] (Math/abs (- r (Math/round r))))]
+    (loop [es (vec (sort-by :t entries))]
+      (let [k (count es)]
+        (when (>= k min-teeth)
+          (let [rs (mapv (fn [i]
+                           (let [g (- (:t (nth es (mod (inc i) k))) (:t (nth es i)))
+                                 g (if (neg? g) (+ g (* 2.0 Math/PI)) g)]
+                             (/ g spacing)))
+                         (range k))
+                gap-bad? (fn [i]
+                           (let [r (nth rs i)
+                                 m (Math/round r)]
+                             (or (zero? m)
+                                 (> (ferr r) (if (>= m 2) long-gap-frac tooth-frac)))))
+                badness (fn [j]
+                          (let [pre (mod (dec j) k)]
+                            (+ (ferr (nth rs pre)) (ferr (nth rs j))
+                               (if (zero? (Math/round (nth rs j))) 0.5 0.0)
+                               (if (zero? (Math/round (nth rs pre))) 0.5 0.0))))
+                drop-worst (fn []
+                             (let [worst (apply max-key badness (range k))]
+                               (vec (concat (subvec es 0 worst)
+                                            (subvec es (inc worst) k)))))]
+            (cond
+              (some gap-bad? (range k))
+              (recur (drop-worst))
+
+              (= n (reduce + (map #(Math/round %) rs)))
+              (loop [i 0 tooth 0 out []]
+                (if (>= i k)
+                  out
+                  (recur (inc i) (+ tooth (Math/round (nth rs i)))
+                         (conj out (assoc (nth es i) :tooth tooth)))))
+
+              :else
+              (recur (drop-worst)))))))))
+
+(defn comb-teeth
+  "The comb as the IDENTITY's opening move (zero-click lever 1, 2026-08-29
+   audit): each index in `idxs` classified onto a TOOTH of the N-tooth comb in
+   eccentric anomaly — an integer cyclic position on the crown, relative, the
+   rotation being the identity search's to enumerate — or set aside as a
+   rider. Returns {:teeth {idx tooth} :riders [idx …]}, or nil when no ellipse
+   fits or fewer than `:min-teeth` points survive `gap-classify`.
+
+   Why this exists when comb-select already strips riders: identification was
+   still paying C(m,k) to rediscover WHICH crown positions the survivors are —
+   and one rider that slipped through poisoned every homography of the search
+   (assign-marks must explain EVERY click as a mark; foto 3/6/7 of the bench
+   die exactly there). The tooth index answers the subset question outright:
+   the assignment search collapses to m rotations × 2 handednesses, and a
+   rider is never in it because it never earned a tooth.
+
+   Two passes, same reason as comb-select: the first ellipse is fit on the
+   mixture and its riders drag it, so the second refits on the survivors and
+   reclassifies the FULL set against the cleaner curve — reclaiming a true
+   point the polluted fit had misplaced."
+  ([pts idxs n] (comb-teeth pts idxs n nil))
+  ([pts idxs n {:keys [tooth-frac min-teeth] :or {tooth-frac 0.25 min-teeth 6}}]
+   (let [classify
+         (fn [fit-idxs]
+           (let [sub (mapv #(nth pts %) fit-idxs)]
+             (when (>= (count sub) 5)
+               (let [{:keys [np cx cy s]} (norm-of sub)
+                     params (some-> (conic-lsq np) ellipse-params)]
+                 (when params
+                   (let [entries (mapv (fn [idx]
+                                         (let [[x y] (nth pts idx)]
+                                           {:idx idx
+                                            :t (anomaly params [(* s (- x cx))
+                                                                (* s (- y cy))])}))
+                                       idxs)]
+                     (gap-classify entries n tooth-frac min-teeth)))))))
+         pass1 (classify idxs)
+         pass2 (when (and pass1 (>= (count pass1) 5) (< (count pass1) (count idxs)))
+                 (classify (mapv :idx pass1)))
+         kept (or pass2 pass1)]
+     (when kept
+       (let [teeth (into {} (map (juxt :idx :tooth)) kept)]
+         {:teeth teeth
+          :riders (vec (remove #(contains? teeth %) idxs))})))))

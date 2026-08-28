@@ -170,9 +170,23 @@
         ;; one was never measured (a grabbed frame has no EXIF)
         focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
                   (get-in state [:focal :mm] 48.0))
+        ;; CAGE_AUTO_CONC=1: the centre-pinned concentric hypothesis stream
+        ;; (ellipse/fit-concentric-ranked) instead of the free RANSAC — the
+        ;; enriched stream the 2026-08-29 audit measured surfacing the sparse
+        ;; rings inside contaminated supersets. Behind an env because its
+        ;; production wiring is decided HERE, by these numbers.
+        conc? (boolean (aget (.-env js/process) "CAGE_AUTO_CONC"))
+        ;; CAGE_AUTO_TEETH=1: the comb-locked identity (zero-click lever 1).
+        ;; Off = the production wiring. On (2026-08-30): foto 6 e 7 REGISTER
+        ;; from the through-plastic twin (548/764mm out) because only the
+        ;; twin's zero passes the pixel judge — the measured reason the gate
+        ;; stays closed until the twin arbiter (lever 2) exists.
+        teeth? (boolean (aget (.-env js/process) "CAGE_AUTO_TEETH"))
         score (atom {:ok 0 :none 0 :far 0})]
     (println (str "\n=== auto-read (zero click) su battiscopa: " (count files)
-                  " foto · focale della sessione " (fmt focal 1) "mm ==="))
+                  " foto · focale della sessione " (fmt focal 1) "mm"
+                  (when conc? " · ipotesi CONCENTRICHE")
+                  (when teeth? " · identità COI DENTI") " ==="))
     (letfn [(step [i]
               (if (>= i (count files))
                 (let [{:keys [ok none far]} @score]
@@ -194,7 +208,8 @@
                              judge (fn [px r] (blob/disc-at? lum-at px r))
                              tr (atom [])
                              rr (mc/auto-read cands targets intr judge 12
-                                              {:disc-r disc-r :trace tr})
+                                              {:disc-r disc-r :trace tr
+                                               :concentric? conc? :teeth? teeth?})
                              ms (- (.now js/Date) t0)
                              truth (solver-camera state i)]
                          (when (aget (.-env js/process) "CAGE_AUTO_RECALL")
