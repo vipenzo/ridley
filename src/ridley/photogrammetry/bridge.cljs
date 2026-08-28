@@ -20,7 +20,8 @@
   (:require [ridley.math :as m]
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.box-fit :as bf]
-            [ridley.photogrammetry.linalg :as la]))
+            [ridley.photogrammetry.linalg :as la]
+            [ridley.photogrammetry.pnp :as pnp]))
 
 (defn box-basis
   "{:ex :ey :ez} — world-space orthonormal basis of the box's own local axes
@@ -361,3 +362,66 @@
                    (+ (* dx dx) (* dy dy)))
                  js/Infinity))]
     (apply min-key cost (klein-images camera-pose proxy-pose))))
+
+;; ── per-photo registration quality: the stage's ✓/⚠ flag ─────────────────────
+
+(def poor-registration-px
+  "Above this per-photo PnP rms a PLATE (or box) photo reprojects visibly off,
+   so points clicked on it are worth less. Measured on param-plate-paper: ~4-5px
+   on the turntable ring, 1.4px looking straight down, 9-11px on the two grazing
+   shots. The gap is wide and 8px sits in it. A CAGE is judged by its own bar
+   instead — see registration-verdict."
+  8.0)
+
+(def grazing-deg
+  "Below this elevation above the plate's marked face a photo counts as GRAZING.
+   Measured across a whole session, the reprojection rms tracks elevation and
+   nothing else: 84° → 1.4px, ~39° (the ring) → 4.2-5.2px, 19° → 9.4px,
+   15° → 10.7px. That is the signature of a systematic camera-model error (an
+   imperfect focal, unmodelled radial distortion), which a fronto-parallel plane
+   absorbs into its distance and an oblique one cannot — not of sloppy clicking.
+   Worth separating, because the advice is the opposite: on a grazing photo
+   re-clicking does NOT help."
+  25.0)
+
+(defn registration-verdict
+  "What is wrong with one photo's registration, or nil when nothing is — the
+   decision behind the stage's per-photo ✓/⚠ flag, pure so the bench can hold
+   it still. `kind` is :plate, :cage or :box; `rms-px` the recorded per-photo
+   fit (nil when never solved); `behind?` whether the camera sits behind the
+   plate's marked face; `elevation-deg` the camera's elevation over that face.
+
+     → :flipped   the camera is behind the marked face — impossible, re-register
+       :grazing   correct but looser, shot nearly in the plate's plane
+       :loose     rms above the target's own bar with no such excuse
+       nil        nothing wrong
+
+   The rules were the PLATE's, and gating them on the target kind is the whole
+   point. Vincenzo (2026-08-29), on a cage session: «le foto dalla 2 in avanti
+   sono flaggate col triangolino — sembrano corrette», and they WERE. Three
+   plate assumptions were being applied to a cage because the stage's 'is a
+   plate' test was 'has named anchors', which a cage satisfies:
+   - :flipped is the planar mirror twin, real only for a single marked face. A
+     cage carries marks on BOTH faces of three orthogonal rings and is
+     photographed from all around ON PURPOSE — measured on the battiscopa
+     session, photo 3 sat at rms 7.7px, clean, and was branded impossible for
+     being 6mm past the model's +Z plane.
+   - :grazing needs a marked plane to graze; a cage has none (for ANY viewing
+     direction some ring faces the camera at ≥35° — cage.cljs, WHY THREE RINGS).
+   - the rms bar is the target's own: 8px for a plate (sub-pixel snaps on
+     4032px photos), but the solver's acceptance bar (pnp/accept-rms-px, 12)
+     for a cage — live-grab cage sessions sit at 5-12px over ~20px of physical
+     model slop (mid-ring planarity, per-mounting phases), so the plate's bar
+     flags photos that are healthy by the cage's own standard.
+   So for a :cage, `behind?` and `elevation-deg` are ignored whatever they say."
+  [{:keys [kind rms-px behind? elevation-deg]}]
+  (if (and (= kind :plate) behind?)
+    ;; not gated on a recorded rms: an impossible pose is impossible whether or
+    ;; not this photo ever recorded one
+    :flipped
+    (when rms-px
+      (cond
+        (<= rms-px (if (= kind :cage) pnp/accept-rms-px poor-registration-px)) nil
+        ;; an unknown elevation earns no excuse — fall through to :loose
+        (and (= kind :plate) elevation-deg (< elevation-deg grazing-deg)) :grazing
+        :else :loose))))

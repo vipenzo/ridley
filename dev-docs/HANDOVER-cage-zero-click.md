@@ -122,7 +122,18 @@ stato dei lavori per ripartire.
   che una gabbia ha — e nel gate ha agganciato 1 marker in più; la sua
   guardia interna `claimed` (mezzo passo dal vicino predetto) è la terza
   gamba della difesa anti-doppioni, e il culling per-anchor le mostra una
-  faccia sola per anello.
+  faccia sola per anello. LA STESSA TRAPPOLA («ha anchors» ≠ «è un piatto»)
+  viveva nel PALCOSCENICO e l'ha trovata Vincenzo il 29/8 (`edit-edge-mark`
+  su sessione gabbia: «le foto dalla 2 in avanti sono flaggate col
+  triangolino — sembrano corrette», ed erano corrette): il test
+  camera-dietro-la-faccia bollava «mal registrata» mezza gabbia sana (foto 3
+  del banco: rms 7.7px, ⚠ per stare 6mm oltre il piano Z del modello) e la
+  soglia era gli 8px del piatto invece dei 12 della gabbia. CHIUSA lo stesso
+  giorno: `bridge/registration-verdict` (pura, testata coi numeri del banco)
+  giudica per specie — la gabbia solo dalla SUA asticella, mai
+  :flipped/:grazing — e nel palcoscenico ogni assunzione solo-piatto passa
+  da `plate-stage?` (piatto E non gabbia), scorciatoia del piano parallelo
+  compresa. Direttiva collegata: la gabbia è la via principale.
 
   Il workaround «rendi dominante l'anello conteso» NON è bastato: la
   lettura seminata dall'anello Y pieno (13 click, zero incluso) ha DICHIARATO

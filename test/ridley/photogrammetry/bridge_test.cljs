@@ -228,3 +228,47 @@
         (is (< (Math/abs (- 1.0 (m/magnitude (:face-normal det)))) 1e-9) "unit normal")))
     (testing "a mesh without a :zero anchor (a box, or a plate lacking one) → nil"
       (is (nil? (bridge/plate-detect (update mesh :anchors dissoc :zero)))))))
+
+;; ── registration-verdict: the stage's ✓/⚠ flag, held to the target kind ──────
+
+(deftest registration-verdict-judges-each-target-by-its-own-rules
+  ;; The plate's rules applied to a cage flagged healthy photos (Vincenzo
+  ;; 2026-08-29: «le foto dalla 2 in avanti sono flaggate col triangolino —
+  ;; sembrano corrette», and they were). The numbers below are the battiscopa
+  ;; hand session's own, read from its acquire-state.
+  (testing "piatto: le regole storiche restano identiche"
+    (is (= :flipped (bridge/registration-verdict
+                     {:kind :plate :rms-px 2.0 :behind? true :elevation-deg 80}))
+        "camera dietro la faccia = impossibile, anche a rms pulito")
+    (is (= :flipped (bridge/registration-verdict
+                     {:kind :plate :rms-px nil :behind? true}))
+        "e anche senza un rms registrato")
+    (is (nil? (bridge/registration-verdict
+               {:kind :plate :rms-px 4.5 :behind? false :elevation-deg 40}))
+        "sotto gli 8px: sana")
+    (is (= :grazing (bridge/registration-verdict
+                     {:kind :plate :rms-px 9.4 :behind? false :elevation-deg 19}))
+        "sopra gli 8px ma radente: è l'angolo, non i click")
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :plate :rms-px 9.4 :behind? false :elevation-deg 40}))
+        "sopra gli 8px senza scusa: i click sono il sospetto")
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :plate :rms-px 9.4 :behind? false :elevation-deg nil}))
+        "un'elevazione ignota non compra la scusa"))
+  (testing "gabbia: giudicata SOLO dalla sua asticella (12px), mai dalla faccia"
+    (is (nil? (bridge/registration-verdict
+               {:kind :cage :rms-px 7.7 :behind? true :elevation-deg -2}))
+        "foto 3 del battiscopa: 7.7px, camera 6mm oltre il piano Z — sana, non 'ribaltata'")
+    (is (nil? (bridge/registration-verdict
+               {:kind :cage :rms-px 10.7 :behind? false :elevation-deg 10}))
+        "10.7px è sopra l'asticella del piatto e sotto quella della gabbia")
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :cage :rms-px 13.8 :behind? true :elevation-deg 10}))
+        "foto 0 del battiscopa: 13.8px è lasca anche per la gabbia — e mai :flipped/:grazing")
+    (is (nil? (bridge/registration-verdict {:kind :cage :rms-px nil :behind? true}))
+        "mai registrata: niente da dire, non un triangolo"))
+  (testing "box: come prima — solo l'asticella del piatto, niente scuse"
+    (is (nil? (bridge/registration-verdict {:kind :box :rms-px 7.0 :behind? false})))
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :box :rms-px 9.0 :behind? false :elevation-deg 10}))
+        "l'elevazione non esiste per un box: niente :grazing")))

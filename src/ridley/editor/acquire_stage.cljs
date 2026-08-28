@@ -1087,31 +1087,29 @@
   (update-toolbar!))
 
 ;; ---- registration quality of a photo (read from acquire-state.json) ----
+;; The thresholds and the ✓/⚠ decision live in bridge/registration-verdict,
+;; pure, where the bench can hold them still.
 
-(def ^:private poor-registration-px
-  "Above this per-photo PnP rms, what is drawn in the world reprojects visibly
-   off on this photo, so points clicked on it are worth less. Measured on
-   param-plate-paper: ~4-5 px on the turntable ring, 1.4 px looking straight
-   down, 9-11 px on the two grazing shots. The gap is wide and 8 px sits in it."
-  8.0)
-
-(def ^:private grazing-deg
-  "Below this elevation above the plate's marked face a photo counts as GRAZING.
-   Measured across a whole session, the reprojection rms tracks elevation and
-   nothing else: 84° → 1.4 px, ~39° (the ring) → 4.2-5.2 px, 19° → 9.4 px,
-   15° → 10.7 px. That is the signature of a systematic camera-model error (an
-   imperfect focal, unmodelled radial distortion), which a fronto-parallel plane
-   absorbs into its distance and an oblique one cannot — not of sloppy clicking.
-   Worth separating, because the advice is the opposite: on a grazing photo
-   re-clicking does NOT help."
-  25.0)
+(defn- plate-stage?
+  "True when the stage's proxy is a registration PLATE proper — NOT a cage.
+   `:plate?` is anchor-based ('carries named marks'), and a cage carries them
+   too, so every plate-only assumption gated on `:plate?` alone was firing on
+   cage sessions: the marked-face flip test branded half of a cage's healthy
+   photos 'mal registrata' (a cage is photographed from all around on purpose),
+   the plate's 8px bar flagged photos the cage's own solver accepts, and the
+   one-click plate-parallel plane shortcut offered a plane parallel to nothing
+   physical (Vincenzo 2026-08-29: «le foto dalla 2 in avanti sono flaggate col
+   triangolino — sembrano corrette», and they were)."
+  []
+  (and (:plate? @stage) (not (:cage? @stage))))
 
 (defn- camera-elevation-deg
   "Degrees photo `idx`'s camera sits ABOVE the plane of the marked face: 90° is
    straight down on the plate, 0° is in its plane, negative is behind it.
-   Plate-only — a box has no single marked plane. nil when unknown."
+   Plate-only (and NOT cage: a cage has no single marked plane to be above).
+   nil when unknown."
   [idx]
-  (when (:plate? @stage)
+  (when (plate-stage?)
     (let [{:keys [position heading]} (:emit-pose @stage)
           cam (get-in @stage [:camera-poses idx :position])]
       (when (and cam heading position)
@@ -1137,36 +1135,27 @@
 
    Measured on param-plate-paper: photo 9 (rms 12.26, 10 marks of 12) has its
    camera at cos −0.26 from the marked normal, while every other photo sits
-   between +0.33 and +0.99."
+   between +0.33 and +0.99.
+
+   PLATE proper only: a cage carries marks on both faces of three rings and is
+   photographed from all around — 'behind' does not exist for it."
   [idx]
-  (when (:plate? @stage)
+  (when (plate-stage?)
     (let [{:keys [position heading]} (:emit-pose @stage)
           cam (get-in @stage [:camera-poses idx :position])]
       (when (and cam heading position)
         (neg? (m/dot (m/normalize heading) (m/v- cam position)))))))
 
 (defn- registration-trouble
-  "What is wrong with photo `idx`'s registration, or nil when nothing is:
-
-     :flipped  the camera is behind the marked face — impossible, re-register;
-     :grazing  correct but looser, because the shot is nearly in the plate's
-               plane (see grazing-deg);
-     :loose    a high rms with no such excuse, so the clicks are the suspect.
-
-   Kept apart because the advice is opposite: :loose says re-click, :grazing
-   says re-clicking will not help and the photo is fine to work from, just not
-   to measure from."
+  "What is wrong with photo `idx`'s registration, or nil when nothing is —
+   :flipped / :grazing / :loose. The decision table (and why a cage is judged
+   only by its own rms bar) lives in bridge/registration-verdict, pure."
   [idx]
-  (if (behind-plate? idx)
-    ;; not gated on a registration record: an impossible pose is impossible
-    ;; whether or not this photo ever recorded an rms.
-    :flipped
-    (when-let [{:keys [rms-px]} (registration-of idx)]
-      (cond
-        (<= rms-px poor-registration-px) nil
-        ;; an unknown elevation earns no excuse — fall through to :loose
-        (when-let [e (camera-elevation-deg idx)] (< e grazing-deg)) :grazing
-        :else :loose))))
+  (bridge/registration-verdict
+   {:kind (cond (:cage? @stage) :cage (:plate? @stage) :plate :else :box)
+    :rms-px (:rms-px (registration-of idx))
+    :behind? (behind-plate? idx)
+    :elevation-deg (camera-elevation-deg idx)}))
 
 (defn- poorly-registered? [idx]
   (some? (registration-trouble idx)))
@@ -1194,10 +1183,11 @@
 
 (defn- enough-points?
   "Whether 'Crea il piano' can fire: three triangulated points, or the single
-   declared one of the plate-parallel shortcut."
+   declared one of the plate-parallel shortcut (plate proper — a cage carries
+   no physical reference plane for the shortcut to be parallel to)."
   []
   (let [n (count (fitted-points))]
-    (or (>= n 3) (and (= n 1) (:plate? @stage)))))
+    (or (>= n 3) (and (= n 1) (plate-stage?)))))
 
 (defn- hud-el [] (.getElementById js/document "eaq-plane-hud"))
 
@@ -1897,7 +1887,7 @@
         ;; vertical face a mark turned 90° from the axis (Vincenzo 2026-08-01:
         ;; 'l'up deve essere l'asse del turntable'), because on such a face the
         ;; across-the-disc hint is perfectly usable and won.
-        hints (if (:plate? @stage)
+        hints (if (plate-stage?)
                 [(:heading emit) (:up emit)]
                 [(:up emit) (:heading emit)])
         mark (cond
@@ -1908,8 +1898,9 @@
                ;; plate — an object standing on the turntable, its upper face
                ;; level. The plate's own axis supplies the normal; the click only
                ;; fixes the height. Plate proxies only: a box's heading is its
-               ;; front face, which says nothing about what the object rests on.
-               (and (= 1 (count pts)) (:plate? @stage))
+               ;; front face, which says nothing about what the object rests on —
+               ;; and a cage's says even less, it hangs AROUND the part.
+               (and (= 1 (count pts)) (plate-stage?))
                (let [n (:heading emit)
                      n (if (and toward (neg? (m/dot n (m/v- toward (first pts)))))
                          (m/v* n -1.0) n)]
@@ -1918,7 +1909,7 @@
                :else nil)]
     (if (nil? mark)
       (say! (str "servono 3 punti triangolati (ne hai " (count pts) ")"
-                 (when (:plate? @stage)
+                 (when (plate-stage?)
                    ", oppure 1 solo se la zona è parallela al piatto")
                  (when (>= (count pts) 3)
                    " — i punti sono quasi allineati, non definiscono un piano")))
@@ -2357,7 +2348,7 @@
    across the disc."
   []
   (let [emit (:emit-pose @stage)]
-    (if (:plate? @stage)
+    (if (plate-stage?)
       [(:heading emit) (:up emit)]
       [(:up emit) (:heading emit)])))
 
@@ -3627,7 +3618,11 @@
                          ;; — its axis is a usable 'the object rests on
                          ;; this' normal, which unlocks the one-click
                          ;; plane-mark case. A box's heading is not.
-                         :plate? (boolean (seq (:anchors proxy)))})))))))
+                         ;; A CAGE carries named marks too, so :plate? alone
+                         ;; cannot gate the plate-only assumptions — see
+                         ;; plate-stage?.
+                         :plate? (boolean (seq (:anchors proxy)))
+                         :cage? (boolean (:cage-d proxy))})))))))
 
 (defn after-eval!
   "Post-eval hook (mirrors modal/requested?→enter!): run AFTER refresh-viewport!.
@@ -3647,6 +3642,7 @@
                               :emit-pose (:emit-pose pending)
                               :dims (:dims pending)
                               :plate? (:plate? pending)
+                              :cage? (:cage? pending)
                               :source-marks (:marks pending)
                               :source-edges (:edges pending)
                               :camera-poses {}
@@ -3684,6 +3680,7 @@
       (do (swap! stage merge {:emit-pose (:emit-pose pending)
                               :dims (:dims pending)
                               :plate? (:plate? pending)
+                              :cage? (:cage? pending)
                               :source-marks (:marks pending)
                               :source-edges (:edges pending)
                               :pending nil})
