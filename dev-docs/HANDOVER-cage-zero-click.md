@@ -184,6 +184,21 @@ on-solve-pnp!). E il veto è a testimoni: su un frame dove l'indice del seme
 non è rilevato non protegge — lì la difesa resta camera-dietro + il
 consiglio del secondo anello.
 
+**Quinto giro live (29/8 notte, sessione NUOVA battiscopa3 — il pezzo si era
+spostato nella gabbia)**: TERZA morsicatura della trappola della focale — la
+sessione nuova riparte dal default 48 (stessa camera da 44 misurata due
+volte!) e tutto degrada a cascata: fit 14px, sette proposte spazzate a mano
+con 'o', snap che aggancia il vicino a 72px, «Z SPECCHIATO» d'artefatto e il
+flip-twin su foto 2 (rifiutato camera-dietro, coi soliti nomi rinominati).
+FIX: `cage-obs-focal-ok?` — a lente non misurata (`:focal-source :default`)
+niente accumulo di osservazioni, niente diagnosi di montaggio e niente
+arbitrato (le obs sono geometria di slot: sotto la lente sbagliata mentono,
+misurato tre volte). FETTA IN CODA, ad alto rendimento: **memoria per-camera
+della focale** — la sessione conosce l'etichetta della camera («Fotocamera di
+Vincenzo Piombo's iPhone», C922…) e la 44.07 era già stata misurata in
+battiscopa2; un archivio {camera → focale misurata} in ~/.ridley/ semina le
+sessioni nuove e questa trappola muore per sempre.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

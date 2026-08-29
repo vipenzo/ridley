@@ -2730,11 +2730,23 @@
 ;; session's own HAND registrations. In-memory only, like :pnp?: a reloaded
 ;; session rebuilds it as photos are read.
 
+(defn- cage-obs-focal-ok?
+  "Index observations are slot GEOMETRY, and slot geometry under an unmeasured
+   lens lies: at the default 48 on a 44mm camera the Z index read the MIRROR
+   family in BOTH live sessions that started cold (28-29/8), raising false
+   RIBALTATO/GEMELLO alarms that evaporated the moment the lens was measured.
+   Third time was battiscopa3's opening night. No vote, no mounting diagnosis
+   and no mounting arbitration until the lens has a real source — EXIF, live
+   measure, refinement, or the user's own hand on the slider."
+  []
+  (not (contains? #{:default nil} (:focal-source @session))))
+
 (defn- remember-cage-mounting!
   "Store one photo's index observations — every accepted cage reading measures
-   the mounting, hand-seeded or machine."
+   the mounting, hand-seeded or machine. Refuses them at an unmeasured lens
+   (`cage-obs-focal-ok?`)."
   [idx obs]
-  (when (seq obs)
+  (when (and (seq obs) (cage-obs-focal-ok?))
     (swap! session assoc-in [:cage-mounting-obs idx] obs)))
 
 (defn- session-cage-mounting
@@ -2896,7 +2908,12 @@
                                                         (assoc blob-detect/cage-opts :rgba data))
                         judge (fn [px r] (blob/disc-at? lum-at px r))
                         disc-r (or (:mark-disc-r (:proxy-mesh @session)) 1.25)
-                        mounting (session-cage-mounting idx)
+                        ;; no arbitration at an unmeasured lens: the stored
+                        ;; vote is trusted, but the observations THIS read
+                        ;; would judge by are being measured NOW, under the
+                        ;; current focal
+                        mounting (when (cage-obs-focal-ok?)
+                                   (session-cage-mounting idx))
                         rr (match-cage/auto-read (mapv :center cands) targets k
                                                  judge marks
                                                  {:disc-r disc-r
@@ -2944,7 +2961,8 @@
                                      (name (:axis (:phase-suspect rr)))
                                      " sembra incollato girato di "
                                      (.toFixed (:deg (:phase-suspect rr)) 0) "°"))
-                              (cage-mounting-suffix mounting (:index-obs rr))))
+                              (when mounting
+                                (cage-mounting-suffix mounting (:index-obs rr)))))
                         (on-solve-pnp!))))))
                (.catch (fn [e]
                          (say! (str "Lettura automatica fallita: " (str e)))))))
@@ -2974,8 +2992,10 @@
                                                  ;; flip-face twin renamed
                                                  ;; correct picks on a starved
                                                  ;; frame the session knew
-                                                 ;; better about)
-                                                 :mounting (session-cage-mounting idx)})]
+                                                 ;; better about) — but never at
+                                                 ;; an unmeasured lens
+                                                 :mounting (when (cage-obs-focal-ok?)
+                                                             (session-cage-mounting idx))})]
                  (cond
                    (nil? res)
                    (say!
@@ -3041,9 +3061,10 @@
                            ;; side (misurato 30/8: foto 1 della sessione-verità
                            ;; era registrata A MANO dal gemello, e a dirlo sono
                            ;; state le altre cinque)
-                           wit-obs (when-let [fp (:pose (:full res))]
-                                     (:obs (match-cage/index-witness targets cands k
-                                                                     fp marks {})))
+                           wit-obs (when (cage-obs-focal-ok?)
+                                     (when-let [fp (:pose (:full res))]
+                                       (:obs (match-cage/index-witness targets cands k
+                                                                       fp marks {}))))
                            _ (remember-cage-mounting! idx wit-obs)
                            ;; a clicked other-ring zero whose index the witness
                            ;; does NOT see is a tiebreak gesture that decided
@@ -3051,13 +3072,15 @@
                            ;; ambiguous ('agrees' vs 'never voted') and
                            ;; Vincenzo's 29/8 spareggio landed exactly in that
                            ;; ambiguity: say it
-                           unvoted (seq (sort (distinct
-                                               (for [{:keys [axis]} zero-picks
-                                                     :when (not-any? #(= axis (:axis %))
-                                                                     (or wit-obs []))]
-                                                 (str/upper-case (name axis))))))
+                           unvoted (when wit-obs
+                                     (seq (sort (distinct
+                                                 (for [{:keys [axis]} zero-picks
+                                                       :when (not-any? #(= axis (:axis %))
+                                                                       wit-obs)]
+                                                   (str/upper-case (name axis)))))))
                            suffix (str
-                                   (cage-mounting-suffix (session-cage-mounting idx) wit-obs)
+                                   (when wit-obs
+                                     (cage-mounting-suffix (session-cage-mounting idx) wit-obs))
                                    (when unvoted
                                      (str " · nota: il doppio pallino di " (str/join "/" unvoted)
                                           " che hai cliccato non è fra i dischetti RILEVATI "
