@@ -4394,7 +4394,7 @@
    the kind of mistake that shows up three steps later as geometry that makes no
    sense."
   [:camera-poses :acquire-results :pnp-picks :pnp-residuals :pnp-outliers
-   :pnp-occluded :pnp-batch :marker-picks])
+   :pnp-occluded :pnp-batch :marker-picks :cage-mounting-obs])
 
 (defn- drop-index
   "Remove key `gone` from an index-keyed map and shift every higher key down one."
@@ -6461,11 +6461,24 @@
                                           ;; emptied the vote and the flip-face
                                           ;; twin walked right back in on the next
                                           ;; seeded read. The refinement still
-                                          ;; clears them (stale intrinsics).
+                                          ;; clears them (stale intrinsics), and
+                                          ;; the CAGE fingerprint travels with
+                                          ;; them: slots are measured against the
+                                          ;; MODEL's azimuths, so obs taken at
+                                          ;; k6 become lies the moment the
+                                          ;; session reopens with :phases
+                                          ;; declared — they must die with the
+                                          ;; proxy they were measured under.
                                           :cage-mounting-obs
-                                          (into {} (for [[idx obs] (:cage-mounting-obs @session)
-                                                         :when (seq obs)]
-                                                     [(str idx) obs]))
+                                          (let [pm (:proxy-mesh @session)]
+                                            {:cage {:d (:cage-d pm)
+                                                    :marks (:cage-marks pm)
+                                                    :phases (:cage-phases pm)
+                                                    :index-phase (:cage-index-phase pm)}
+                                             :by-photo
+                                             (into {} (for [[idx obs] (:cage-mounting-obs @session)
+                                                            :when (seq obs)]
+                                                        [(str idx) obs]))})
                                           ;; P4a-2 — lens focal (35mm-equiv) +
                                           ;; provenance, so a manual tweak survives
                                           ;; re-entry instead of reverting to the
@@ -6543,17 +6556,29 @@
             (when (seq residuals) (swap! session assoc-in [:pnp-residuals idx] (int-keys residuals)))
             (when (seq outliers)  (swap! session assoc-in [:pnp-outliers idx] (set outliers)))
             (when (seq occluded)  (swap! session assoc-in [:pnp-occluded idx] (set occluded))))))
-      ;; Leva 2 — the mounting vote comes back with the session (see the save
-      ;; side). :axis/:sense live as keywords, travel as strings.
-      (when (seq cage-mounting-obs)
-        (swap! session assoc :cage-mounting-obs
-               (into {} (map (fn [[k v]]
-                               [(js/parseInt (name k) 10)
-                                (mapv #(-> %
-                                           (update :axis keyword)
-                                           (update :sense keyword))
-                                      v)])
-                             cage-mounting-obs))))
+      ;; Leva 2 — the mounting vote comes back with the session, but ONLY under
+      ;; the cage it was measured against: slots are model-frame, so a session
+      ;; reopened with :phases declared (or another cage entirely) makes the
+      ;; old observations false witnesses — dropped, with a log line, and the
+      ;; vote rebuilds at the next 'a'. :axis/:sense live as keywords, travel
+      ;; as strings.
+      (when-let [by-photo (:by-photo cage-mounting-obs)]
+        (let [pm (:proxy-mesh @session)
+              now {:d (:cage-d pm) :marks (:cage-marks pm)
+                   :phases (:cage-phases pm) :index-phase (:cage-index-phase pm)}
+              then (:cage cage-mounting-obs)]
+          (if (= now then)
+            (swap! session assoc :cage-mounting-obs
+                   (into {} (map (fn [[k v]]
+                                   [(js/parseInt (name k) 10)
+                                    (mapv #(-> %
+                                               (update :axis keyword)
+                                               (update :sense keyword))
+                                          v)])
+                                 by-photo)))
+            (auto-log! (str "  voto del montaggio scartato: era misurato su un'altra "
+                            "gabbia/fasatura (" (pr-str then) " → " (pr-str now)
+                            ") — si ricostruisce ripremendo 'a'")))))
       ;; P4a-2 — lens focal. Restored AFTER load-exif-focal! (which ran first), so a
       ;; saved manual tweak wins; an unchanged EXIF/default value restores to itself.
       (when-let [mm (:mm focal)]
