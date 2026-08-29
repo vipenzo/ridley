@@ -78,6 +78,22 @@ RIBALTATO — rimontalo dritto» e «qui l'indice si legge DIVERSAMENTE dalle
 altre foto: una delle due registrazioni è il GEMELLO» (vale anche per il
 flusso a mano — è così che si sarebbe scoperta foto 1).
 
+**GATE LIVE: PASSATO (Vincenzo, 29/8, log)** — su una sessione viva (foto
+senza EXIF, focale al default 48): due seeded a 6.2/9.4px, poi il **primo
+ZERO-CLICK dal vivo riuscito** (anello y + zero-indice, 21 dischetti, solve
+9.0px, 10 marker agganciati) e due rifiuti onesti coi messaggi giusti. Le
+diagnosi nuove sono SCATTATE al primo giro: l'anello Z conteso fra la foto A
+(obs di posa, senza click su Z) e la foto B (ancorata dal SUO ⊙zp cliccato,
+42 riletture contraddette dal veto). Il log ha trovato un difetto di
+messaggistica, corretto subito: RIBALTATO e GEMELLO uscivano INSIEME sullo
+stesso anello — ma se la lettura è contesa, affermare il ribaltamento è
+prematuro; ora un anello conteso riceve solo l'avviso di contesa, con la
+mossa di spareggio nel messaggio (click sul doppio pallino in una TERZA
+foto). Il conteso su Z resta DA RISOLVERE lì: 1-1 nel voto (parità = nessuna
+giurisdizione), spareggio alla prossima testimonianza; e la focale della
+sessione va misurata con la rifinitura appena ci sono 3+ foto (48 di default
+contro la 44 vera del Continuity — trappola nota del grab).
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

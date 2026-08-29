@@ -2752,21 +2752,29 @@
    means a twin sits among the session's registrations — this one or the
    others."
   [mounting obs]
-  (str
-   (when-let [revs (seq (sort (distinct (for [{:keys [axis sense]} obs
-                                              :when (= :rev sense)]
-                                          (str/upper-case (name axis))))))]
-     (str " · l'indice dell'anello " (str/join "/" revs)
-          " si vede SPECCHIATO: quell'anello è montato RIBALTATO. La lettura "
-          "resta buona; quando riapri la gabbia, rimontalo dritto"))
-   (when-let [dis (seq (sort (distinct (for [{:keys [axis sense k]} obs
-                                             :let [m (get mounting axis)]
-                                             :when (and m (or (not= sense (:sense m))
-                                                              (not= k (:k m))))]
-                                         (str/upper-case (name axis))))))]
-     (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" dis)
-          " si legge DIVERSAMENTE dalle altre foto della sessione — una delle "
-          "due registrazioni è il GEMELLO"))))
+  (let [dis (set (for [{:keys [axis sense k]} obs
+                       :let [m (get mounting axis)]
+                       :when (and m (or (not= sense (:sense m))
+                                        (not= k (:k m))))]
+                   (str/upper-case (name axis))))
+        ;; a CONTESTED ring gets only the contest warning: asserting 'mounted
+        ;; flipped, remount it' about a reading the session disputes claims as
+        ;; fact exactly what is in question — this photo may be the mirrored
+        ;; one (both lines fired together on Vincenzo's first live log,
+        ;; 2026-08-29, and read as an instruction to open the cage)
+        revs (seq (sort (remove dis (distinct (for [{:keys [axis sense]} obs
+                                                    :when (= :rev sense)]
+                                                (str/upper-case (name axis)))))))]
+    (str
+     (when revs
+       (str " · l'indice dell'anello " (str/join "/" revs)
+            " si vede SPECCHIATO: quell'anello è montato RIBALTATO. La lettura "
+            "resta buona; quando riapri la gabbia, rimontalo dritto"))
+     (when (seq dis)
+       (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" (sort dis))
+            " si legge DIVERSAMENTE dalle altre foto della sessione — una delle "
+            "due registrazioni è il GEMELLO. Un click sul doppio pallino di "
+            "quell'anello in una TERZA foto fa da spareggio")))))
 
 (defn- cage-read-and-place!
   "Cage 'a': the crown you clicked, read by the REST OF THE CAGE — then every
