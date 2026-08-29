@@ -68,8 +68,11 @@ Sintetico: 39/39 a 0.00mm intatto; suite 991 test / 0 fail; warning 16/:app
 invariati.
 
 **Cablaggio di produzione (edit_acquire, FATTO ma gate live da fare)**: le
-osservazioni-indice si accumulano per foto (`:cage-mounting-obs`, in
-memoria come `:pnp?`) da OGNI lettura accettata ('a' seminato e zero-click);
+osservazioni-indice si accumulano per foto (`:cage-mounting-obs` —
+PERSISTITE in acquire-state.json dal 29/8 sera: erano in memoria «come
+:pnp?» e una ricarica ha azzerato il voto proprio mentre serviva, il gemello
+flip-face è rientrato al primo 'a' seminato; la rifinitura le azzera comunque,
+intrinseche stantie) da OGNI lettura accettata ('a' seminato e zero-click);
 il ramo zero-click passa `:mounting` (voto leave-one-out) + `:blobs`, e
 **`:teeth?` si accende da solo quando la sessione ha montaggio** (denti solo
 dove l'arbitro ha giurisdizione — contextless coi denti = i gemelli del

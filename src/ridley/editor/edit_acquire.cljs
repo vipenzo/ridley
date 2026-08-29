@@ -6452,6 +6452,20 @@
                                           ;; P4a-2 — PnP correspondences per photo
                                           ;; (see the `pnp` binding above).
                                           :pnp pnp
+                                          ;; Leva 2 — the per-photo index
+                                          ;; observations that feed the session's
+                                          ;; mounting VOTE. Persisted because the
+                                          ;; arbiter must survive reloads: kept
+                                          ;; in-memory at first ('come :pnp?') and
+                                          ;; paid for live (29/8 sera) — a reload
+                                          ;; emptied the vote and the flip-face
+                                          ;; twin walked right back in on the next
+                                          ;; seeded read. The refinement still
+                                          ;; clears them (stale intrinsics).
+                                          :cage-mounting-obs
+                                          (into {} (for [[idx obs] (:cage-mounting-obs @session)
+                                                         :when (seq obs)]
+                                                     [(str idx) obs]))
                                           ;; P4a-2 — lens focal (35mm-equiv) +
                                           ;; provenance, so a manual tweak survives
                                           ;; re-entry instead of reverting to the
@@ -6483,7 +6497,7 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane plate-calib]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane plate-calib cage-mounting-obs]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
           int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
@@ -6529,6 +6543,17 @@
             (when (seq residuals) (swap! session assoc-in [:pnp-residuals idx] (int-keys residuals)))
             (when (seq outliers)  (swap! session assoc-in [:pnp-outliers idx] (set outliers)))
             (when (seq occluded)  (swap! session assoc-in [:pnp-occluded idx] (set occluded))))))
+      ;; Leva 2 — the mounting vote comes back with the session (see the save
+      ;; side). :axis/:sense live as keywords, travel as strings.
+      (when (seq cage-mounting-obs)
+        (swap! session assoc :cage-mounting-obs
+               (into {} (map (fn [[k v]]
+                               [(js/parseInt (name k) 10)
+                                (mapv #(-> %
+                                           (update :axis keyword)
+                                           (update :sense keyword))
+                                      v)])
+                             cage-mounting-obs))))
       ;; P4a-2 — lens focal. Restored AFTER load-exif-focal! (which ran first), so a
       ;; saved manual tweak wins; an unchanged EXIF/default value restores to itself.
       (when-let [mm (:mm focal)]
