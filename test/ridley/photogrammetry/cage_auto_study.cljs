@@ -226,7 +226,18 @@
                 (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
                          :keywordize-keys true)
                 {})
-        proxy (cage/registration-cage :d 176)
+        ;; the cage the SESSION declared, not a hardcoded nominal: battiscopa2
+        ;; runs `(registration-cage :d 176 :phases {:y 180 :x 180})`, and the
+        ;; bench reading k6/k6 against the unphased model while the app read
+        ;; k0/k0 against the declared one cost a round of cross-talk
+        ;; (2026-08-29). Preference order: CAGE_AUTO_PHASES (JSON, e.g.
+        ;; '{"x":180,"y":180}') → the fingerprint persisted with the mounting
+        ;; vote → nominal.
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse)
+                           (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        proxy (cage/registration-cage :d 176 :phases phases)
         targets (cage-targets proxy)
         disc-r (:mark-disc-r proxy)
         files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
@@ -252,6 +263,7 @@
         score (atom {:ok 0 :none 0 :far 0})]
     (println (str "\n=== auto-read (zero click) su battiscopa: " (count files)
                   " foto · focale della sessione " (fmt focal 1) "mm"
+                  " · gabbia " (if (seq phases) (str ":phases " (pr-str phases)) "nominale")
                   (when conc? " · ipotesi CONCENTRICHE")
                   (when teeth? " · identità COI DENTI")
                   (if noctx? " · SENZA contesto di montaggio"

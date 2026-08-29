@@ -115,7 +115,17 @@ frutti:
    su tutte le foto, `x=fwd(k6) y=fwd(k6) z=fwd(k0)` — cioè X e Y girati di
    180°, che è ESATTAMENTE il `:phases {:y 180 :x 180}` misurato settimane
    prima sul palcoscenico per questa stessa gabbia fisica. Conferma
-   indipendente dello strumento.
+   indipendente dello strumento. POSTILLA (sera): quei k6 erano letti dal
+   BANCO col proxy hardcodato SENZA fasi — la sessione di Vincenzo dichiara
+   già `:phases {:y 180 :x 180}`, e sotto il suo modello le stesse
+   osservazioni leggono k0 ovunque (nominale = modello giusto; il
+   suggerimento GIRATI da lui non apparirà mai, correttamente). Il banco ora
+   usa la gabbia della sessione (`CAGE_AUTO_PHASES` o l'impronta persistita
+   col voto) — e col modello giusto grab-01 si registra da sola a 0.2mm
+   (spiega 31, fuori-anello 19). Su una gabbia ben dichiarata tutti gli
+   anelli sono nominali → l'indice del seme non discrimina mai (per
+   costruzione): l'avallo vive sugli anelli NON-seme, la difesa sui frame
+   affamati resta secondo-anello + camera-dietro.
 2. **Il GEMELLO su Z del primo giro era un artefatto della focale** (obs
    raccolte al default 48; a 44 misurati la contesa sparisce). FIX: la
    rifinitura ora AZZERA `:cage-mounting-obs` — osservazioni misurate sotto
