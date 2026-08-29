@@ -2757,6 +2757,22 @@
                        :when (and m (or (not= sense (:sense m))
                                         (not= k (:k m))))]
                    (str/upper-case (name axis))))
+        ;; a ring the session reads TURNED by whole steps, unanimously and
+        ;; twice over, has earned the `:phases` suggestion — the diagnosis
+        ;; Vincenzo asked for by direttiva (28/8: riconoscere e suggerire,
+        ;; mai supplire). Measured before it was written: battiscopa2 reads
+        ;; x=k6, y=k6 (180°) on every hand pose — the same mounting the stage
+        ;; had measured on this physical cage. Self-limiting: once declared
+        ;; in the proxy the observations read k0 and the line stops printing
+        step-deg (/ 360.0 (max 1 (cage-crown-count)))
+        turned (seq (sort (distinct
+                           (for [{:keys [axis sense k]} obs
+                                 :let [m (get mounting axis)]
+                                 :when (and m (= :fwd sense) (pos? k)
+                                            (= sense (:sense m)) (= k (:k m))
+                                            (>= (:votes m 0) 2)
+                                            (not (:contested? m)))]
+                             [(name axis) (js/Math.round (* k step-deg))]))))
         ;; a CONTESTED ring gets only the contest warning: asserting 'mounted
         ;; flipped, remount it' about a reading the session disputes claims as
         ;; fact exactly what is in question — this photo may be the mirrored
@@ -2770,6 +2786,15 @@
        (str " · l'indice dell'anello " (str/join "/" revs)
             " si vede SPECCHIATO: quell'anello è montato RIBALTATO. La lettura "
             "resta buona; quando riapri la gabbia, rimontalo dritto"))
+     (when turned
+       (str " · anelli montati GIRATI (confermato da più foto): "
+            (str/join ", " (for [[a deg] turned]
+                             (str (str/upper-case a) " di " deg "°")))
+            " — per dichiararlo al modello riapri la sessione con "
+            "(registration-cage :d " (or (:cage-d (:proxy-mesh @session)) "…")
+            " :phases {" (str/join " " (for [[a deg] turned]
+                                         (str ":" a " " deg)))
+            "}) — i click fatti restano validi"))
      (when (seq dis)
        (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" (sort dis))
             " si legge DIVERSAMENTE dalle altre foto della sessione — una delle "
@@ -3607,6 +3632,13 @@
               (when (get-in @session [:acquire-results idx])
                 (swap! session assoc-in [:acquire-results idx :rms-px] a))))
           (save-acquire-state!)
+          ;; the session's cage-mounting observations were measured under the
+          ;; OLD intrinsics and every pose just moved: stale, and worse than
+          ;; empty — obs taken at the default 48mm read the Z index in the
+          ;; MIRROR family and raised a false GEMELLO alarm against the same
+          ;; photos re-read at the measured 44 (log di Vincenzo, 29/8, primo
+          ;; contro secondo giro). Re-pressing 'a' rebuilds the vote clean.
+          (swap! session dissoc :cage-mounting-obs)
           ;; Re-ENTER the photo, don't just redraw over it. The refinement moves
           ;; two things the viewport only picks up when a photo is loaded: the
           ;; camera pose (viewport/set-camera-pose!) and the FIELD OF VIEW, which

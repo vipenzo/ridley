@@ -105,6 +105,53 @@ dichiarato («qui ha arbitrato le riletture, ma nel voto di sessione non
 conta»). Spareggio di Z ancora aperto: si chiude ri-premendo `a` sulla foto
 del ⊙zp di ieri col voto ormai popolato.
 
+**Terzo giro live (29/8 pomeriggio, sessione battiscopa2 di Vincenzo —
+`~/Pictures/RidleyScan/battiscopa2`, 5 grab a 44mm rifiniti)**, quattro
+frutti:
+1. **Il testimone legge il montaggio FISICO**: sotto le pose a mano, unanime
+   su tutte le foto, `x=fwd(k6) y=fwd(k6) z=fwd(k0)` — cioè X e Y girati di
+   180°, che è ESATTAMENTE il `:phases {:y 180 :x 180}` misurato settimane
+   prima sul palcoscenico per questa stessa gabbia fisica. Conferma
+   indipendente dello strumento.
+2. **Il GEMELLO su Z del primo giro era un artefatto della focale** (obs
+   raccolte al default 48; a 44 misurati la contesa sparisce). FIX: la
+   rifinitura ora AZZERA `:cage-mounting-obs` — osservazioni misurate sotto
+   intrinseche vecchie sono stantie e peggio che vuote; si ricostruiscono
+   ripremendo `a`.
+3. **Il suggerimento `:phases` per anelli GIRATI** (direttiva 28/8,
+   riconoscere-e-suggerire): un anello che il voto legge fwd(k≠0) con ≥2
+   voti non contesi frutta il messaggio con la dichiarazione pronta da
+   copiare. Autolimitante: dichiarata la fase, le obs leggono k0 e la riga
+   tace.
+4. **La quarta specie di gemello, uccisa**: su un anello montato NOMINALE
+   l'indice attraverso la plastica è lo stesso pixel per la lettura vera e
+   la gemella — il gemello zp di grab-01 spediva a 447mm AVALLATO dal suo
+   stesso indice Z a 1px. Regola del DISCRIMINANTE (in auto-read):
+   un'osservazione avalla/conferma solo se su un anello DIVERSO dal seme,
+   oppure sul seme quando il montaggio votato non è (fwd,0) — la stessa
+   lezione del flusso a mano, «l'arbitro vero è l'indice dell'altro
+   anello». Su un anello-seme nominale noto, niente relax e niente
+   richiesta: vale la vecchia regola dello zero ai pixel (il gemello lì si
+   separa solo con evidenza fuori-anello). Banco: 447 morto, battiscopa1
+   invariato (7→1.1mm, 8→1.0mm, 1 annotata), sintetico 39/39, suite 991/0.
+
+**QUESTIONE APERTA (banco ≠ app, battiscopa2 foto 4)**: l'app la registra
+zero-click VERA (x, 24 dischetti, 7.5px, due giri consecutivi) mentre il
+banco su di lei muore allo stadio ipotesi (34 candidati, ipotesi max 9,
+corona ≤2) — un divario di INPUT, non di logica (prcedente a ogni fix di
+oggi). Sospetto: il campionatore di luminanza del banco (sharp,
+0.299/0.587/0.114) non è identico a quello dell'app (backdrop loader) e il
+detector ne risente. Da chiarire prima di fidarsi dei RIFIUTI del banco
+come pavimento del tasso vero — i suoi successi/gemelli restano
+attendibili (le pose combaciano con la mano al mm).
+
+**Foto 5 di battiscopa2, rifiuto spiegato** (domanda di Vincenzo, misurata):
+18 candidati contro 24-42 — l'anello X esce dall'inquadratura in alto, un
+anello è quasi di taglio (di profilo i dischetti non esistono per il
+detector), la zona alta è sfocata. Resta ~1 anello e mezzo utilizzabile:
+sotto il pavimento di 8 per l'identificazione. Rimedio: seminare a mano
+l'anello centrale nitido, o ri-grabbare con la gabbia intera in campo.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

@@ -819,13 +819,31 @@
                                             :face-normal (:face-normal face)
                                             :teeth (:teeth attempt)})
                       known-sense (get-in mounting [(:axis face) :sense])
+                      ;; a NOMINALLY-mounted ring (fwd, slot 0) cannot testify
+                      ;; about its own seed: the index disc is the same pixel
+                      ;; through the plastic, so the true reading and its
+                      ;; through-plastic twin read the identical (fwd, 0) —
+                      ;; measured (battiscopa2 foto 1, 2026-08-29): the zp
+                      ;; twin shipped 447mm out ENDORSED by its own invariant
+                      ;; Z observation at 1px. Only an off-nominal pair
+                      ;; separates the faces (the twin always reads its seed
+                      ;; index at (fwd, 0) — its zero-hit pinned it there —
+                      ;; while the true reading reads the mounting: foto 7's
+                      ;; twin fwd(k0) vs true rev(k11)). Same lesson as the
+                      ;; hand flow: l'arbitro vero è l'indice dell'ALTRO
+                      ;; anello — or the seed's own, only when the mounting
+                      ;; is off-nominal
+                      seed-nominal? (and known-sense
+                                         (= [:fwd 0]
+                                            [(get-in mounting [(:axis face) :sense])
+                                             (get-in mounting [(:axis face) :k])]))
                       ;; the confirmation is DEMANDED only of a sense the
-                      ;; session has seen at least twice: a single observation
-                      ;; can be junk, and demanding agreement with junk would
-                      ;; refuse honest readings. A single observation still
-                      ;; vetoes an OPPOSITE observation below — that collision
-                      ;; needs two detected discs, not one
+                      ;; session has seen at least twice (a single observation
+                      ;; can be junk) and only where a seed observation CAN
+                      ;; discriminate — on a nominal ring it cannot, so the
+                      ;; old zero-hit rule stands there unrelaxed
                       demand? (and known-sense
+                                   (not seed-nominal?)
                                    (>= (get-in mounting [(:axis face) :votes] 1) 2))
                       _ (note! {:stage :seed :hyp (count hyp) :hyp-i hi
                                 :face [(:axis face) (:sign face)]
@@ -890,19 +908,33 @@
                       agrees? (fn [{:keys [axis sense k]}]
                                 (let [m (get mounting axis)]
                                   (and m (= sense (:sense m)) (= k (:k m)))))
+                      ;; …and only a DISCRIMINATING agreement counts as
+                      ;; evidence FOR: on the seed's own ring a nominal
+                      ;; (fwd, 0) observation is twin-invariant — the index is
+                      ;; the same pixel through the plastic — so it endorses
+                      ;; the reflection exactly as well as the truth (the
+                      ;; 447mm case, see seed-nominal? above). Another ring's
+                      ;; agreement always discriminates: every twin the seed
+                      ;; race can generate mirrors the OTHER rings' senses
+                      discriminating? (fn [{:keys [axis] :as o}]
+                                        (and (agrees? o)
+                                             (or (not= (:axis face) axis)
+                                                 (not= [:fwd 0]
+                                                       [(get-in mounting [axis :sense])
+                                                        (get-in mounting [axis :k])]))))
                       contradiction (first (filter (fn [{:keys [axis] :as o}]
                                                      (and (get mounting axis)
                                                           (not (agrees? o))))
                                                    obs))
                       confirmed? (or (not demand?)
                                      (boolean (some #(and (= (:axis face) (:axis %))
-                                                          (agrees? %))
+                                                          (discriminating? %))
                                                     obs)))
-                      ;; ENDORSEMENT: the sharpest observation on ANY ring
-                      ;; that agrees with the session's mounting — the ranking
-                      ;; currency below. Infinity when nothing endorses
+                      ;; ENDORSEMENT: the sharpest DISCRIMINATING observation
+                      ;; — the ranking currency below. Infinity when nothing
+                      ;; endorses
                       endorse-d (reduce min js/Infinity
-                                        (keep (fn [o] (when (agrees? o) (:d o)))
+                                        (keep (fn [o] (when (discriminating? o) (:d o)))
                                               obs))
                       ;; marks the pose accounts for BEYOND the seed's own
                       ;; ring. Twice a currency: it separates the ring-family
