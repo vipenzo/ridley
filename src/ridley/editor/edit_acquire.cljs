@@ -2838,7 +2838,13 @@
         ;; throws on a nil index even with a default. Found by calling this from
         ;; the browser with nothing loaded (2026-08-24) — the compiler cannot see
         ;; it, and neither can a test that always sets up a session first.
-        file (:file (get (vec (:photos @session)) idx))]
+        file (:file (get (vec (:photos @session)) idx))
+        ;; every message names its photo. Vincenzo's logs are this channel's
+        ;; measuring instrument, and a log line that does not say WHICH photo
+        ;; it is about cannot be cited back — «Non so quali sono le foto che
+        ;; citi» (29/8) after two rounds of otherwise-perfect logs
+        foto-tag (when file (str "foto " (inc idx) " — " file ": "))
+        say! (fn [msg] (set-status-message! (str foto-tag msg)))]
     (cond
       (nil? file)
       (set-status-message! "Nessuna foto su cui leggere la gabbia.")
@@ -2853,8 +2859,7 @@
       ;; the message says so.
       (zero? (count picks-by-id))
       (do
-        (set-status-message!
-         "Leggo la gabbia DA SOLA (zero click)… può volerci fino a mezzo minuto")
+        (say! "Leggo la gabbia DA SOLA (zero click)… può volerci fino a mezzo minuto")
         (js/setTimeout
          (fn []
            (-> (backdrop/load-luminance-sampler (photo-path file))
@@ -2881,7 +2886,7 @@
                                                   ;; (misurato 30/8, 548/764mm)
                                                   :teeth? (boolean (seq mounting))})]
                     (if (nil? rr)
-                      (set-status-message!
+                      (say!
                        (str "Da sola non ci riesco su questa foto (" (count cands)
                             " dischetti trovati, nessun anello identificato con certezza). "
                             "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'."))
@@ -2905,7 +2910,7 @@
                                                     (inc n)))))
                                           0 (:corr rr))]
                         (remember-cage-mounting! idx (:index-obs rr))
-                        (set-status-message!
+                        (say!
                          (str "Gabbia letta DA SOLA: anello "
                               (name (:axis (:seed rr))) " + zero-indice trovati nella foto, "
                               added " dischetti piazzati (rms " (.toFixed (:rms-px rr) 1) "px)"
@@ -2917,18 +2922,18 @@
                               (cage-mounting-suffix mounting (:index-obs rr))))
                         (on-solve-pnp!))))))
                (.catch (fn [e]
-                         (set-status-message! (str "Lettura automatica fallita: " (str e)))))))
+                         (say! (str "Lettura automatica fallita: " (str e)))))))
          50))
 
       (< (count picks-by-id) 4)
-      (set-status-message!
+      (say!
        (str "Per leggere la gabbia servono almeno 4 dischetti cliccati su UN anello "
             "(ne hai " (count picks-by-id) "): arma un mark con 'p' e clicca dov'è nella foto. "
             "Lo zero-indice, se lo vedi, vale doppio. Con ZERO click, 'a' prova da sola."))
 
       :else
       (do
-        (set-status-message! "Leggo la gabbia… (rilevo i dischetti in tutta la foto)")
+        (say! "Leggo la gabbia… (rilevo i dischetti in tutta la foto)")
         (-> (backdrop/load-luminance-sampler (photo-path file))
             (.then
              (fn [{:keys [lum-at size data]}]
@@ -2940,7 +2945,7 @@
                                                 {:zero-picks zero-picks})]
                  (cond
                    (nil? res)
-                   (set-status-message!
+                   (say!
                     (str "Non riesco a leggere la gabbia da questa foto: dei "
                          (count cands) " dischetti trovati, nessuna delle 48 riletture "
                          "della corona ne spiega abbastanza. Di solito vuol dire che si vede "
@@ -3038,7 +3043,7 @@
                                    (when (pos? shadowed)
                                      (str " · " shadowed " proposte scartate: cadevano su "
                                           "dischetti già tuoi, sotto un altro nome")))]
-                       (set-status-message!
+                       (say!
                         (if-let [ps (:phase-suspect res)]
                           ;; The one assembly error nothing else can see, found by
                           ;; the disagreement of two witnesses: the candidates say
@@ -3072,7 +3077,7 @@
                                suffix)))
                        (on-solve-pnp!)))))))
             (.catch (fn [e]
-                      (set-status-message! (str "Lettura della gabbia fallita: " (str e))))))))))
+                      (say! (str "Lettura della gabbia fallita: " (str e))))))))))
 
 (def ^:private min-crown-assign
   "A batch (fetta B) assignment is accepted only if at least this many of the 12
