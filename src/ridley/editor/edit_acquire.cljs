@@ -3007,8 +3007,24 @@
                                      (:obs (match-cage/index-witness targets cands k
                                                                      fp marks {})))
                            _ (remember-cage-mounting! idx wit-obs)
+                           ;; a clicked other-ring zero whose index the witness
+                           ;; does NOT see is a tiebreak gesture that decided
+                           ;; nothing at session level — SILENCE here is
+                           ;; ambiguous ('agrees' vs 'never voted') and
+                           ;; Vincenzo's 29/8 spareggio landed exactly in that
+                           ;; ambiguity: say it
+                           unvoted (seq (sort (distinct
+                                               (for [{:keys [axis]} zero-picks
+                                                     :when (not-any? #(= axis (:axis %))
+                                                                     (or wit-obs []))]
+                                                 (str/upper-case (name axis))))))
                            suffix (str
                                    (cage-mounting-suffix (session-cage-mounting idx) wit-obs)
+                                   (when unvoted
+                                     (str " · nota: il doppio pallino di " (str/join "/" unvoted)
+                                          " che hai cliccato non è fra i dischetti RILEVATI "
+                                          "sotto questa posa — qui ha arbitrato le riletture, "
+                                          "ma nel voto fra le foto della sessione non conta"))
                                    (when (and zv (pos? (:killed zv)))
                                      (str " · lo zero cliccato sull'altro anello ha fatto da "
                                           "arbitro: " (:killed zv) " riletture contraddette da "

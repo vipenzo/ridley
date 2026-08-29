@@ -94,6 +94,17 @@ giurisdizione), spareggio alla prossima testimonianza; e la focale della
 sessione va misurata con la rifinitura appena ci sono 3+ foto (48 di default
 contro la 44 vera del Continuity — trappola nota del grab).
 
+**Secondo giro live (29/8, log)**: la rifinitura su 3 foto misura la lente
+**48 → 44.07mm** — il valore noto del Continuity: trappola del default
+chiusa, riproiezione 8.26 → 7.58 — e subito dopo il **secondo zero-click
+riuscito** (anello x, 24 dischetti, 7.5px). Lo spareggio su Z è rimasto
+ambiguo: il ⊙zm cliccato sulla terza foto non ha prodotto messaggi, che può
+voler dire «concorda» o «indice non rilevato → nessun voto» — corretto: ora
+un doppio pallino cliccato che non risulta fra i dischetti rilevati viene
+dichiarato («qui ha arbitrato le riletture, ma nel voto di sessione non
+conta»). Spareggio di Z ancora aperto: si chiude ri-premendo `a` sulla foto
+del ⊙zp di ieri col voto ormai popolato.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test
