@@ -2967,7 +2967,15 @@
                      cands (blob-detect/detect-blobs lum-at size
                                                      (assoc blob-detect/cage-opts :rgba data))
                      res (match-cage/read-crown picks-by-id targets (mapv :center cands) k marks
-                                                {:zero-picks zero-picks})]
+                                                {:zero-picks zero-picks
+                                                 ;; the session's voted mounting
+                                                 ;; arbitrates the hand seed too
+                                                 ;; (foto 5, 2026-08-29: the
+                                                 ;; flip-face twin renamed
+                                                 ;; correct picks on a starved
+                                                 ;; frame the session knew
+                                                 ;; better about)
+                                                 :mounting (session-cage-mounting idx)})]
                  (cond
                    (nil? res)
                    (say!
@@ -3059,6 +3067,17 @@
                                      (str " · lo zero cliccato sull'altro anello ha fatto da "
                                           "arbitro: " (:killed zv) " riletture contraddette da "
                                           "quel doppio pallino"))
+                                   (when-let [mv (:mounting-veto res)]
+                                     (cond
+                                       (:moot? mv)
+                                       (str " · ATTENZIONE: TUTTE le riletture contraddicono il "
+                                            "montaggio che la sessione ha già misurato su "
+                                            "quest'anello — o qualche click è su un anello "
+                                            "diverso, o una delle registrazioni passate è da "
+                                            "riguardare")
+                                       (pos? (:killed mv))
+                                       (str " · il montaggio misurato dalla sessione ha fatto "
+                                            "da arbitro: " (:killed mv) " riletture contraddette")))
                                    (when (seq (:moot zv))
                                      (str " · ATTENZIONE: lo zero dell'anello "
                                           (str/join "/" (map (comp str/upper-case name) (:moot zv)))

@@ -448,6 +448,35 @@
                 (:index-obs rr))
           "e il risultato porta l'osservazione che alimenta il montaggio della sessione"))))
 
+(deftest the-session-mounting-vetoes-the-hand-twin
+  ;; The hand-seeded path gets the same arbiter (found live, foto 5
+  ;; battiscopa2: a starved frame elected the flip-face twin of a ring THREE
+  ;; photographs had voted fwd(k6), and renamed correct picks). Scene: the
+  ;; battiscopa2 shape — Y ring mounted turned 180° (indices moved six steps,
+  ;; crowns invariant). The user's names are RIGHT; the session knows the
+  ;; mounting; every rereading whose pose puts the seed index off the voted
+  ;; slot — the flip-face family AND the whole-step rotation family — dies as
+  ;; a fact.
+  (println "\n=== gabbia: il montaggio della sessione arbitra anche la mano ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        truth (mapv (fn [{:keys [id obj] :as t}]
+                      (if (#{:zero-yp :zero-ym} id)
+                        (assoc t :obj (cage/turn-about-axis :y obj 180.0))
+                        t))
+                    targets)
+        cands (scene nil truth intr pose)
+        picks (misname truth intr pose :y [0 1 2 3 7 9] 0)
+        r (mc/read-crown picks targets cands intr marks
+                         {:mounting {:y {:sense :fwd :k 6 :votes 3 :d 3.0}}})]
+    (println (str "  lettura " (when r (pr-str (:reading r)))
+                  " · veto del montaggio " (when r (pr-str (:mounting-veto r)))))
+    (is (some? r) "la lettura c'è")
+    (when r
+      (is (= {:rot 0 :mirror? false :flip-face? false} (:reading r))
+          "i nomi giusti restano giusti: il gemello non li rinomina")
+      (is (pos? (:killed (:mounting-veto r)))
+          "e il montaggio votato ha contraddetto le riletture specchiate/orbitate"))))
+
 (deftest mutual-nearest-refuses-a-shared-disc
   (testing "due mark non possono rivendicare lo stesso dischetto"
     (let [{:keys [targets intr pose]} (setup eye)

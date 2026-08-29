@@ -152,6 +152,25 @@ detector), la zona alta è sfocata. Resta ~1 anello e mezzo utilizzabile:
 sotto il pavimento di 8 per l'identificazione. Rimedio: seminare a mano
 l'anello centrale nitido, o ri-grabbare con la gabbia intera in campo.
 
+**Quarto giro live (29/8 sera, foto 5 di battiscopa2)**: la lettura SEMINATA
+sul frame affamato (18 dischetti) ha eletto il gemello flip-face di Y — che
+la sessione sapeva montato fwd(k6) da TRE foto — e ha RINOMINATO i click
+giusti coi nomi del gemello prima che il rifiuto camera-dietro fermasse il
+solve. FIX: il montaggio votato ora arbitra ANCHE `read-crown` (opts
+`:mounting`: le riletture il cui indice del seme contraddice la coppia
+votata muoiono come fatti — solo l'anello del seme, le pose a un anello
+portano 90-160px sugli altri; stessa regola di onestà degli zeri: se
+ucciderebbe tutto, non uccide niente e lo dice). Test:
+`the-session-mounting-vetoes-the-hand-twin` (23 riletture uccise, nomi
+giusti intatti — il veto ammazza anche la famiglia delle rotazioni a passi
+interi). DIFETTO RESIDUO NOMINATO, da fetta: `relabel-picks!` rinomina
+PRIMA del solve, e un solve poi rifiutato lascia i nomi del gemello sui
+pick (viola la regola pagata «un soccorso che non compra un fit sotto
+soglia non rinomina» — il rollback attraversa il confine asincrono di
+on-solve-pnp!). E il veto è a testimoni: su un frame dove l'indice del seme
+non è rilevato non protegge — lì la difesa resta camera-dietro + il
+consiglio del secondo anello.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

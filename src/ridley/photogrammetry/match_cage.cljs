@@ -67,6 +67,8 @@
    ;; pose). Nothing in between exists to be confused with.
    :zero-veto-px 100.0})
 
+(declare index-witness)
+
 ;; A cage's marks are HOLES: `xm00` and `xp00` are the same disc seen from the two
 ;; sides of the same ring, 3mm apart. Both project within a few px of the same
 ;; candidate, so a score that counted them both would count every disc twice and
@@ -283,7 +285,7 @@
                                 :when p]
                             (Math/hypot (- (nth p 0) (nth px 0))
                                         (- (nth p 1) (nth px 1))))))
-         [scored zero-veto]
+         [scored0 zero-veto]
          (reduce (fn [[sc note] zp]
                    (let [ok (filterv #(<= (zero-d (:pose %) zp) zero-veto-px) sc)]
                      (if (seq ok)
@@ -292,7 +294,43 @@
                        ;; the readings — set aside, never turned into a refusal
                        [sc (update note :moot conj (:axis zp))])))
                  [all-scored {:killed 0 :moot []}]
-                 zero-picks)]
+                 zero-picks)
+         ;; THE SESSION'S MOUNTING vetoes on the same footing as the clicked
+         ;; zeros (opts :mounting, `vote-mounting` output): each reading's own
+         ;; pose reads the SEED ring's index in some slot, and a reading that
+         ;; contradicts the (sense, k) the session voted — ≥2 poses, and only
+         ;; off-nominal, since a nominal pair cannot tell the faces apart (see
+         ;; auto-read's seed-nominal?) — is the through-plastic twin, however
+         ;; well it scores. Found live before it was wired (foto 5 battiscopa2,
+         ;; 2026-08-29): a candidate-starved frame (18 discs) elected the
+         ;; flip-face twin of a ring THREE photographs had voted fwd(k6), and
+         ;; renamed the user's correct picks with the twin's names before the
+         ;; camera-behind guard refused the solve. Only the seed ring's own
+         ;; observations judge here: these poses are one-ring solves, and the
+         ;; other rings' slots under them carry 90-160px of slop (the
+         ;; namespace's founding measurement).
+         seed-axis (picks-axis picks)
+         known (when seed-axis (get (:mounting opts) seed-axis))
+         m-check (when (and known (>= (:votes known 0) 2)
+                            (not= [:fwd 0] [(:sense known) (:k known)]))
+                   (fn [r]
+                     (not-any? (fn [{:keys [sense k]}]
+                                 (or (not= sense (:sense known))
+                                     (not= k (:k known))))
+                               (filter #(= seed-axis (:axis %))
+                                       (:obs (index-witness targets candidates
+                                                            intrinsics (:pose r)
+                                                            marks {}))))))
+         [scored mounting-veto]
+         (if m-check
+           (let [ok (filterv m-check scored0)]
+             (if (seq ok)
+               [ok {:killed (- (count scored0) (count ok))}]
+               ;; contradicts every reading — the same honesty rule as the
+               ;; zeros: that is evidence about the session or the frame,
+               ;; never a silent refusal
+               [scored0 {:killed 0 :moot? true}]))
+           [scored0 nil])]
      (when (seq scored)
        (let [best (apply max (map :explained scored))
              top (filterv #(= best (:explained %)) scored)
@@ -348,6 +386,7 @@
                   :guard-rejected (- (count top) (count kept))
                   :phase-suspect suspect
                   :zero-veto (when (seq zero-picks) zero-veto)
+                  :mounting-veto mounting-veto
                   :ties (mapv #(select-keys % [:reading :explained :rms-px])
                               (remove #(= % result) kept)))))))))
 
