@@ -243,6 +243,25 @@ l'asticella andrebbe almeno bollata in rosso nel messaggio; e il moot dello
 zero ora è declaration-aware («su gabbia incollata = click sbagliato», mai
 «montato girato»).
 
+**Sesto giro live (30/8 sera, foto 3 di battiscopa3) — chiuso dalla SONDA
+DEL SEME** (`CAGE_AUTO_SEED=<n>` sul banco, costruita per l'occasione: click
+a mano dallo stato → distanza di ogni click dal candidato rilevato più
+vicino, solve sui soli click, meglio-rietichettatura greedy per anello).
+Verdetto su foto 3 (registrata dall'app a 52.8 poi 72.1px): (1) la foto è
+MOSSA — gabbia tenuta IN MANO durante il grab, visibile nell'immagine; (2)
+il detector è quasi cieco su tutto il lato Z (click a 42–122px dal primo
+candidato — l'arbitrato delle 48 riletture giudica sui candidati, e lì non
+ce n'erano); (3) i click stessi non sono salvabili da NESSUNA
+rietichettatura (greedy per anello: meglio 48–81px con scarti) — senza
+doppio pallino visibile e su foto mossa i nomi erano tirati a indovinare,
+come Vincenzo stesso descrive. Tre colpi indipendenti: la foto non
+contiene l'informazione, si scarta o si rifà. REGOLA D'ACQUISIZIONE che ne
+esce: la GABBIA FERMA (appoggiata, mai in mano), fuoco assestato, poi il
+grab. DIFETTO NOMINATO da fetta: «registrata sui restanti (72.1px)» — il
+retry senza outlier viene accettato a QUALUNQUE rms; sopra ~2× l'asticella
+dovrebbe rifiutare con un messaggio onesto, non persistere una posa
+selvaggia.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

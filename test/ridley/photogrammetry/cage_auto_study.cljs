@@ -12,7 +12,8 @@
             [ridley.photogrammetry.cage :as cage]
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.linalg :as la]
-            [ridley.photogrammetry.match-cage :as mc]))
+            [ridley.photogrammetry.match-cage :as mc]
+            [ridley.photogrammetry.pnp :as pnp]))
 
 (def fs (js/require "fs"))
 (def path (js/require "path"))
@@ -406,7 +407,77 @@
                          (when-not (aget (.-env js/process) "CAGE_AUTO_CTXONLY")
                            (step 0 obs))))))))
 
+(defn- seed-probe!
+  "CAGE_AUTO_SEED=<n>: the user's HAND PICKS of photo n (1-based), probed —
+   distance of each click to the nearest detected candidate (a starved
+   detector is invisible in the app: it just arbitrates blind), the solve on
+   the hand picks alone, and the best per-ring relabeling of them (greedy,
+   96 solves). Built the night foto 3 of battiscopa3 registered at 72px and
+   nobody could say which click was the traitor."
+  []
+  (let [n (js/parseInt (aget (.-env js/process) "CAGE_AUTO_SEED") 10)
+        idx (dec n)
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse) (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        proxy (cage/registration-cage :d 176 :phases phases)
+        targets (cage-targets proxy)
+        by-id (into {} (map (juxt :id identity) targets))
+        picks (get-in state [:pnp (keyword (str idx)) :picks])
+        hand (into {} (keep (fn [[k v]]
+                              (when-not (:proposed? v)
+                                [(:id (nth targets (js/parseInt (name k) 10))) (:px v)]))
+                            picks))
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        file (nth files idx)]
+    (println (str "\n=== sonda del seme: foto " n " (" file ") · " (count hand)
+                  " click a mano · gabbia " (if (seq phases) (pr-str phases) "nominale")
+                  " · focale " (fmt focal 1) "mm ==="))
+    (-> (decode (.join path dir file))
+        (.then
+         (fn [res]
+           (let [{:keys [data lum-at w h]} (sampler res)
+                 intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                 cands (mapv :center (bd/detect-blobs lum-at [w h]
+                                                      (assoc bd/cage-opts :rgba data)))
+                 near (fn [[u v]] (reduce min js/Infinity
+                                          (map (fn [[cu cv]] (Math/hypot (- cu u) (- cv v))) cands)))
+                 corr-of (fn [pm] (vec (for [[id px] pm :when (by-id id)]
+                                         {:ci id :world (:obj (by-id id)) :px px})))
+                 solve (fn [pm] (when (>= (count pm) 6) (pnp/solve-pnp (corr-of pm) intr {})))
+                 report (fn [tag sol]
+                          (println (str "  " tag ": "
+                                        (if sol (str "rms " (fmt (:rms-px sol) 1) "px · scartati "
+                                                     (pr-str (mapv :ci (:outliers sol))))
+                                            "nessun solve"))))
+                 axes (group-by (comp cage/anchor-axis key) hand)
+                 relab (fn [ids rd] (into {} (keep (fn [id]
+                                                     (when-let [i2 (cage/relabel id rd 12)]
+                                                       [i2 (hand id)]))
+                                                   ids)))]
+             (println (str "  click → candidato rilevato più vicino (px): "
+                           (pr-str (into (sorted-map)
+                                         (for [[id px] hand] [id (js/Math.round (near px))])))))
+             (report "solve sui SOLI click, nomi tuoi" (solve hand))
+             (doseq [[axis ids] (map (fn [[a m]] [a (vec (keys m))]) axes)]
+               (let [others (into {} (mapcat (fn [[a m]] (when (not= a axis) m)) axes))
+                     best (first (sort-by (juxt :nout :rms)
+                                          (keep (fn [rd]
+                                                  (when-let [sol (solve (merge others (relab ids rd)))]
+                                                    {:rd rd :rms (:rms-px sol)
+                                                     :nout (count (:outliers sol))}))
+                                                (cage/crown-misreadings 12))))]
+                 (println (str "  anello " (name axis) " rietichettato (altri fermi): meglio "
+                               (pr-str (:rd best)) " → rms " (fmt (:rms best) 1)
+                               "px · " (:nout best) " scartati")))))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
 (defn ^:export main [& _]
-  (if (aget (.-env js/process) "CAGE_AUTO_SYNTH")
-    (synth-run!)
-    (main*)))
+  (cond
+    (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
+    (aget (.-env js/process) "CAGE_AUTO_SEED") (seed-probe!)
+    :else (main*)))
