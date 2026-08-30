@@ -2790,14 +2790,28 @@
         ;; fact exactly what is in question — this photo may be the mirrored
         ;; one (both lines fired together on Vincenzo's first live log,
         ;; 2026-08-29, and read as an instruction to open the cage)
-        revs (seq (sort (remove dis (distinct (for [{:keys [axis sense]} obs
-                                                    :when (= :rev sense)]
-                                                (str/upper-case (name axis)))))))]
+        rev-axes (remove dis (distinct (for [{:keys [axis sense]} obs
+                                             :when (= :rev sense)]
+                                         (str/upper-case (name axis)))))
+        ;; asserted only when the SESSION agrees twice over — a lone
+        ;; observation on a photo just registered through five renames is a
+        ;; hint, not a verdict (battiscopa3 foto 2, 30/8: «X/Z RIBALTATO»
+        ;; dichiarato da una foto sola a 11.9px)
+        confirmed-rev? (fn [a] (let [m (get mounting (keyword (str/lower-case a)))]
+                                 (and m (= :rev (:sense m)) (>= (:votes m 0) 2)
+                                      (not (:contested? m)))))
+        revs-sure (seq (sort (filter confirmed-rev? rev-axes)))
+        revs-hint (seq (sort (remove confirmed-rev? rev-axes)))]
     (str
-     (when revs
-       (str " · l'indice dell'anello " (str/join "/" revs)
-            " si vede SPECCHIATO: quell'anello è montato RIBALTATO. La lettura "
-            "resta buona; quando riapri la gabbia, rimontalo dritto"))
+     (when revs-sure
+       (str " · l'indice dell'anello " (str/join "/" revs-sure)
+            " si vede SPECCHIATO, e più foto concordano: quell'anello è montato "
+            "RIBALTATO. La lettura resta buona; quando riapri la gabbia, "
+            "rimontalo dritto"))
+     (when revs-hint
+       (str " · in QUESTA foto l'indice dell'anello " (str/join "/" revs-hint)
+            " si legge specchiato — da solo non fa verdetto: se lo confermano "
+            "le prossime foto, l'anello è montato ribaltato"))
      (when turned
        (str " · anelli montati GIRATI (confermato da più foto): "
             (str/join ", " (for [[a deg] turned]
