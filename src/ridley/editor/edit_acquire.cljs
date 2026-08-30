@@ -5458,6 +5458,12 @@
    untouched — the size-then-pose split from Vincenzo's 2026-07-21 feedback:
    get the apparent scale right first, on photo 0, before touching the gizmo."
   [focal-mm]
+  ;; a lens change makes the stored mounting observations stale exactly as the
+  ;; refinement does — slot geometry moves with the intrinsics. Lived before
+  ;; it was written (battiscopa3, notte del 29/8): obs persisted at the
+  ;; default 48 kept accusing the 44-manual readings of being the GEMELLO.
+  (when (not= focal-mm (:focal-mm @session))
+    (swap! session dissoc :cage-mounting-obs))
   (swap! session assoc :focal-mm focal-mm :focal-source :manual)
   (backdrop/set-focal! focal-mm viewport/set-camera-fov!))
 

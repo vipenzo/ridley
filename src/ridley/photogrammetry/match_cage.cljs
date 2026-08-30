@@ -122,6 +122,30 @@
                (when-let [t (by-id id)] {:ci id :world (:obj t) :px px}))
              picks)))
 
+(defn- one-face-per-ring
+  "Drop the minority face from any ring that ended up matched on BOTH faces.
+   A flat ring shows one face; a correspondence set claiming xm and xp
+   together puts the camera on two sides of a plane at once, and the solve
+   can only answer camera-behind. It HAPPENS because near a ring's edge-on
+   line the per-target culling admits stragglers of the far face (their
+   normals are almost perpendicular to the view, the dot-product test is a
+   coin toss), and each disc matches under whichever name got there first —
+   measured live (battiscopa3 foto 2, 2026-08-29): xm00/03/06/09 and
+   xp01/02/05/10/11 in one corr, refusal certain before the solve began."
+  [corr]
+  (let [face-of (fn [{:keys [ci]}]
+                  (when-let [p (or (cage/mark-parts ci) (cage/index-parts ci))]
+                    [(:axis p) (:sign p)]))]
+    (vec (mapcat (fn [[axis cs]]
+                   (if (nil? axis)
+                     cs
+                     (let [tally (frequencies (keep (comp second face-of) cs))]
+                       (if (< (count tally) 2)
+                         cs
+                         (let [win (key (apply max-key val tally))]
+                           (filter #(= win (second (face-of %))) cs))))))
+                 (group-by (fn [c] (some-> (face-of c) first)) corr)))))
+
 (defn assign
   "Every mark the pose can account for, paired with the candidate it lands on:
    `[{:ci id :world obj :px [u v]} …]`.
@@ -130,7 +154,10 @@
    that candidate's own nearest mark is this one. One-sided nearest-neighbour
    would let two neighbouring marks both claim the one disc that happens to lie
    between them, which is exactly the failure that made the user's own clicks
-   unusable near a ring crossing."
+   unusable near a ring crossing. And each ring answers with ONE face
+   (`one-face-per-ring`): the culling is per-target, so at a grazing view the
+   far face's stragglers slip in, and a mixed-face corr is camera-behind by
+   construction."
   [targets candidates intrinsics pose tol-px]
   (let [preds (vec (for [{:keys [id obj]} (front-facing targets pose)
                          :let [px (cam/project intrinsics pose obj)]
@@ -141,16 +168,17 @@
                        (apply min-key (fn [p] (Math/hypot (- (first (:px p)) u)
                                                           (- (second (:px p)) v)))
                               pts)))]
-    (vec (keep (fn [{:keys [id obj px] :as p}]
-                 (let [[cu cv] px
-                       c (when (seq candidates)
-                           (apply min-key (fn [[u v]] (Math/hypot (- u cu) (- v cv)))
-                                  candidates))]
-                   (when (and c (< (Math/hypot (- (first c) cu) (- (second c) cv)) tol-px)
-                              ;; …and that candidate's own nearest mark is this one
-                              (= id (:id (nearest-of preds c))))
-                     {:ci id :world obj :px (vec c)})))
-               preds))))
+    (one-face-per-ring
+     (vec (keep (fn [{:keys [id obj px] :as p}]
+                  (let [[cu cv] px
+                        c (when (seq candidates)
+                            (apply min-key (fn [[u v]] (Math/hypot (- u cu) (- v cv)))
+                                   candidates))]
+                    (when (and c (< (Math/hypot (- (first c) cu) (- (second c) cv)) tol-px)
+                               ;; …and that candidate's own nearest mark is this one
+                               (= id (:id (nearest-of preds c))))
+                      {:ci id :world obj :px (vec c)})))
+                preds)))))
 
 (defn- score-reading
   "One reading tried: relabel, solve from the clicked ring alone, and ask the
