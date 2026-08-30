@@ -3050,7 +3050,18 @@
                          (count cands) " dischetti trovati, nessuna delle 48 riletture "
                          "della corona ne spiega abbastanza. Di solito vuol dire che si vede "
                          "UN anello solo — bastano pochi gradi fuori dall'asse perché "
-                         "ricompaiano gli altri."))
+                         "ricompaiano gli altri."
+                         ;; the evidence in the log, camera-dietro-style: foto 3
+                         ;; (30/8) refused on a seed silently polluted by clicks
+                         ;; from three nights before, and nothing printed WHICH
+                         ;; picks the reading was fed
+                         " · seme " (pr-str (vec (sort-by (comp str key) picks-by-id)))
+                         (when-let [others (seq (remove (set (keys picks-by-id))
+                                                        (keys hand-picks)))]
+                           (str " · altri click a mano nel mucchio: "
+                                (str/join " " (sort (map name others)))
+                                " — se qualcuno è di una sessione di lavoro passata, "
+                                "Azzera e riclicca pulito"))))
 
                    :else
                    (let [{:keys [reading corr]} res
