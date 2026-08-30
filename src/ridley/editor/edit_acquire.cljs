@@ -2749,11 +2749,33 @@
   (when (and (seq obs) (cage-obs-focal-ok?))
     (swap! session assoc-in [:cage-mounting-obs idx] obs)))
 
+(defn- declared-cage-mounting
+  "The mounting the proxy DECLARATION asserts — {axis entry} for cages with
+   explicit `:phases`, nil otherwise. The rings are GLUED (Vincenzo, 30/8:
+   «incollati con l'attack, l'unico modo di cambiarli è ristampare»), so the
+   mounting is a property of the CAGE, not of the session: declaring the
+   phases asserts that every index sits on its nominal slot, and that
+   assertion arms the twin arbiter from the FIRST photo — no cold start on a
+   declared cage. Votes 2: enough to demand and veto, beatable by a session
+   that reads otherwise three times over (the honest escape for a cage that
+   was glued wrong — flips cannot be declared, only measured and reprinted)."
+  []
+  (when (seq (:cage-phases (:proxy-mesh @session)))
+    (into {} (for [a [:x :y :z]]
+               [a {:sense :fwd :k 0 :votes 2 :d 0.0 :declared? true}]))))
+
 (defn- session-cage-mounting
-  "The session's mounting vote, photo `idx` excluded: its own earlier reading
-   must never arbitrate its re-read."
+  "The session's mounting: the declaration's assertion, refined by the vote of
+   the photos (photo `idx` excluded — its own earlier reading must never
+   arbitrate its re-read). A measured entry displaces the declared one only
+   when it outvotes it 3-to-nothing uncontested."
   [idx]
-  (match-cage/vote-mounting (vals (dissoc (or (:cage-mounting-obs @session) {}) idx))))
+  (let [measured (match-cage/vote-mounting
+                  (vals (dissoc (or (:cage-mounting-obs @session) {}) idx)))]
+    (merge-with (fn [d m]
+                  (if (and (>= (:votes m 0) 3) (not (:contested? m))) m d))
+                (or (declared-cage-mounting) {})
+                measured)))
 
 (defn- cage-mounting-suffix
   "The diagnosis lines the index observations earn — and only when they earn
@@ -2801,17 +2823,23 @@
                                  (and m (= :rev (:sense m)) (>= (:votes m 0) 2)
                                       (not (:contested? m)))))
         revs-sure (seq (sort (filter confirmed-rev? rev-axes)))
-        revs-hint (seq (sort (remove confirmed-rev? rev-axes)))]
+        revs-hint (seq (sort (remove confirmed-rev? rev-axes)))
+        ;; the rings are GLUED (attack): a contradiction with the DECLARED
+        ;; mounting can never mean 'remounted' — it accuses this reading
+        declared? (fn [a] (:declared? (get mounting (keyword (str/lower-case a)))))
+        dis-decl (seq (sort (filter declared? dis)))
+        dis-meas (seq (sort (remove declared? dis)))]
     (str
      (when revs-sure
        (str " · l'indice dell'anello " (str/join "/" revs-sure)
-            " si vede SPECCHIATO, e più foto concordano: quell'anello è montato "
-            "RIBALTATO. La lettura resta buona; quando riapri la gabbia, "
-            "rimontalo dritto"))
+            " si vede SPECCHIATO su più foto concordi: quell'anello è INCOLLATO "
+            "ribaltato (le fasi non possono dirlo: i flip non si dichiarano). "
+            "Le letture restano arbitrabili così — la cura vera è la ristampa "
+            "con la chiave anti-ribaltamento"))
      (when revs-hint
        (str " · in QUESTA foto l'indice dell'anello " (str/join "/" revs-hint)
             " si legge specchiato — da solo non fa verdetto: se lo confermano "
-            "le prossime foto, l'anello è montato ribaltato"))
+            "le prossime foto, l'anello fu incollato ribaltato"))
      (when turned
        (str " · anelli montati GIRATI (confermato da più foto): "
             (str/join ", " (for [[a deg] turned]
@@ -2821,8 +2849,13 @@
             " :phases {" (str/join " " (for [[a deg] turned]
                                          (str ":" a " " deg)))
             "}) — i click fatti restano validi"))
-     (when (seq dis)
-       (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" (sort dis))
+     (when dis-decl
+       (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" dis-decl)
+            " contraddice la DICHIARAZIONE della gabbia — che è incollata, "
+            "quindi non può essere cambiata: è QUESTA registrazione a essere "
+            "sospetta (gemello). Rifalle i click, o verificala sulle altre foto"))
+     (when dis-meas
+       (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" dis-meas)
             " si legge DIVERSAMENTE dalle altre foto della sessione — una delle "
             "due registrazioni è il GEMELLO. Un click sul doppio pallino di "
             "quell'anello in una TERZA foto fa da spareggio")))))

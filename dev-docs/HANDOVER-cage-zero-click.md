@@ -199,6 +199,33 @@ Vincenzo Piombo's iPhone», C922…) e la 44.07 era già stata misurata in
 battiscopa2; un archivio {camera → focale misurata} in ~/.ridley/ semina le
 sessioni nuove e questa trappola muore per sempre.
 
+**CORREZIONE DEL MODELLO DEL DOMINIO (30/8, da Vincenzo)**: «gli anelli sono
+incollati con l'attack — l'unico modo di cambiare la posizione reciproca dei
+ring è ristampare la gabbia». Quindi il MONTAGGIO NON È PER-ASSEMBLAGGIO —
+la premessa del 28/8 («la gabbia si apre a ogni cambio pezzo») era FALSA: il
+pezzo si riposiziona con gli stick, gli anelli non si toccano mai. Il
+montaggio è una COSTANTE della gabbia fisica, come `:d`. Conseguenze
+cablate:
+1. **La dichiarazione arma l'arbitro dalla prima foto**
+   (`declared-cage-mounting`): un proxy con `:phases` esplicite asserisce
+   indici nominali su ogni anello (voto 2, `:declared?`), battibile solo da
+   3+ foto concordi non contestate — la via d'uscita onesta per una gabbia
+   incollata storta. Il COLD START è CHIUSO per le gabbie dichiarate.
+2. Su gabbia dichiarata, un'osservazione `:rev`/`k≠0` è FISICAMENTE
+   impossibile → accusa la registrazione, mai la gabbia: messaggio dedicato
+   («contraddice la DICHIARAZIONE — è QUESTA registrazione a essere
+   sospetta»), e addio per sempre a «rimontalo dritto» (impossibile). Un
+   `:rev` confermato da più foto = anello INCOLLATO ribaltato → ristampa
+   (chiave anti-ribaltamento), i flip non si dichiarano.
+3. Foto 2 di battiscopa3 (registrata a 11.9px con 5 rinomine e X/Z letti
+   specchiati) va considerata SOSPETTA-GEMELLO ad alta probabilità: gabbia
+   incollata + fasi giuste ⇒ quei `:rev` non possono essere veri. Le
+   prossime registrazioni della sessione la giudicheranno (e ora la
+   dichiarazione veta i suoi simili in auto dalla prima foto).
+NB storico: il test fisico del 28/8 («l'anello X si monta anche RIBALTATO»)
+riguardava la libertà AL MONTAGGIO, prima dell'incollaggio — vale per la
+stampa della prossima gabbia, non per l'uso di questa.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test
