@@ -262,6 +262,25 @@ retry senza outlier viene accettato a QUALUNQUE rms; sopra ~2× l'asticella
 dovrebbe rifiutare con un messaggio onesto, non persistere una posa
 selvaggia.
 
+**Settimo giro live (30/8 sera, grab-04) — il dubbio di Vincenzo aveva
+ragione e ha trovato il difetto vero**: «le vedo un po' mosse ma pochissimo:
+i mark sono molto ben distinguibili — sei sicuro della diagnosi?». La sonda
+(estesa: `CAGE_AUTO_PICKS_FILE` per set di click mai arrivati allo stato —
+il rifiuto camera-dietro NON salva) ha dato il verdetto: i suoi 15 click
+freschi chiudono a **10.9px coi SUOI nomi** (foto buona, click buoni), la
+soluzione mette la camera dietro TUTTI i 7 click Z (la faccia visibile era
+zm, lui aveva scritto zp — pixel perfetti, etichetta di faccia sbagliata,
+la rinomina attraverso-la-plastica la cura), e il soccorso rinomina-per-
+anello la stava comprando… a 13.0px contro l'asticella di 12, **respinto per
+un pixel da 3 proposte stantie** (sui soli click: 10.9). FIX: al rifiuto
+camera-dietro l'intera catena di soccorso riprova sui SOLI CLICK A MANO —
+le proposte sono congetture della vecchia posa e non votano contro la cura;
+se la via a mano compra un fit accettabile, le proposte bloccanti si
+buttano (`drop-proposals!`) e il messaggio lo dice. La diagnosi «foto
+mossa» resta vera SOLO per grab-03 (lì misurata: detector cieco sul lato Z,
+nessuna rietichettatura sotto 48px); per grab-04 era sbagliata — il banco
+prima di sentenziare, sempre.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

@@ -426,10 +426,16 @@
         targets (cage-targets proxy)
         by-id (into {} (map (juxt :id identity) targets))
         picks (get-in state [:pnp (keyword (str idx)) :picks])
-        hand (into {} (keep (fn [[k v]]
-                              (when-not (:proposed? v)
-                                [(:id (nth targets (js/parseInt (name k) 10))) (:px v)]))
-                            picks))
+        ;; CAGE_AUTO_PICKS_FILE: a JSON [["ym00",[u,v]], …] to probe a pick set
+        ;; that never reached the state file — the camera-dietro refusal prints
+        ;; the list in the log but does not save it (grab-04, 30/8)
+        hand (if-let [pf (aget (.-env js/process) "CAGE_AUTO_PICKS_FILE")]
+               (into {} (map (fn [[id px]] [(keyword id) (vec px)])
+                             (js->clj (js/JSON.parse (.readFileSync fs pf "utf8")))))
+               (into {} (keep (fn [[k v]]
+                                (when-not (:proposed? v)
+                                  [(:id (nth targets (js/parseInt (name k) 10))) (:px v)]))
+                              picks)))
         focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
                   (get-in state [:focal :mm] 48.0))
         files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
@@ -449,10 +455,19 @@
                  corr-of (fn [pm] (vec (for [[id px] pm :when (by-id id)]
                                          {:ci id :world (:obj (by-id id)) :px px})))
                  solve (fn [pm] (when (>= (count pm) 6) (pnp/solve-pnp (corr-of pm) intr {})))
-                 report (fn [tag sol]
+                 behind (fn [sol pm]
+                          (when sol
+                            (let [c (cam/camera-center (:pose sol))]
+                              (vec (for [[id _] pm
+                                         :let [t (by-id id)
+                                               nrm (:normal t)]
+                                         :when (and nrm (neg? (la/v-dot nrm (la/v-sub c (:obj t)))))]
+                                     id)))))
+                 report (fn [tag sol pm]
                           (println (str "  " tag ": "
                                         (if sol (str "rms " (fmt (:rms-px sol) 1) "px · scartati "
-                                                     (pr-str (mapv :ci (:outliers sol))))
+                                                     (pr-str (mapv :ci (:outliers sol)))
+                                                     " · camera DIETRO a " (pr-str (behind sol pm)))
                                             "nessun solve"))))
                  axes (group-by (comp cage/anchor-axis key) hand)
                  relab (fn [ids rd] (into {} (keep (fn [id]
@@ -462,7 +477,7 @@
              (println (str "  click → candidato rilevato più vicino (px): "
                            (pr-str (into (sorted-map)
                                          (for [[id px] hand] [id (js/Math.round (near px))])))))
-             (report "solve sui SOLI click, nomi tuoi" (solve hand))
+             (report "solve sui SOLI click, nomi tuoi" (solve hand) hand)
              (doseq [[axis ids] (map (fn [[a m]] [a (vec (keys m))]) axes)]
                (let [others (into {} (mapcat (fn [[a m]] (when (not= a axis) m)) axes))
                      best (first (sort-by (juxt :nout :rms)

@@ -2451,41 +2451,99 @@
                                       "corrente"))
                       ;; A rescue that exists but could not buy an acceptable
                       ;; fit is reported, not applied — renaming on its strength
-                      ;; would persist a guess (see rename-worthy? above)
-                      ;; Nothing left: not the pose on screen, and not a
-                      ;; misreading of the names either. Name BOTH remaining
-                      ;; causes — the old message asserted the picks were all on
-                      ;; one ring, which on a real session was simply false and
-                      ;; sent the user off to re-shoot a photograph that was fine
-                      ;; (2026-08-19).
-                          (do ;; the refusal is the one outcome that PERSISTS
-                              ;; nothing — the picks live only in this window, so
-                              ;; a pasted log used to carry the verdict and none
-                              ;; of the evidence (2026-08-27: a live-grab refusal
-                              ;; could not be root-caused for exactly this). Put
-                              ;; the evidence in the log the user already pastes.
-                            (auto-log!
-                             (str "  rifiuto camera-dietro · focale "
-                                  (:focal-mm @session) "mm ("
-                                  (name (or (:focal-source @session) :default))
-                                  ") · fit di partenza "
-                                  (when first-try (.toFixed (:rms-px first-try) 1))
-                                  "px · pick: "
-                                  (pr-str (mapv (fn [{:keys [ci px]}]
-                                                  [(:id (nth targets ci))
-                                                   (mapv #(js/Math.round %) px)])
-                                                correspondences))))
-                            (set-status-message!
-                             (str "NON applicata: ogni soluzione mette la camera DIETRO almeno "
-                                  "uno dei dischetti che hai cliccato, che è impossibile — quel "
-                                  "dischetto l'hai fotografato. Ho già provato a rinominarli "
-                                  "anello per anello e non basta. Due cause possibili: i punti "
-                                  "stanno tutti su UN anello (clicca qualche mark su un secondo "
-                                  "anello), oppure qualche click è finito su un dischetto di un "
-                                  "anello diverso da quello che dice l'etichetta. Intanto lascio "
-                                  "la posa che hai adesso."))
-                            (swap! session assoc :last-solve ::refused)
-                            ::refused)))))
+                      ;; would persist a guess (see rename-worthy? above).
+                      ;; LAST RESORT before refusing: the whole chain again on
+                      ;; the HAND PICKS ALONE. The proposals are the old pose's
+                      ;; own guesses, and they can push the rescue's fit just
+                      ;; over the acceptance bar — measured (grab-04, 30/8):
+                      ;; hand clicks alone 10.9px, with three stale proposals
+                      ;; 13.0 against a bar of 12, so a photograph whose only
+                      ;; fault was a through-plastic face NAME on one ring
+                      ;; refused camera-dietro three times running. Guesses do
+                      ;; not get to outvote the cure.
+                          (let [hand-corr (vec (for [[ci {:keys [px proposed?]}] (pnp-picks)
+                                                     :when (not proposed?)]
+                                                 {:ci ci :world (:obj (nth targets ci)) :px px}))
+                                sees-hand? (fn [s]
+                                             (and s (bridge/camera-sees-marks?
+                                                     targets (mapv :ci hand-corr) (:pose s))))
+                                retry-hand (when (and (< (count hand-corr) (count correspondences))
+                                                      (>= (count hand-corr) (min-pnp-picks)))
+                                             (pnp/solve-pnp hand-corr k {}))
+                                hand-flipped (when (and retry-hand
+                                                        (not (sees-hand? retry-hand))
+                                                        (every? some? (map (comp flip-face :ci) hand-corr)))
+                                               (mapv (fn [c] (let [j (flip-face (:ci c))]
+                                                               (assoc c :ci j :world (:obj (nth targets j)))))
+                                                     hand-corr))
+                                hand-flip-sol (when hand-flipped (pnp/solve-pnp hand-flipped k {}))
+                                hand-flip-ok? (and hand-flip-sol
+                                                   (rename-worthy? hand-flip-sol)
+                                                   (bridge/camera-sees-marks?
+                                                    targets (mapv :ci hand-flipped) (:pose hand-flip-sol)))
+                                hand-rescue (when (and retry-hand (not hand-flip-ok?)
+                                                       (not (sees-hand? retry-hand)))
+                                              (cage-relabel-rescue hand-corr targets k
+                                                                   (:rms-px retry-hand)
+                                                                   [(:pose retry-hand)]))
+                                drop-proposals! (fn []
+                                                  (swap! session update-in [:pnp-picks idx]
+                                                         (fn [m] (into {} (remove (comp :proposed? val) m)))))
+                                prop-note " Le proposte della vecchia posa remavano contro: tolte."]
+                            (cond
+                              (and retry-hand (sees-hand? retry-hand) (rename-worthy? retry-hand))
+                              (do (drop-proposals!)
+                                  (assoc retry-hand :note
+                                         (str "le PROPOSTE della vecchia posa bloccavano il solve: "
+                                              "tolte, registrata sui tuoi soli click")))
+
+                              hand-flip-ok?
+                              (do (drop-proposals!)
+                                  (relabel-picks! idx #(or (flip-face %) %))
+                                  (assoc hand-flip-sol :note
+                                         (str "erano sull'ALTRA FACCIA dei loro anelli: stessi "
+                                              "dischetti attraverso la plastica, nomi corretti."
+                                              prop-note)))
+
+                              (and hand-rescue (rename-worthy? (:sol hand-rescue)))
+                              (do (drop-proposals!)
+                                  (relabel-picks! idx (:flip hand-rescue))
+                                  (assoc (:sol hand-rescue) :note
+                                         (str "erano i NOMI, non i click: " (:changed hand-rescue)
+                                              " dischetti stavano sull'altra faccia del loro anello. "
+                                              "Rinominati anello per anello — i tuoi click non li ho "
+                                              "toccati." prop-note)))
+
+                              :else
+                              ;; Nothing left: not the pose on screen, and not a
+                              ;; misreading of the names either — on the full set
+                              ;; or on the hand picks alone. The refusal PERSISTS
+                              ;; nothing, so the evidence goes in the log the user
+                              ;; already pastes (2026-08-27).
+                              (do
+                                (auto-log!
+                                 (str "  rifiuto camera-dietro · focale "
+                                      (:focal-mm @session) "mm ("
+                                      (name (or (:focal-source @session) :default))
+                                      ") · fit di partenza "
+                                      (when first-try (.toFixed (:rms-px first-try) 1))
+                                      "px · pick: "
+                                      (pr-str (mapv (fn [{:keys [ci px]}]
+                                                      [(:id (nth targets ci))
+                                                       (mapv #(js/Math.round %) px)])
+                                                    correspondences))))
+                                (set-status-message!
+                                 (str "NON applicata: ogni soluzione mette la camera DIETRO almeno "
+                                      "uno dei dischetti che hai cliccato, che è impossibile — quel "
+                                      "dischetto l'hai fotografato. Ho provato a rinominarli "
+                                      "anello per anello, anche sui tuoi soli click, e non basta. "
+                                      "Due cause possibili: i punti stanno tutti su UN anello "
+                                      "(clicca qualche mark su un secondo anello), oppure qualche "
+                                      "click è finito su un dischetto di un anello diverso da "
+                                      "quello che dice l'etichetta. Intanto lascio la posa che "
+                                      "hai adesso."))
+                                (swap! session assoc :last-solve ::refused)
+                                ::refused)))))))
 
                   :else first-try))
           ;; before the outliers become red dots: a hand-clicked zero the solve
