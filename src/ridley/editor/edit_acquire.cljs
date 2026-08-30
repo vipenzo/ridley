@@ -3179,11 +3179,24 @@
                                        (str " · il montaggio misurato dalla sessione ha fatto "
                                             "da arbitro: " (:killed mv) " riletture contraddette")))
                                    (when (seq (:moot zv))
-                                     (str " · ATTENZIONE: lo zero dell'anello "
-                                          (str/join "/" (map (comp str/upper-case name) (:moot zv)))
-                                          " non torna con NESSUNA rilettura — quell'anello è "
-                                          "probabilmente MONTATO girato di passi interi; il solve "
-                                          "adesso lo misura proprio da quello zero"))
+                                     (let [axes (str/join "/" (map (comp str/upper-case name)
+                                                                   (:moot zv)))]
+                                       ;; on a GLUED cage with declared phases a
+                                       ;; whole-step turn is impossible — the
+                                       ;; suspect is the click (foto 3, 30/8:
+                                       ;; this message blamed the mounting at
+                                       ;; 52.8px)
+                                       (if (declared-cage-mounting)
+                                         (str " · ATTENZIONE: lo zero dell'anello " axes
+                                              " non torna con NESSUNA rilettura — su una "
+                                              "gabbia incollata e dichiarata vuol dire quasi "
+                                              "sempre che quel click è su un dischetto "
+                                              "sbagliato (o contato dall'altra faccia): "
+                                              "controllalo o toglilo con il click destro")
+                                         (str " · ATTENZIONE: lo zero dell'anello " axes
+                                              " non torna con NESSUNA rilettura — quell'anello è "
+                                              "probabilmente MONTATO girato di passi interi; il "
+                                              "solve adesso lo misura proprio da quello zero"))))
                                    (when (pos? shadowed)
                                      (str " · " shadowed " proposte scartate: cadevano su "
                                           "dischetti già tuoi, sotto un altro nome"))

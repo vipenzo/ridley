@@ -226,6 +226,23 @@ NB storico: il test fisico del 28/8 («l'anello X si monta anche RIBALTATO»)
 riguardava la libertà AL MONTAGGIO, prima dell'incollaggio — vale per la
 stampa della prossima gabbia, non per l'uso di questa.
 
+**FETTA PROPOSTA DA VINCENZO (30/8), in coda con priorità**: la GABBIA
+ORIENTABILE A OCCHIO. Il suo flusso reale quando il doppio pallino non si
+vede: «per riconoscere alcuni mark devo guardare la gabbia fisica,
+posizionarla come in foto, e da lì capisco i nomi» — cioè risolve a mano la
+simmetria che la foto da sola non scioglie (senza indice i nomi non hanno
+senso, PER COSTRUZIONE). La versione software: su una foto non registrata,
+un gizmo per orientare la gabbia virtuale finché non "combacia" a occhio
+con la foto — da lì (1) il pannello offre le facce giuste, (2) i nomi dei
+mark si contano giusti, (3) la posa a occhio può fare da SEME per 'a'
+(altro colpo al cold start: un seme umano grossolano vale più di quattro
+click). Impianto esistente da riusare: il gizmo del proxy della foto 0 e il
+palcoscenico P4b. Nota di collaudo dello stesso giro: registrazione a
+52.8px passata come «registrata sui restanti» — un'accettazione sopra
+l'asticella andrebbe almeno bollata in rosso nel messaggio; e il moot dello
+zero ora è declaration-aware («su gabbia incollata = click sbagliato», mai
+«montato girato»).
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test
