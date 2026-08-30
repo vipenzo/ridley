@@ -304,6 +304,28 @@
                          (keep (score-reading picks targets by-id candidates
                                               intrinsics marks opts))
                          vec)
+         ;; A face the USER DECLARED (opts :declared-faces {axis sign}) is a fact
+         ;; about the photograph — they matched the physical cage to it — and a
+         ;; reading that flips it is answering a question nobody asked. Readings
+         ;; that move a declared ring's picks to the other face are dropped
+         ;; outright (never scored, so they cannot win on candidate counting),
+         ;; and never to the point of leaving nothing: if the declaration kills
+         ;; every reading it is the declaration that is in doubt, and the caller
+         ;; must hear that rather than get silence. Vincenzo, 2026-08-30: «avevo
+         ;; messo p perché mi presentava solo quelli» — the panel had offered a
+         ;; face that was not in the picture, and three evenings went into
+         ;; refusals downstream of that one imposed name.
+         declared (:declared-faces opts)
+         keeps-faces? (fn [{:keys [picks]}]
+                        (every? (fn [id]
+                                  (let [p (or (cage/mark-parts id) (cage/index-parts id))
+                                        s (get declared (:axis p))]
+                                    (or (nil? s) (= s (:sign p)))))
+                                (keys picks)))
+         all-scored (if (seq declared)
+                      (let [ok (filterv keeps-faces? all-scored)]
+                        (if (seq ok) ok all-scored))
+                      all-scored)
          zero-picks (vec (remove #(= (picks-axis picks) (:axis %)) (:zero-picks opts)))
          zero-d (fn [pose {:keys [axis px]}]
                   (reduce min js/Infinity

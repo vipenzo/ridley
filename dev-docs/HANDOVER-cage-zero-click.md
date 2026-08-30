@@ -281,6 +281,28 @@ mossa» resta vera SOLO per grab-03 (lì misurata: detector cieco sul lato Z,
 nessuna rietichettatura sotto 48px); per grab-04 era sbagliata — il banco
 prima di sentenziare, sempre.
 
+**LA CAUSA A MONTE DI TUTTO (30/8 notte, Vincenzo): «avevo messo p perché mi
+presentava solo quelli»** — i nomi "sbagliati" di tre serate non erano suoi,
+GLIELI IMPONEVA IL PANNELLO. Su una foto non registrata il culling per-mark
+interroga la POSA, cioè proprio l'incognita, e offre una faccia sola; se è
+quella sbagliata l'utente non ha modo di dire «io vedo zm» e ogni click nasce
+già avvelenato (`show-all-marks` non basta: offre ENTRAMBE le facce, e
+sbagliare resta facilissimo). Sua la cura, ed è quella giusta: **tre toggle
+per-anello (Xp/Xm, Yp/Ym, Zp/Zm)** con cui dichiara, per QUESTA foto, quale
+faccia vede — la stessa decisione che prende prendendo in mano la gabbia e
+appaiandola alla foto. Cablato: `:cage-face-choice` per-foto (persistito,
+rinumerato da Delete view), l'anello dichiarato offre SOLO quella faccia
+qualunque cosa creda la posa, e la dichiarazione arriva fino alla lettura
+(`read-crown` opts `:declared-faces`: le riletture che ribaltano una faccia
+dichiarata sono scartate PRIMA del punteggio — through-plastic pareggiano e
+nient'altro può rifiutarle; se la dichiarazione uccidesse tutte le riletture
+non uccide niente, è lei a essere in dubbio). Test
+`a-declared-face-is-not-re-read` (la rotazione sbagliata si corregge lo
+stesso: 3 passi, faccia intatta). Suite 993/0.
+NB di collaudo: il pannello mostra i toggle solo su proxy GABBIA; la regola
+del passetto (dal dischetto grande verso il pallino piccolo: antiorario = p,
+orario = m) sta nel tooltip di ogni bottone.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

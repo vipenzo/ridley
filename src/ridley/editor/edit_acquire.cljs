@@ -1373,12 +1373,34 @@
 
    So the cull is a default, not a prison. With it off, every mark is offered and
    the user's eyes arbitrate — which is the right authority, since a disc they can
-   see is a fact and the pose is still a guess."
+   see is a fact and the pose is still a guess.
+
+   `:cage-face-choice` {axis → 1|-1} is the SHARP form of that escape, proposed by
+   Vincenzo (2026-08-30) after the blunt one had cost three evenings: with
+   show-all-marks the panel offers BOTH faces of every ring and picking the wrong
+   one is as easy as before — «avevo messo p perché mi presentava solo quelli».
+   Declaring the face per RING is the decision he actually makes when he holds the
+   cage up and matches it to the photo, and it is exactly the fact the pose lacks:
+   on a chosen ring only that face's marks are offered, whatever the pose believes;
+   rings left undeclared keep the pose's own culling."
   []
-  (let [ts (pnp-targets)]
-    (if (:show-all-marks? @session)
-      (into #{} (range (count ts)))
-      (into #{} (keep-indexed (fn [i t] (when (:visible? t) i)) ts)))))
+  (let [ts (pnp-targets)
+        ;; per PHOTO: each view shows different faces, so a session-wide choice
+        ;; would be wrong the moment you step to the next frame
+        choice (get-in @session [:cage-face-choice (:current-idx @session)])
+        chosen (fn [t] (when (seq choice)
+                         (when-let [p (or (cage/mark-parts (:id t))
+                                          (cage/index-parts (:id t)))]
+                           (when-let [s (get choice (:axis p))]
+                             (= s (:sign p))))))]
+    (into #{} (keep-indexed
+               (fn [i t]
+                 (when (case (chosen t)
+                         true true      ; declared face: always offered
+                         false false    ; the other face of a declared ring: never
+                         (or (:show-all-marks? @session) (:visible? t)))
+                   i))
+               ts))))
 
 (defn- pnp-preview-items
   "Proxy as a WIREFRAME (not a solid — the real part must show through so the
@@ -1627,6 +1649,32 @@
           "dall'altra parte — clicca quelli che VEDI: è la posa a essere in dubbio, "
           "non i tuoi occhi")
      "di nuovo solo i mark rivolti verso di te")))
+
+(defn- toggle-cage-face!
+  "Declare (or un-declare) which FACE of ring `axis` this photo shows — the
+   judgement Vincenzo makes by holding the cage up to the picture, which the
+   pose cannot make for him (2026-08-30). Declared: only that face's marks are
+   offered on that ring, whatever the pose believes. Pressed again: back to the
+   pose's own culling."
+  [axis sign]
+  (swap! session update-in [:cage-face-choice (:current-idx @session)]
+         (fn [c] (let [c (or c {})]
+                   (if (= sign (get c axis)) (dissoc c axis) (assoc c axis sign)))))
+  ;; an armed mark on the face just hidden would keep the old name in hand
+  (when-let [a (:pnp-armed @session)]
+    (when-not (contains? (visible-corner-set) a)
+      (swap! session assoc :pnp-armed nil)))
+  (redraw-pnp-preview!)
+  (redraw-overlay-dots!)
+  (update-panel!)
+  (let [c (get-in @session [:cage-face-choice (:current-idx @session)])]
+    (set-status-message!
+     (if (seq c)
+       (str "facce dichiarate da te: "
+            (str/join " " (for [[a s] (sort-by (comp str key) c)]
+                            (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+            " — su quegli anelli ti offro solo quella faccia, qualunque cosa creda la posa")
+       "facce di nuovo decise dalla posa (nessun anello dichiarato)"))))
 
 (defn- toggle-mark-names! []
   (swap! session update :show-names? not)
@@ -3100,7 +3148,12 @@
                                                  ;; better about) — but never at
                                                  ;; an unmeasured lens
                                                  :mounting (when (cage-obs-focal-ok?)
-                                                             (session-cage-mounting idx))})]
+                                                             (session-cage-mounting idx))
+                                                 ;; the faces you declared with
+                                                 ;; the ring toggles: facts, not
+                                                 ;; hypotheses to re-read
+                                                 :declared-faces
+                                                 (get-in @session [:cage-face-choice idx])})]
                  (cond
                    (nil? res)
                    (say!
@@ -4569,7 +4622,7 @@
    the kind of mistake that shows up three steps later as geometry that makes no
    sense."
   [:camera-poses :acquire-results :pnp-picks :pnp-residuals :pnp-outliers
-   :pnp-occluded :pnp-batch :marker-picks :cage-mounting-obs])
+   :pnp-occluded :pnp-batch :marker-picks :cage-mounting-obs :cage-face-choice])
 
 (defn- drop-index
   "Remove key `gone` from an index-keyed map and shift every higher key down one."
@@ -5863,6 +5916,41 @@
                      "o 'o' se è nascosto dal pezzo. Piazzati " n "/" target
                      (when (< n (min-pnp-picks)) (str " (ne servono ≥" (min-pnp-picks) ")")))))
         (.appendChild box info)
+        ;; PER-RING FACE CHOICE (Vincenzo, 2026-08-30). On a cage the panel can
+        ;; only guess which face of each ring you are looking at — it asks the
+        ;; POSE, which is what the picking is trying to establish — and offering
+        ;; the wrong one makes the user name discs after a face that is not in
+        ;; the photograph: «avevo messo p perché mi presentava solo quelli»,
+        ;; three evenings of camera-behind refusals downstream. He proposed the
+        ;; cure and it is the right one: three toggles, one per ring, for the
+        ;; judgement he actually makes by holding the cage up to the photo.
+        (when (cage-proxy?)
+          (let [row (.createElement js/document "div")
+                choice (get-in @session [:cage-face-choice (:current-idx @session)])]
+            (set! (.-className row) "eaq-pnp-actions")
+            (let [lab (.createElement js/document "span")]
+              (set! (.-textContent lab) "faccia che vedi:")
+              (set! (.-color (.-style lab)) "#999")
+              (set! (.-fontSize (.-style lab)) "11px")
+              (.appendChild row lab))
+            (doseq [axis [:x :y :z]]
+              (doseq [[sign txt] [[1 "p"] [-1 "m"]]]
+                (let [b (.createElement js/document "button")
+                      on? (= sign (get choice axis))]
+                  (set! (.-type b) "button")
+                  (set! (.-textContent b) (str (str/upper-case (name axis)) txt))
+                  (set! (.-color (.-style b)) (if on? "#111" "#ddd"))
+                  (set! (.-background (.-style b)) (if on? "#7fd17f" "#333"))
+                  (set! (.-border (.-style b)) (if on? "2px solid #fff" "1px solid #555"))
+                  (set! (.-title b)
+                        (str "Offri solo la faccia " txt " dell'anello "
+                             (str/upper-case (name axis))
+                             " — dal dischetto grande del doppio pallino verso il "
+                             "pallino piccolo: antiorario = p, orario = m. "
+                             "Ripremi per tornare alla scelta automatica."))
+                  (.addEventListener b "click" (fn [_] (toggle-cage-face! axis sign)))
+                  (.appendChild row b))))
+            (.appendChild box row)))
         (set! (.-className corners) "eaq-pnp-corners")
         (doseq [i shown]
           (let [b (.createElement js/document "button")
@@ -6650,6 +6738,14 @@
                                           ;; session reopens with :phases
                                           ;; declared — they must die with the
                                           ;; proxy they were measured under.
+                                          ;; the faces the USER declared per photo
+                                          ;; — a judgement about the picture, not
+                                          ;; a derived value: it must survive a
+                                          ;; reload like the picks do
+                                          :cage-face-choice
+                                          (into {} (for [[i c] (:cage-face-choice @session)
+                                                         :when (seq c)]
+                                                     [(str i) c]))
                                           :cage-mounting-obs
                                           (let [pm (:proxy-mesh @session)]
                                             {:cage {:d (:cage-d pm)
@@ -6699,7 +6795,7 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane plate-calib cage-mounting-obs]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane plate-calib cage-mounting-obs cage-face-choice]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
           int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
@@ -6745,6 +6841,12 @@
             (when (seq residuals) (swap! session assoc-in [:pnp-residuals idx] (int-keys residuals)))
             (when (seq outliers)  (swap! session assoc-in [:pnp-outliers idx] (set outliers)))
             (when (seq occluded)  (swap! session assoc-in [:pnp-occluded idx] (set occluded))))))
+      (when (seq cage-face-choice)
+        (swap! session assoc :cage-face-choice
+               (into {} (map (fn [[k v]]
+                               [(js/parseInt (name k) 10)
+                                (into {} (map (fn [[a s]] [(keyword (name a)) s]) v))])
+                             cage-face-choice))))
       ;; Leva 2 — the mounting vote comes back with the session, but ONLY under
       ;; the cage it was measured against: slots are model-frame, so a session
       ;; reopened with :phases declared (or another cage entirely) makes the

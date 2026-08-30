@@ -477,6 +477,29 @@
       (is (pos? (:killed (:mounting-veto r)))
           "e il montaggio votato ha contraddetto le riletture specchiate/orbitate"))))
 
+(deftest a-declared-face-is-not-re-read
+  ;; The user matched the physical cage to the photo and declared «on ring X I
+  ;; see face m» (the per-ring toggles, Vincenzo 30/8). A reading that flips
+  ;; that ring's picks to face p is answering a question nobody asked — and
+  ;; through-plastic it scores identically, so nothing else can refuse it.
+  (println "\n=== gabbia: la faccia dichiarata non si rilegge ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        cands (scene nil targets intr pose)
+        ;; the picks named on the face the camera really sees, but ROTATED —
+        ;; a real misnaming the reading must still fix
+        picks (misname targets intr pose :x [0 1 2 3 8 9] 3)
+        face-of (fn [r] (->> (:picks r) keys (keep cage/mark-parts) (map :sign) set))
+        free (mc/read-crown picks targets cands intr marks)
+        held (mc/read-crown picks targets cands intr marks {:declared-faces {:x -1}})]
+    (println (str "  libera: " (pr-str (:reading free)) " facce " (pr-str (face-of free))
+                  " · con faccia dichiarata: " (pr-str (:reading held))
+                  " facce " (pr-str (face-of held))))
+    (is (some? held) "la lettura c'è")
+    (when held
+      (is (= #{-1} (face-of held)) "i pick restano sulla faccia che hai dichiarato")
+      (is (false? (:flip-face? (:reading held))) "nessuna rilettura la ribalta")
+      (is (= 3 (:rot (:reading held))) "e la rotazione sbagliata viene comunque corretta"))))
+
 (deftest mutual-nearest-refuses-a-shared-disc
   (testing "due mark non possono rivendicare lo stesso dischetto"
     (let [{:keys [targets intr pose]} (setup eye)
