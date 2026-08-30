@@ -298,3 +298,98 @@
       (let [box-pose (cam/look-at-pose [220.0 -140.0 160.0] [0.0 0.0 0.0] [0.0 0.0 1.0])
             box-corr (correspondences-for box-pose 0.3 (synth/rng 12))]
         (is (= :dlt (:method (pnp/solve-pnp box-corr kk {}))))))))
+
+(deftest a-fit-that-does-not-collapse-has-no-single-culprit
+  ;; The premise the app's spoken diagnosis rests on, and it had never been
+  ;; asserted. `accept-rms-px` states it in prose — a mislabel spreads its damage
+  ;; over every residual, so the tell that a dropped point WAS the culprit is
+  ;; that the rms collapses under the bar once it goes. The editor used to name
+  ;; the dropped points as culprits whenever the cleaner had dropped any, with
+  ;; no collapse test at all.
+  ;;
+  ;; Vincenzo found it from the outside (battiscopa3, 2026-08-30): four solves in
+  ;; a row, four DIFFERENT pairs accused, every one a point he had clicked within
+  ;; a pixel of a detected disc. «mi chiede di correggere punti che credo siano
+  ;; giusti» — he was right. The measured trace was 15.5 → 14.6 → 13.8px, nine
+  ;; tenths of a pixel per rejection: the two dropped points were merely the
+  ;; worst two of a uniformly bad fit, and which two was arbitrary.
+  (println "\n=== PnP: senza crollo non c'è un colpevole singolo ===")
+  (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+        pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+        marks (ring-marks 12 58.0 1.5)
+        rng (synth/rng 21)
+        clean (vec (map-indexed
+                    (fn [i w] {:ci i :world w
+                               :px (let [[u v] (cam/project kk pose w)]
+                                     [(+ u (* 0.4 (synth/gauss rng)))
+                                      (+ v (* 0.4 (synth/gauss rng)))])})
+                    marks))
+        trace (fn [corr]
+                ;; the greedy loop, printed honestly: the RAW rms of each set,
+                ;; not solve-pnp's own already-cleaned figure
+                (loop [cs corr acc []]
+                  (let [r (pnp/solve-pnp cs kk {:max-outliers 0})
+                        acc (conj acc (:rms-px r))]
+                    (if (or (< (count cs) 8) (>= (count acc) 3))
+                      acc
+                      (let [worst (apply max-key :residual-px (:per-point r))]
+                        (recur (vec (remove #(= (:ci %) (:ci worst)) cs)) acc))))))]
+
+    (testing "ONE mislabeled mark: the drop collapses the rms — a real culprit"
+      (let [bad (assoc-in clean [5 :px] (get-in clean [9 :px]))
+            t (trace bad)
+            sol (pnp/solve-pnp bad kk {})]
+        (println (str "  un mark scambiato · traccia " (mapv #(fmt % 1) t)
+                      " → verdetto " (fmt (:rms-px sol) 1) "px, scartati "
+                      (mapv :ci (:outliers sol))))
+        (is (seq (:outliers sol)) "the cleaner must reject something")
+        (is (<= (:rms-px sol) pnp/accept-rms-px)
+            (str "the fit collapses under the bar, so the dropped point IS the "
+                 "culprit and may be named — got " (fmt (:rms-px sol) 2) "px"))))
+
+    (testing "MANY moderately-wrong points: every drop shaves a little, nothing collapses"
+      ;; The disease as it actually presented: eight of the twelve picks were
+      ;; automatic proposals blob-snapped from a wrong pose, each off by tens of
+      ;; pixels — not one culprit but a bad majority. The cleaner is allowed two
+      ;; rejections, so it can only ever nibble; the two it picks are the worst
+      ;; two of a continuum, and which two is arbitrary noise.
+      ;;
+      ;; (A wrong FOCAL was the first thing tried here and it does not work as a
+      ;; specimen: on a coplanar ring the pose absorbs it almost entirely —
+      ;; measured, 0.49px becomes 2.0px for a lens wrong by a tenth. Worth
+      ;; knowing on its own: one flat crown cannot measure a lens.)
+      (let [nudged (reduce (fn [c i] (update-in c [i :px]
+                                                (fn [[u v]]
+                                                  (let [a (* 2.4 i)]
+                                                    [(+ u (* 25.0 (Math/cos a)))
+                                                     (+ v (* 25.0 (Math/sin a)))]))))
+                           clean (range 8))
+            t (trace nudged)
+            sol (pnp/solve-pnp nudged kk {})]
+        (println (str "  otto proposte mal-agganciate · traccia " (mapv #(fmt % 1) t)
+                      " → verdetto " (fmt (:rms-px sol) 1) "px, scartati "
+                      (mapv :ci (:outliers sol))))
+        (is (> (:rms-px sol) pnp/accept-rms-px)
+            (str "two rejections cannot rescue a bad majority — got "
+                 (fmt (:rms-px sol) 2) "px"))
+        ;; the discriminant itself: the drops buy almost nothing
+        (is (> (/ (nth t 2) (nth t 0)) 0.75)
+            (str "two rejections must leave most of the error standing "
+                 "(" (fmt (nth t 0) 1) " → " (fmt (nth t 2) 1) "px)"))))
+
+    (testing "and the collapse RATIO is what separates them"
+      (let [bad (assoc-in clean [5 :px] (get-in clean [9 :px]))
+            t-one (trace bad)
+            nudged (reduce (fn [c i] (update-in c [i :px]
+                                                (fn [[u v]]
+                                                  (let [a (* 2.4 i)]
+                                                    [(+ u (* 25.0 (Math/cos a)))
+                                                     (+ v (* 25.0 (Math/sin a)))]))))
+                           clean (range 8))
+            t-many (trace nudged)
+            ratio (fn [t] (/ (nth t 2) (nth t 0)))]
+        (println (str "  crollo con un colpevole: " (fmt (* 100 (ratio t-one)) 1)
+                      "% dell'errore resta · senza colpevole: "
+                      (fmt (* 100 (ratio t-many)) 1) "%"))
+        (is (< (ratio t-one) 0.1) "a real culprit leaves almost nothing behind")
+        (is (> (ratio t-many) 0.75) "a bad majority leaves almost everything")))))

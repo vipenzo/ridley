@@ -2099,20 +2099,58 @@
   "Plain-language verdict from a robust PnP solve — the answer to 'why won't the
    rms drop': corner(s) rejected as mislabels (re-click them); a fit still dirty
    with nothing left to drop (systematic — a wrong declared face or lens
-   distortion, not a single click); or a clean fit."
+   distortion, not a single click); or a clean fit.
+
+   The rejected points may be named as CULPRITS only when dropping them actually
+   bought a clean fit. `accept-rms-px` says why in its own docstring: a mislabel
+   spreads its damage over every residual, so the tell is that the rms COLLAPSES
+   under the bar when the guilty point goes. If it does not collapse, the
+   greedy cleaner simply removed the worst two of a uniformly bad fit — and they
+   are arbitrary, which is exactly how it looks from the outside. Measured on
+   battiscopa3 grab-01 (2026-08-30): 15.5 → 14.6 → 13.8px, nine tenths of a
+   pixel per rejection, four solves in a row naming four DIFFERENT pairs, every
+   one of them a point Vincenzo had clicked dead on a detected disc. He said the
+   accused points looked right to him. They were.
+
+   And a rejected point that the user never placed cannot be re-clicked: an
+   automatic proposal is a guess of the previous pose, so the move there is to
+   drop it, not to aim better. Naming it in the same breath as a hand click sent
+   him hunting for a mark he had never touched."
   [sol]
   (let [rms (:rms-px sol)
-        out (mapv :ci (:outliers sol))]
+        out (mapv :ci (:outliers sol))
+        picks (pnp-picks)
+        prop? (fn [ci] (boolean (:proposed? (get picks ci))))
+        clicked (filterv (complement prop?) out)
+        guessed (filterv prop? out)
+        clean? (<= rms pnp/accept-rms-px)]
     (cond
-      (seq out)
-      (str "registrata sui restanti (" (.toFixed rms 1) "px), "
-           (if (> (count out) 1) "scartati i punti " "scartato il punto ")
-           (corner-labels out) ": riclicca" (if (> (count out) 1) "li" "lo")
-           " più preciso, o 'o' per scartarl" (if (> (count out) 1) "i" "o")
-           " (nascosto o non allineabile), poi 'r' — o vai avanti così")
+      ;; the drops bought a clean fit: they WERE the culprits, say so
+      (and (seq out) clean?)
+      (str "registrata sui restanti (" (.toFixed rms 1) "px)"
+           ;; a proposal excluded from the FIT is still on screen as a pick —
+           ;; say "escluse dal calcolo", not "tolte", and say who put them there
+           (when (seq guessed)
+             (str ", escluse dal calcolo " (if (> (count guessed) 1) "le proposte automatiche "
+                                               "la proposta automatica ")
+                  (corner-labels guessed)
+                  " (" (if (> (count guessed) 1) "le ha messe" "l'ha messa")
+                  " il programma, non c'è niente da ricliccare)"))
+           (when (seq clicked)
+             (str ", scartat" (if (> (count clicked) 1) "i i punti " "o il punto ")
+                  (corner-labels clicked)
+                  ": riclicca" (if (> (count clicked) 1) "li" "lo")
+                  " più preciso, o 'o' per scartarl" (if (> (count clicked) 1) "i" "o")
+                  " (nascosto o non allineabile), poi 'r' — o vai avanti così")))
+      ;; the rms did NOT collapse: nothing here is a single culprit
       (> rms pnp/accept-rms-px)
-      (str "rms alto (" (.toFixed rms 1) "px) senza un singolo colpevole: clicca più "
-           "preciso, o la faccia dichiarata è sbagliata; se resta, segnalamelo")
+      (str "rms alto (" (.toFixed rms 1) "px)"
+           (when (seq out)
+             (str " anche togliendo " (corner-labels out)))
+           ": NON è un punto solo — l'errore è sparso su tutti, e togliere i"
+           " peggiori non lo fa crollare. Non ricliccare a caso: controlla la"
+           " FACCIA dichiarata degli anelli e la focale; se restano giuste,"
+           " segnalamelo")
       :else
       (str "fit pulito, rms " (.toFixed rms 2) "px"))))
 
@@ -2632,8 +2670,14 @@
                     :outliers (count outlier-cis)})
             (swap! session assoc-in [:pnp-residuals idx] residuals)
             (swap! session assoc-in [:pnp-outliers idx] outlier-cis)
-            ;; tee up the first rejected corner for an immediate re-click
-            (when (seq outlier-cis)
+            ;; Tee up the first rejected corner for an immediate re-click —
+            ;; but ONLY when dropping it actually bought a clean fit. Above the
+            ;; bar the cleaner has merely removed the worst two of a uniformly
+            ;; bad fit (see pnp-diagnosis), and arming one of them hands the
+            ;; user the very gesture that cannot help: re-click an innocent
+            ;; point. Measured on battiscopa3 grab-01 (2026-08-30) — four solves,
+            ;; four different pairs armed, none of them the disease.
+            (when (and (seq outlier-cis) (<= (:rms-px sol) pnp/accept-rms-px))
               (swap! session assoc :pnp-armed (first (sort outlier-cis))))
             (redraw-pnp-preview!)
             (redraw-overlay-dots!)
@@ -2768,6 +2812,57 @@
           (state/capture-println
            "     poi ri-registra questa foto: se il residuo crolla, era quello."))))))
 
+(defn- retry-on-hand-picks!
+  "When a settled fit sits ABOVE the acceptance bar and part of the picks are
+   automatic proposals, solve again on the HAND CLICKS ALONE — and if THAT is
+   clean, throw the proposals away and keep it.
+
+   A proposal is the previous pose's own guess, blob-snapped to whatever disc
+   was nearest; when the previous pose was wrong the guesses are wrong together,
+   and being the majority they set the fit. Measured on battiscopa3 grab-01
+   (2026-08-30): eleven hand clicks, every one of them within a pixel of a
+   detected disc, fit at 9.2px — clean. The same clicks plus seventeen proposals
+   fit at 13.8px, over the bar, and the cleaner then rejected two of HIS points
+   (one of which was itself a proposal he had never placed). Four solves in a
+   row, four different pairs accused, the photograph never registering.
+
+   The camera-behind rescue already learned this (grab-04, 30/8) and does the
+   same thing at the end of its chain. This is the plain over-the-bar case,
+   which is far commoner and had no such fallback. Guesses do not get to
+   outvote the clicks.
+
+   Returns the new solve when it took over, nil otherwise. Nothing is dropped
+   unless the hand-only fit is BOTH clean and physically possible — a smaller
+   point set is easier to fit, so 'better rms' alone would be no evidence."
+  [sol iw ih]
+  (let [idx (:current-idx @session)
+        picks (pnp-picks)
+        hand (into {} (remove (comp :proposed? val) picks))]
+    (when (and sol
+               (> (:rms-px sol) pnp/accept-rms-px)
+               (< (count hand) (count picks))
+               (>= (count hand) (min-pnp-picks)))
+      (let [targets (pnp-targets)
+            k (session-intrinsics iw ih)
+            corr (vec (for [[ci {:keys [px]}] hand]
+                        {:ci ci :world (:obj (nth targets ci)) :px px}))
+            try-sol (pnp/solve-pnp corr k {})
+            sees? (and try-sol
+                       (or (nil? (some :normal targets))
+                           (bridge/camera-sees-marks? targets (mapv :ci corr) (:pose try-sol))))]
+        (when (and try-sol sees? (<= (:rms-px try-sol) pnp/accept-rms-px))
+          ;; drop the guesses and re-solve through the normal path, so the pose
+          ;; is applied and the residual/outlier overlays are rebuilt on the set
+          ;; that actually produced it. If that path refuses after all, put the
+          ;; picks back: a rescue that does not land must leave no trace.
+          (swap! session update-in [:pnp-picks idx]
+                 (fn [m] (into {} (remove (comp :proposed? val) m))))
+          (let [applied (solve-and-apply! iw ih)]
+            (if (and applied (not= applied ::refused))
+              (assoc applied :hand-only (- (count picks) (count hand)))
+              (do (swap! session assoc-in [:pnp-picks idx] picks)
+                  nil))))))))
+
 (defn- on-solve-pnp!
   "Solve the current photo's declared correspondences (robustly — a mislabeled
    corner is auto-rejected) and APPLY the pose, then STAY in PnP mode: rejected
@@ -2787,7 +2882,10 @@
         (if-let [sol (let [r (solve-and-apply! iw ih)]
                        (when-not (= r ::refused) r))]
           (let [added (propose-and-snap! (:pose sol) (session-intrinsics iw ih))
-                final (if (pos? added) (or (solve-and-apply! iw ih) sol) sol)]
+                settled (if (pos? added) (or (solve-and-apply! iw ih) sol) sol)
+                ;; over the bar with guesses in the set? try the clicks alone
+                rescued (retry-on-hand-picks! settled iw ih)
+                final (or rescued settled)]
             (when-let [[iw2 ih2] (backdrop/image-size)]
               (cage-phase-report! final
                                   (mapv (fn [[ci {:keys [px]}]] [ci px]) (pnp-picks))
@@ -2795,7 +2893,11 @@
                                   (session-intrinsics iw2 ih2)))
             (set-status-message!
              (str "PnP " (name (:method final)) ": " (pnp-diagnosis final)
-                  (when (pos? added)
+                  (when-let [dropped (:hand-only final)]
+                    (str " · le " dropped " proposte automatiche remavano contro"
+                         " (" (.toFixed (:rms-px settled) 1) "px con loro): tolte,"
+                         " registrata sui tuoi soli click"))
+                  (when (and (pos? added) (not (:hand-only final)))
                     (str " · " added " " (pnp-noun) " agganciati in automatico"))
                   ;; A solve that had to reinterpret the picks says so HERE: the
                   ;; status line is written once per gesture, so a message set
@@ -5895,6 +5997,18 @@
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
               (cond
+                ;; ORDER MATTERS, and it was the wrong way round until 2026-08-30.
+                ;; Above the bar there is no ✓ and there are no culprits: the
+                ;; cleaner dropped the worst two of a fit that is bad all over,
+                ;; and pointing at them in red sends the user to re-click points
+                ;; that are fine (Vincenzo, battiscopa3 grab-01 — his clicks sat
+                ;; within a pixel of a detected disc and got the blame anyway).
+                (and rms (> rms pnp/accept-rms-px))
+                (str "⚠ rms alto (" (.toFixed rms 1) "px)"
+                     (when (seq outliers)
+                       (str ", e togliere " (corner-labels outliers) " non lo fa scendere"))
+                     " — non è un punto solo: controlla la FACCIA dichiarata degli"
+                     " anelli e la focale, poi 'r'")
                 (seq outliers)
                 (str "✓ registrata" (when rms (str " (rms " (.toFixed rms 1) "px)")) " — "
                      (if (> (count outliers) 1) "i punti " "il punto ") (corner-labels outliers)
@@ -5904,9 +6018,6 @@
                      " con la gomma (clic destro), o 'o' per scartarl"
                      (if (> (count outliers) 1) "i" "o") " (nascosto o non allineabile), poi 'r'"
                      " — oppure vai avanti così.")
-                (and rms (> rms pnp/accept-rms-px))
-                (str "⚠ rms alto (" (.toFixed rms 0) "px) senza un colpevole singolo — "
-                     "clicca più preciso o controlla la faccia dichiarata")
                 solved?
                 (str "✓ fit pulito, rms " (.toFixed rms 1) "px — 'p'/Esci, o ']' per un'altra foto")
                 (nil? armed)

@@ -38,13 +38,18 @@ uno, riscrivi codice sbagliato — è successo):
    sotto la lente sbagliata leggono la famiglia specchiata e fabbricano falsi
    GEMELLO. Ora c'è il gate (`cage-obs-focal-ok?`) + la focale nell'impronta.
 
-**Cosa fare per primo (gate live pendente)**: i tre TOGGLE PER-ANELLO della
-faccia (`12ba387`, idea di Vincenzo) sono cablati ma MAI provati dal vivo. Il
-giro da collaudare su grab-04: Azzera → dichiara le facce che vede (Zm quasi
-certo) → click → `a`. Atteso ~10-11px (misurato dalla sonda sui suoi click
-coi nomi giusti). Se regge, stesso giro sulle altre foto, poi `R`.
+**Cosa fare per primo**: i toggle delle facce hanno PASSATO il primo giro vivo
+(grab-01, 30/8 notte) e hanno subito trovato altro — vedi «Ottavo giro live»
+sotto. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
+possibili e i suoi click cadono a 0–1px dai dischetti rilevati: il fit non
+scendeva per colpa delle PROPOSTE automatiche, e il verdetto accusava lui.
+Chiuso: verdetto col test del crollo, niente «riclicca» sulle proposte, niente
+✓ e niente pallino armato sopra l'asticella, e il ripiego sui soli click a mano
+(`retry-on-hand-picks!`, 13.8 → 9.2px misurati). **Gate live pendente**: rifare
+il giro su grab-01 — Azzera → facce (Xm Ym Zp) → click → `r` — atteso ~9.2px con
+xm05/xm08 accusati a ragione (lì il crollo c'è). Poi le altre foto, poi `R`.
 
-**Difetti aperti, nominati, nessuno chiuso** (in ordine di rendimento):
+**Difetti aperti, nominati** (in ordine di rendimento):
 - **Memoria per-camera della focale** (`~/.ridley/`): la 44 è stata misurata
   due volte e ogni sessione nuova riparte da 48. È la trappola che ha morso
   più di ogni altra cosa in questa settimana.
@@ -56,7 +61,9 @@ coi nomi giusti). Se regge, stesso giro sulle altre foto, poi `R`.
   palcoscenico P4b.
 - **Accettazione senza asticella**: «registrata sui restanti (72.1px)» — il
   retry senza outlier accetta QUALUNQUE rms. Sopra ~2× l'asticella deve
-  rifiutare, non persistere una posa selvaggia.
+  rifiutare, non persistere una posa selvaggia. (Il 30/8 notte è stata tolta
+  almeno la BUGIA: sopra l'asticella niente ✓, niente colpevoli nominati e
+  niente pallino armato — ma la posa selvaggia si persiste ancora.)
 - **Rinomina prima del solve**: `relabel-picks!` rinomina PRIMA, e un solve poi
   rifiutato lascia i nomi del gemello sui pick (viola «un soccorso che non
   compra un fit sotto soglia non rinomina»; il rollback attraversa il confine
@@ -66,9 +73,14 @@ coi nomi giusti). Se regge, stesso giro sulle altre foto, poi `R`.
 **Strumenti nuovi di questa settimana, usali**: `CAGE_AUTO_SEED=<n>` (la sonda
 del seme: click di una foto → distanza dal candidato rilevato, solve sui soli
 click, migliore rietichettatura per anello — ha chiuso due casi che a occhio
-erano indecidibili), `CAGE_AUTO_PICKS_FILE=<json>` (per set di click che non
-sono mai arrivati allo stato: il rifiuto camera-dietro non li salva),
-`CAGE_AUTO_PHASES`, `CAGE_AUTO_NOCTX`, `CAGE_AUTO_ZERO`, `CAGE_AUTO_CTXONLY`.
+erano indecidibili), `CAGE_AUTO_FIT=<n>` (il fit dell'app smontato: click a mano
+contro click+proposte, e la TRACCIA onesta del pulitore — è la sonda che dice se
+uno scarto è un colpevole o un capro espiatorio), `CAGE_AUTO_FACE=<n>` (le otto
+dichiarazioni di faccia sui soli click, filtrate dal test fisico: l'rms da solo
+sceglie SEMPRE la faccia girata via), `CAGE_AUTO_PICKS_FILE=<json>` (per set di
+click che non sono mai arrivati allo stato: il rifiuto camera-dietro non li
+salva), `CAGE_AUTO_PHASES`, `CAGE_AUTO_NOCTX`, `CAGE_AUTO_ZERO`,
+`CAGE_AUTO_CTXONLY`.
 
 **Come lavorare con Vincenzo su questo fronte** (confermato tre volte questa
 settimana): i suoi log incollati sono lo strumento di misura principale, e il
@@ -373,6 +385,64 @@ stesso: 3 passi, faccia intatta). Suite 993/0.
 NB di collaudo: il pannello mostra i toggle solo su proxy GABBIA; la regola
 del passetto (dal dischetto grande verso il pallino piccolo: antiorario = p,
 orario = m) sta nel tooltip di ogni bottone.
+
+**Ottavo giro live (30/8 notte, grab-01 di battiscopa3, primo giro COI TOGGLE
+delle facce) — «mi chiede di correggere punti che credo siano giusti»: aveva
+ragione, e il difetto stava nel VERDETTO, non nei suoi click.** Il log: quattro
+solve di fila fra 12.8 e 14.6px, ognuna che accusa una COPPIA DIVERSA
+(#xm10,#ym10 → #xm10,#xm11 → #xm03,#xm08 → #xm08,#xm11). Sonde nuove al banco
+(`CAGE_AUTO_FIT=<n>`, la traccia onesta del pulitore; `CAGE_AUTO_FACE=<n>`, le
+otto dichiarazioni di faccia filtrate dal test fisico), quattro misure:
+1. **Le facce che ha dichiarato sono le uniche possibili.** Delle 8
+   combinazioni, `xm ym zp` — la sua — è l'unica che non mette la camera dietro
+   dischetti fotografati. La migliore per rms (`xp ym zm`, 4.9px contro 9.2)
+   è IMPOSSIBILE: la trappola attraverso-la-plastica un'altra volta, il
+   residuo non vede la faccia e sceglie sempre quella girata via.
+2. **I suoi click sono ottimi**: i sette dell'anello X cadono a **0–1px** dal
+   dischetto RILEVATO.
+3. **Sui suoi soli 11 click il fit è 9.2px** — sotto l'asticella. Con in mezzo
+   le **17 proposte automatiche**: 13.8px, sopra. Le proposte costavano 4.6px.
+4. **La traccia su tutti e 28**: 15.5 → 14.6 → 13.8 → 12.6 → 11.7. Nove decimi
+   di pixel per scarto, **nessun crollo**; i residui sono un continuo da 28.8 a
+   0.8px. Non c'è un outlier: c'è un modello sbagliato (le proposte).
+
+Quattro difetti, tutti chiusi in questa fetta:
+- **L'accusa senza il test del crollo** (la causa della sua domanda).
+  `pnp-diagnosis` nominava gli scartati come colpevoli ogni volta che il
+  pulitore ne aveva scartato uno — senza mai chiedersi se il residuo fosse
+  CROLLATO. Il criterio sta nella docstring di `accept-rms-px` dal giorno in cui
+  è stata scritta («drop the worst and refit — if the rms collapses, that corner
+  was the culprit and the rest were innocent») e non era mai stato applicato.
+  Sopra l'asticella il pulitore ha solo tolto i due peggiori di un fit brutto
+  dappertutto, e QUALI due è arbitrario: ecco le quattro coppie diverse. Ora
+  sopra l'asticella il messaggio dice che non è un punto solo e manda a
+  controllare faccia e focale.
+- **«Riclicca più preciso» su un punto mai cliccato**: `#xm11` (e prima
+  `#xm03`, per cui ha speso una 'o') erano PROPOSTE automatiche. Una proposta
+  non si riclicca — si toglie; il messaggio ora le separa dai suoi click.
+- **Il ✓ verde e il pallino rosso armato sopra l'asticella**: il pannello
+  scriveva «✓ registrata (rms 13.8px) — i punti … non si allineano» e
+  `solve-and-apply!` ARMAVA uno degli innocenti per il riclick immediato — cioè
+  gli metteva in mano proprio il gesto inutile. Ordine del `cond` invertito,
+  armamento condizionato al crollo.
+- **Le proposte battevano i click** (`retry-on-hand-picks!`, nuovo): se il fit
+  assestato sta sopra l'asticella e nel set ci sono proposte, si risolve di
+  nuovo sui SOLI click a mano; se quello è pulito E fisicamente possibile, le
+  proposte si buttano e il messaggio lo dice. Misurato su grab-01: 13.8 → 9.2px.
+  La catena camera-dietro aveva già imparato questa lezione (grab-04, 30/8) ma
+  solo per il proprio rifiuto; il caso comune — sopra l'asticella e basta — non
+  aveva la stessa rete. Nulla viene buttato se il fit a mano non compra
+  davvero: meno punti sono più facili da fittare, quindi «rms migliore» da solo
+  non è prova.
+
+Test: `a-fit-that-does-not-collapse-has-no-single-culprit` (pnp-test) — asserisce
+il discriminante su cui il verdetto ora poggia: un mark scambiato CROLLA sotto
+l'asticella quando lo togli, una lente sbagliata del 10% no (due scarti lasciano
+in piedi più del 75% dell'errore).
+
+RESIDUO ONESTO su grab-01, e ora l'app lo dirà bene: tolte le proposte, il
+pulitore scarta xm05 e xm08 con un crollo VERO (17.8 → 12.5 → 9.2px). Quei due
+valgono un riclick — sono l'unica cosa che gli era stata chiesta a ragione.
 
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di

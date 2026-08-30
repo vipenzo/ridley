@@ -491,8 +491,157 @@
                                "px · " (:nout best) " scartati")))))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
+(defn- fit-probe!
+  "CAGE_AUTO_FIT=<n>: the app's OWN solve on photo n (1-based), taken apart —
+   hand clicks alone vs hand+proposals, and the GREEDY DROP TRACE (rms after
+   each rejection). Built the night Vincenzo asked why the app kept telling him
+   to re-click points he was sure of (battiscopa3 grab-01, 30/8): the answer is
+   in the trace — when the rms does not COLLAPSE on a drop, the dropped point
+   was not the culprit, it was merely the worst of a uniformly bad fit."
+  []
+  (let [n (js/parseInt (aget (.-env js/process) "CAGE_AUTO_FIT") 10)
+        idx (dec n)
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse) (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        proxy (cage/registration-cage :d 176 :phases phases)
+        targets (cage-targets proxy)
+        picks (get-in state [:pnp (keyword (str idx)) :picks])
+        entry (fn [[k v]] (let [t (nth targets (js/parseInt (name k) 10))]
+                            {:ci (:id t) :world (:obj t) :normal (:normal t)
+                             :px (:px v) :prop? (boolean (:proposed? v))}))
+        all (mapv entry picks)
+        hand (filterv (complement :prop?) all)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        file (nth files idx)]
+    (-> (decode (.join path dir file))
+        (.then
+         (fn [res]
+           (let [{:keys [w h]} (sampler res)
+                 intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                 solve (fn [cs] (when (>= (count cs) 6) (pnp/solve-pnp (vec cs) intr {})))
+                 ;; RAW fit, no internal cleaning, so each row of the trace is
+                 ;; the honest rms of exactly that set (solve-pnp with its own
+                 ;; rejection on would nest a cleaning inside every row)
+                 raw (fn [cs] (when (>= (count cs) 6)
+                                (pnp/solve-pnp (vec cs) intr {:max-outliers 0})))
+                 ;; the greedy loop of solve-pnp, printed: rms of the FULL set,
+                 ;; then after each worst-point rejection
+                 trace (fn [cs]
+                         (loop [cs (vec cs) out [] acc []]
+                           (if-let [r (raw cs)]
+                             (let [acc (conj acc [(count cs) (:rms-px r) (last out)])]
+                               (if (or (<= (count cs) 6) (>= (count out) 4))
+                                 acc
+                                 (let [worst (apply max-key :residual-px (:per-point r))]
+                                   (recur (vec (remove #(= (:ci %) (:ci worst)) cs))
+                                          (conj out (:ci worst)) acc))))
+                             acc)))
+                 show (fn [tag cs]
+                        (println (str "  " tag " (" (count cs) " punti):"))
+                        (doseq [[nn rms dropped] (trace cs)]
+                          (println (str "    n=" nn " rms " (fmt rms 1) "px"
+                                        (when dropped (str "   ← tolto " dropped)))))) ]
+             (println (str "\n=== sonda del fit: foto " n " (" file ") · " (count all)
+                           " punti (" (count hand) " a mano, " (- (count all) (count hand))
+                           " proposte) · focale " (fmt focal 1) "mm ==="))
+             (show "TUTTI (come fa l'app)" all)
+             (show "SOLO i tuoi click" hand)
+             (when-let [r (solve all)]
+               (println (str "  verdetto dell'app: rms " (fmt (:rms-px r) 1) "px, scartati "
+                             (pr-str (mapv :ci (:outliers r)))
+                             " — di cui proposte: "
+                             (pr-str (vec (for [o (:outliers r)
+                                                :let [e (first (filter #(= (:ci %) (:ci o)) all))]
+                                                :when (:prop? e)]
+                                            (:ci o)))))))
+             (println (str "  residui per punto (fit su TUTTI, ordinati):"))
+             (when-let [r (solve all)]
+               (doseq [p (sort-by :residual-px > (concat (:per-point r) (:outliers r)))]
+                 (println (str "    " (fmt (:residual-px p) 1) "px  " (:ci p)
+                               (when (:prop? (first (filter #(= (:ci %) (:ci p)) all)))
+                                 "  (proposta automatica)"))))))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
+(defn- face-probe!
+  "CAGE_AUTO_FACE=<n>: on photo n (1-based), the eight ways the three rings'
+   FACES can be declared, each scored on the user's HAND CLICKS alone and
+   filtered by the physical test (the disc was photographed, so the camera was
+   in front of it). The rms alone must never decide a face — through 3mm of
+   plastic the two faces are the same pixels — so the possible ones are listed
+   first and the error only ranks WITHIN them."
+  []
+  (let [n (js/parseInt (aget (.-env js/process) "CAGE_AUTO_FACE") 10)
+        idx (dec n)
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse) (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        proxy (cage/registration-cage :d 176 :phases phases)
+        targets (cage-targets proxy)
+        by-id (into {} (map (juxt :id identity) targets))
+        picks (get-in state [:pnp (keyword (str idx)) :picks])
+        hand (into {} (keep (fn [[k v]]
+                              (when-not (:proposed? v)
+                                [(:id (nth targets (js/parseInt (name k) 10))) (:px v)]))
+                            picks))
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        file (nth files idx)]
+    (-> (decode (.join path dir file))
+        (.then
+         (fn [res]
+           (let [{:keys [w h]} (sampler res)
+                 intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                 corr-of (fn [pm] (vec (for [[id px] pm :when (by-id id)]
+                                         {:ci id :world (:obj (by-id id)) :px px})))
+                 solve (fn [pm] (when (>= (count pm) 6) (pnp/solve-pnp (corr-of pm) intr {})))
+                 behind (fn [sol pm]
+                          (let [c (cam/camera-center (:pose sol))]
+                            (vec (for [[id _] pm
+                                       :let [t (by-id id) nrm (:normal t)]
+                                       :when (and nrm (neg? (la/v-dot nrm (la/v-sub c (:obj t)))))]
+                                   id))))
+                 flip-ring (fn [pm axis]
+                             (into {} (map (fn [[id px]]
+                                             [(if (= axis (cage/anchor-axis id))
+                                                (cage/relabel id {:flip-face? true :mirror? false :rot 0} 12)
+                                                id)
+                                              px])
+                                           pm)))
+                 face-of (fn [pm axis]
+                           (some (fn [[id _]]
+                                   (when (= axis (cage/anchor-axis id))
+                                     (or (:sign (cage/mark-parts id))
+                                         (:sign (cage/index-parts id)))))
+                                 pm))]
+             (println (str "\n=== sonda delle facce: foto " n " (" file ") · " (count hand)
+                           " click a mano · focale " (fmt focal 1) "mm ==="))
+             (doseq [fx [false true] fy [false true] fz [false true]]
+               (let [pm (cond-> hand
+                          fx (flip-ring :x) fy (flip-ring :y) fz (flip-ring :z))]
+                 (when-let [sol (solve pm)]
+                   (let [bh (behind sol pm)]
+                     (println (str "  x" (if (pos? (or (face-of pm :x) 0)) "p" "m")
+                                   " y" (if (pos? (or (face-of pm :y) 0)) "p" "m")
+                                   " z" (if (pos? (or (face-of pm :z) 0)) "p" "m")
+                                   "  rms " (fmt (:rms-px sol) 1) "px"
+                                   " · scartati " (pr-str (mapv :ci (:outliers sol)))
+                                   (if (seq bh)
+                                     (str " · IMPOSSIBILE: camera dietro a " (pr-str bh))
+                                     " · possibile"))))))))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
 (defn ^:export main [& _]
   (cond
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
     (aget (.-env js/process) "CAGE_AUTO_SEED") (seed-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_FIT") (fit-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_FACE") (face-probe!)
     :else (main*)))
