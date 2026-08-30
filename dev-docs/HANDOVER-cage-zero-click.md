@@ -3,17 +3,83 @@
 ## In una riga
 
 Vincenzo (2026-08-27): «se non riusciamo ad avere la registrazione automatica
-delle foto sarà tutto inutile». La fetta è partita lo stesso giorno: **2 foto su
-8 si registrano da sole** (camera a 1.0 e 3.5mm dalla mano, zero falsi), e le sei
-rifiutate muoiono TUTTE nello stesso punto — lo stadio delle ellissi. Il lavoro
-è alzare quel 2/8, e il banco per misurarlo è in piedi.
+delle foto sarà tutto inutile». La leva 1 (identità coi denti) e la leva 2
+(arbitro del gemello) sono DENTRO e misurate; al banco 2/8 vere con zero falsi
+e una registrazione a 0.2mm sulla sessione dichiarata. Ma la settimana dal vivo
+ha spostato il collo di bottiglia dall'algoritmo all'**INTERFACCIA DEL
+CLICK**: era il pannello a imporre facce sbagliate, ed è lì che nascevano tre
+serate di rifiuti.
 
 Entry point precedente, con tutta la storia della gabbia (detector, riletture,
 anello incollato a 90°, chiave di montaggio, portapezzi, la settimana
 dell'avvelenamento): `dev-docs/HANDOVER-cage-auto-detect.md`. Questo file è lo
 stato dei lavori per ripartire.
 
-**STATO AL 31/8, per chi riparte da qui**: la LEVA 2 — l'arbitro del gemello
+---
+
+## ATTERRAGGIO — 30/8 sera, leggi PRIMA questo
+
+**Dove siamo**: il meccanismo automatico regge (leve 1 e 2 costruite, testate
+993/0, misurate al banco). Il lavoro vivo è il flusso a mano di Vincenzo sulla
+sessione `~/Pictures/RidleyScan/battiscopa3` (5 grab, 1920×1440, lente 44
+manuale, gabbia `(registration-cage :d 176 :phases {:y 180 :x 180})`).
+
+**I tre fatti di dominio, verificati, che governano tutto** (se ne dimentichi
+uno, riscrivi codice sbagliato — è successo):
+1. **La gabbia è INCOLLATA** (attack). Il montaggio non è per-assemblaggio:
+   è una costante fisica come `:d`, cambiabile solo ristampando. Il pezzo si
+   riposiziona con gli stick, gli anelli mai. Perciò su gabbia DICHIARATA un
+   indice letto specchiato/girato accusa la REGISTRAZIONE, mai la gabbia.
+2. **Le fasi `{:y 180 :x 180}` sono vere e verificate tre volte** (palcoscenico
+   settimane fa, banco senza fasi che rilegge k6/k6, app col modello fasato che
+   legge k0). Dichiarate → tutti gli anelli nominali.
+3. **La lente è 44mm** (iPhone Continuity), MAI l'EXIF (i grab non ce l'hanno).
+   Il default 48 ha avvelenato tre serate di seguito: obs del montaggio nate
+   sotto la lente sbagliata leggono la famiglia specchiata e fabbricano falsi
+   GEMELLO. Ora c'è il gate (`cage-obs-focal-ok?`) + la focale nell'impronta.
+
+**Cosa fare per primo (gate live pendente)**: i tre TOGGLE PER-ANELLO della
+faccia (`12ba387`, idea di Vincenzo) sono cablati ma MAI provati dal vivo. Il
+giro da collaudare su grab-04: Azzera → dichiara le facce che vede (Zm quasi
+certo) → click → `a`. Atteso ~10-11px (misurato dalla sonda sui suoi click
+coi nomi giusti). Se regge, stesso giro sulle altre foto, poi `R`.
+
+**Difetti aperti, nominati, nessuno chiuso** (in ordine di rendimento):
+- **Memoria per-camera della focale** (`~/.ridley/`): la 44 è stata misurata
+  due volte e ogni sessione nuova riparte da 48. È la trappola che ha morso
+  più di ogni altra cosa in questa settimana.
+- **La gabbia orientabile col gizmo** (idea di Vincenzo, la fetta grossa):
+  quando il doppio pallino non si vede i nomi non hanno senso PER
+  COSTRUZIONE; lui risolve prendendo in mano la gabbia e appaiandola alla
+  foto. Virtualizzarlo dà facce giuste, nomi giusti E un seme umano per `a`
+  (altro colpo al cold start). Impianto da riusare: gizmo del proxy foto 0 +
+  palcoscenico P4b.
+- **Accettazione senza asticella**: «registrata sui restanti (72.1px)» — il
+  retry senza outlier accetta QUALUNQUE rms. Sopra ~2× l'asticella deve
+  rifiutare, non persistere una posa selvaggia.
+- **Rinomina prima del solve**: `relabel-picks!` rinomina PRIMA, e un solve poi
+  rifiutato lascia i nomi del gemello sui pick (viola «un soccorso che non
+  compra un fit sotto soglia non rinomina»; il rollback attraversa il confine
+  asincrono di `on-solve-pnp!`).
+- **COLD START** (sotto): chiuso per gabbie dichiarate, aperto per le altre.
+
+**Strumenti nuovi di questa settimana, usali**: `CAGE_AUTO_SEED=<n>` (la sonda
+del seme: click di una foto → distanza dal candidato rilevato, solve sui soli
+click, migliore rietichettatura per anello — ha chiuso due casi che a occhio
+erano indecidibili), `CAGE_AUTO_PICKS_FILE=<json>` (per set di click che non
+sono mai arrivati allo stato: il rifiuto camera-dietro non li salva),
+`CAGE_AUTO_PHASES`, `CAGE_AUTO_NOCTX`, `CAGE_AUTO_ZERO`, `CAGE_AUTO_CTXONLY`.
+
+**Come lavorare con Vincenzo su questo fronte** (confermato tre volte questa
+settimana): i suoi log incollati sono lo strumento di misura principale, e il
+suo DUBBIO va preso sul serio — «sei sicuro della diagnosi? io le vedo poco
+mosse» ha ribaltato una mia sentenza sbagliata, e «avevo messo p perché mi
+presentava solo quelli» ha trovato la causa a monte di tre serate. Prima di
+sentenziare su una foto: SONDA, non congettura.
+
+---
+
+**La leva 2, com'è fatta (costruita 29–30/8)**: l'arbitro del gemello
 per semi macchina — è COSTRUITA, TESTATA (991/0) e MISURATA, e strada facendo
 ha CONDANNATO UNA POSA A MANO della sessione-verità. Il meccanismo, nato da
 tre giri di banco che hanno ucciso tre specie di impostori una per volta:
@@ -76,10 +142,15 @@ intrinseche stantie) da OGNI lettura accettata ('a' seminato e zero-click);
 il ramo zero-click passa `:mounting` (voto leave-one-out) + `:blobs`, e
 **`:teeth?` si accende da solo quando la sessione ha montaggio** (denti solo
 dove l'arbitro ha giurisdizione — contextless coi denti = i gemelli del
-30/8). Messaggi nuovi, solo quando c'è da dirlo: «anello X montato
-RIBALTATO — rimontalo dritto» e «qui l'indice si legge DIVERSAMENTE dalle
-altre foto: una delle due registrazioni è il GEMELLO» (vale anche per il
-flusso a mano — è così che si sarebbe scoperta foto 1).
+30/8). Il ramo SEMINATO riceve `:mounting` e `:declared-faces`. Messaggi,
+solo quando c'è da dirlo e mai più grandi delle prove (ogni riga è stata
+corretta da un log di Vincenzo): un `:rev` da UNA foto dice «in questa foto
+si legge specchiato, da solo non fa verdetto», col voto concorde dice
+«INCOLLATO ribaltato → ristampa» (mai «rimontalo», è impossibile); una
+contraddizione con la DICHIARAZIONE accusa la registrazione; uno zero moot su
+gabbia dichiarata accusa il click; un anello conteso riceve SOLO l'avviso di
+contesa; un doppio pallino cliccato ma non rilevato viene dichiarato tale
+(non conta nel voto).
 
 **GATE LIVE: PASSATO (Vincenzo, 29/8, log)** — su una sessione viva (foto
 senza EXIF, focale al default 48): due seeded a 6.2/9.4px, poi il **primo
@@ -771,7 +842,13 @@ ricablato quando la leva 1 (identificazione) è dentro.
   le diagnosi di `cage-mounting-suffix` — RIBALTATO / sessione col gemello),
   `cage-zero-phase-rescue!` (cabla `rescue-hand-zeros` in `solve-and-apply!`),
   `erase-pick-at!`/`pnp-on-contextmenu` (la gomma),
-  `on-refine-session!` (le guardie della rifinitura)
+  `on-refine-session!` (le guardie della rifinitura),
+  `toggle-cage-face!`/`visible-corner-set` (i tre toggle per-anello della
+  faccia, `:cage-face-choice` per foto), `declared-cage-mounting` (la
+  dichiarazione che arma l'arbitro dalla prima foto),
+  `cage-obs-focal-ok?` (niente voto a lente non misurata), e in
+  `solve-and-apply!` il ramo camera-dietro che riprova la catena di soccorso
+  sui SOLI click a mano buttando le proposte bloccanti
 - `test/ridley/photogrammetry/cage_auto_study.cljs` — il banco zero-click
 - `test/ridley/photogrammetry/match_cage_test.cljs` — sintetici + foto vera
 - `public/builtin-libraries/acquire-cage.clj` — stampa: anelli, chiave, slot,
@@ -779,4 +856,7 @@ ricablato quando la leva 1 (identificazione) è dentro.
 - Commit della settimana: `834c92b` detector → `fee7154`/`ab79a8b` read-crown →
   `c2dbee1` tasto a → `06eee7e` zero-indice/90° → `1e300b6` chiave → `c5d7692`
   portapezzi → `c341015`…`fdbfe01` guardie rifinitura → `1626c0a` zero click →
-  `b8a4bb8` leva 1 (denti) → `3a81ce4` leva 2 (arbitro del montaggio).
+  `b8a4bb8` leva 1 (denti) → `3a81ce4` leva 2 (arbitro del montaggio) →
+  `61cb20f` discriminante → `d678f15` veto anche a mano → `67b8494` gabbia
+  incollata → `b366a90` soccorso sui soli click → `12ba387` toggle delle
+  facce.

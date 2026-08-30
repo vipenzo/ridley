@@ -150,7 +150,25 @@ foto 1 della sessione-verità è un gemello a 180° (il vecchio «2/8» era
 sessione, i denti si accendono da soli dove il voto ha giurisdizione, e i
 messaggi diagnosticano «anello RIBALTATO» e «sessione col gemello». Resta
 il COLD START (sessione senza voto = senza arbitro) → prossima fetta:
-riconciliazione di sessione; foto 3 muore invece alla SELEZIONE (il suo
+riconciliazione di sessione. *Settimana dal vivo (28–30/8), il collo di
+bottiglia si sposta sull'INTERFACCIA*: quattro sere di rifiuti su sessioni
+vere hanno esposto — nell'ordine — la trappola della focale di default (48 su
+camera da 44: obs del montaggio avvelenate, falsi GEMELLO; ora gate + focale
+nell'impronta + azzeramento su rifinitura/slider), lo stato stantio fra
+sessioni di lavoro, le proposte della vecchia posa che bloccavano la cura
+(ora la catena di soccorso riprova sui SOLI click a mano), e infine la causa
+a monte di tutto: **il pannello imponeva la faccia** che la posa credeva, e
+i nomi sbagliati nascevano lì — cura di Vincenzo, tre toggle per-anello
+(`:cage-face-choice`, con `:declared-faces` fino dentro `read-crown`), gate
+live pendente. Correzione di dominio dello stesso giro: **la gabbia è
+INCOLLATA**, il montaggio è una costante fisica → la dichiarazione `:phases`
+arma l'arbitro dalla prima foto (cold start chiuso per gabbie dichiarate) e
+uno specchiato accusa la registrazione, mai la gabbia. In coda, ad alto
+rendimento: memoria per-camera della focale, e la GABBIA ORIENTABILE COL
+GIZMO (idea di Vincenzo: quando il doppio pallino non si vede i nomi non
+hanno senso per costruzione — lui appaia la gabbia fisica alla foto;
+virtualizzarlo dà facce, nomi e un seme umano per 'a'). Foto 3 muore invece
+alla SELEZIONE (il suo
 anello non si assembla mai in un'ipotesi, nemmeno col concentrico — cablato
 dietro `:concentric?`, misurato identico). Banco `node out/cage-auto.js` su
 `test-assets/cage-battiscopa` (verità = la sessione a mano; `CAGE_AUTO_TEETH`
