@@ -3040,20 +3040,39 @@
                                                    (< (Math/hypot (- u qu) (- v qv))
                                                       propose-clear-px))
                                                  kept-px))
-                           [added shadowed]
-                           (reduce (fn [[n s] {:keys [ci px]}]
+                           ;; which face of each ring the HAND clicked — a fact
+                           ;; that outranks the pose's own guess. The Z-only seed
+                           ;; is planar and its wrong homography branch believes
+                           ;; the OTHER face of X visible, proposing xp over a
+                           ;; clicked zero-xm: mixed faces, camera-dietro certo
+                           ;; (battiscopa3 foto 2, tre sere di fila)
+                           hand-face (into {} (keep (fn [[ci v]]
+                                                      (when-not (:proposed? v)
+                                                        (when-let [t (nth targets ci nil)]
+                                                          (when-let [p (or (cage/mark-parts (:id t))
+                                                                           (cage/index-parts (:id t)))]
+                                                            [(:axis p) (:sign p)]))))
+                                                    (get-in @session [:pnp-picks idx])))
+                           against-hand? (fn [id]
+                                           (when-let [p (or (cage/mark-parts id)
+                                                            (cage/index-parts id))]
+                                             (when-let [s (hand-face (:axis p))]
+                                               (not= s (:sign p)))))
+                           [added shadowed contrari]
+                           (reduce (fn [[n s c] {:keys [ci px]}]
                                      (let [j (id->ci ci)]
                                        (cond
-                                         (or (nil? j) (contains? kept j)) [n s]
-                                         (on-your-disc? px) [n (inc s)]
+                                         (or (nil? j) (contains? kept j)) [n s c]
+                                         (against-hand? ci) [n s (inc c)]
+                                         (on-your-disc? px) [n (inc s) c]
                                          :else
                                          (do (swap! session assoc-in [:pnp-picks idx j]
                                                     {:px px
                                                      :screen (backdrop/screen-of-pixel
                                                               canvas (viewport/get-camera) px)
                                                      :proposed? true})
-                                             [(inc n) s]))))
-                                   [0 0] corr)
+                                             [(inc n) s c]))))
+                                   [0 0 0] corr)
                            zv (:zero-veto res)
                            ;; the hand reading measures the mounting too — and
                            ;; is measured BY it: an index read against the
@@ -3109,7 +3128,11 @@
                                           "adesso lo misura proprio da quello zero"))
                                    (when (pos? shadowed)
                                      (str " · " shadowed " proposte scartate: cadevano su "
-                                          "dischetti già tuoi, sotto un altro nome")))]
+                                          "dischetti già tuoi, sotto un altro nome"))
+                                   (when (pos? contrari)
+                                     (str " · " contrari " proposte scartate: stavano sulla "
+                                          "FACCIA OPPOSTA a un anello che hai cliccato tu — "
+                                          "mi fido dei tuoi occhi, non della posa")))]
                        (say!
                         (if-let [ps (:phase-suspect res)]
                           ;; The one assembly error nothing else can see, found by
@@ -6503,7 +6526,15 @@
                                             {:cage {:d (:cage-d pm)
                                                     :marks (:cage-marks pm)
                                                     :phases (:cage-phases pm)
-                                                    :index-phase (:cage-index-phase pm)}
+                                                    :index-phase (:cage-index-phase pm)
+                                                    ;; slot geometry moves with
+                                                    ;; the lens: obs saved at one
+                                                    ;; focal must not judge a
+                                                    ;; session running another
+                                                    ;; (battiscopa3: obs at 48
+                                                    ;; accusavano le letture a 44
+                                                    ;; per due sere)
+                                                    :focal-mm (:focal-mm @session)}
                                              :by-photo
                                              (into {} (for [[idx obs] (:cage-mounting-obs @session)
                                                             :when (seq obs)]
@@ -6594,7 +6625,11 @@
       (when-let [by-photo (:by-photo cage-mounting-obs)]
         (let [pm (:proxy-mesh @session)
               now {:d (:cage-d pm) :marks (:cage-marks pm)
-                   :phases (:cage-phases pm) :index-phase (:cage-index-phase pm)}
+                   :phases (:cage-phases pm) :index-phase (:cage-index-phase pm)
+                   ;; the focal this state file is about to restore — obs from
+                   ;; a file saved at another lens (or before the lens was in
+                   ;; the fingerprint at all) are dropped
+                   :focal-mm (:mm focal)}
               then (:cage cage-mounting-obs)]
           (if (= now then)
             (swap! session assoc :cage-mounting-obs
