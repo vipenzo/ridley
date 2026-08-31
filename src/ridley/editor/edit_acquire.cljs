@@ -2276,21 +2276,39 @@
                  nil))))
 
 (defn- rescue-face-phrase
-  "Which FACE each ring ends up on once `flip` is applied to `cis` — 'X sulla
-   faccia p, Y sulla m, Z sulla m'. The relabel search's answer stated in the
-   only vocabulary the user acts in: the three face buttons."
-  [flip targets cis]
+  "The relabel search's answer as a THING TO PRESS. Given `flip` (the search's
+   ci→ci permutation) and the faces the user has already declared, return the
+   DELTA — the face buttons that must change — not the full reading.
+
+   Stating all three faces made the user diff them against his own declaration
+   in his head, and he did not (Vincenzo, grab-05, 31/8: the message said 'legge
+   X sulla faccia m, Z sulla faccia m', he had declared Xm Ym Zp, the answer was
+   the single button Zm, and what he reported was «ho provato a rifarla ma non
+   va»). A correct answer nobody can act on is not an answer.
+
+   Returns nil when the reading agrees with what is already declared — there the
+   faces are not the story and saying anything about them would mislead."
+  [flip targets cis declared]
   (let [face (fn [ci] (let [id (:id (nth targets ci))]
                         (or (cage/mark-parts id) (cage/index-parts id))))
         by-axis (into (sorted-map)
                       (keep (fn [ci] (when-let [p (face (flip ci))]
                                        [(:axis p) (:sign p)])))
-                      cis)]
-    (if (empty? by-axis)
-      "gli stessi anelli"
-      (str/join ", " (for [[a s] by-axis]
-                       (str (str/upper-case (name a)) " sulla faccia "
-                            (if (pos? s) "p" "m")))))))
+                      cis)
+        btn (fn [a s] (str (str/upper-case (name a)) (if (pos? s) "p" "m")))
+        changed (filterv (fn [[a s]] (not= s (get declared a))) by-axis)]
+    (cond
+      (empty? by-axis) nil
+      ;; every ring already declared the way the search reads it
+      (empty? changed) nil
+      ;; only some rings differ, and the rest are declared and agree
+      :else
+      (str "cambia " (if (> (count changed) 1) "i bottoni " "il bottone ")
+           (str/join " e " (map (fn [[a s]] (btn a s)) changed))
+           (when-let [ok (seq (remove (fn [[a _]] (contains? (set (map key changed)) a))
+                                      by-axis))]
+             (str " (" (str/join " " (map (fn [[a s]] (btn a s)) ok)) " " 
+                  (if (> (count ok) 1) "vanno bene" "va bene") ")"))))))
 
 (defn- cage-relabel-rescue
   "Recover a solve whose picks are RIGHT and whose labels are misread, one ring
@@ -2742,16 +2760,25 @@
                                                                       (* 2.0 pnp/accept-rms-px)))
                                                          (sort-by (comp :rms-px :sol))
                                                          first)]
-                                        (str "L'UNICA lettura fisicamente possibile dei tuoi click "
-                                             "chiude a " (.toFixed (:rms-px (:sol near)) 1)
-                                             "px (sopra l'asticella di "
-                                             (.toFixed pnp/accept-rms-px 0) ", per questo non la "
-                                             "applico da sola) e legge "
-                                             (rescue-face-phrase (:flip near) targets
-                                                                 (mapv :ci correspondences))
-                                             ". Se è quello che VEDI, dichiaralo coi bottoni delle "
-                                             "facce e ripremi 'r'; se non lo è, l'errore è nei nomi "
-                                             "dei singoli click. ")
+                                        (if-let [delta (rescue-face-phrase
+                                                        (:flip near) targets
+                                                        (mapv :ci correspondences)
+                                                        (get-in @session [:cage-face-choice idx]))]
+                                          ;; lead with the gesture, then the number
+                                          (str "LA MOSSA: " delta ", poi ripremi 'r'. "
+                                               "È l'unica lettura fisicamente possibile dei tuoi "
+                                               "click e chiude a "
+                                               (.toFixed (:rms-px (:sol near)) 1) "px. Non la "
+                                               "applico da sola perché rinominerebbe i tuoi click "
+                                               "sulla forza di un fit sopra l'asticella; "
+                                               "dichiarandola tu, la rinomina non serve. Se quella "
+                                               "faccia NON è quella che vedi, allora l'errore è nei "
+                                               "nomi dei singoli click. ")
+                                          (str "L'unica lettura fisicamente possibile dei tuoi click "
+                                               "sta sulle facce che hai già dichiarato e chiude a "
+                                               (.toFixed (:rms-px (:sol near)) 1)
+                                               "px, sopra l'asticella: le facce non sono il "
+                                               "problema, i nomi dei singoli click sì. "))
                                         ;; "I tried and it wasn't enough" is a
                                         ;; LIE when the search never ran, and it
                                         ;; sends the user looking for a bad click

@@ -42,7 +42,10 @@ uno, riscrivi codice sbagliato — è successo):
 (grab-01, 30/8 notte) e hanno subito trovato altro — vedi «Ottavo giro live» e
 «Nono giro live» sotto. Su grab-04 la dichiarazione non arrivava ai click già
 fatti (chiuso), e le facce vere di quella foto sono **Xp Ym Zm**, non le Xp Yp
-Zp dichiarate. Su grab-06 (foto 5) è la faccia X: **Xp Ym Zp**, non Xm. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
+Zp dichiarate. Su grab-06 (foto 5) è la faccia X: **Xp Ym Zp**, non Xm. Su
+grab-05 (foto 4) è la Z: **Xm Ym Zm**, non Zp — e con quella dichiarata la foto
+chiude a 11.4px, sotto l'asticella. Tre foto di fila con una faccia sbagliata:
+la faccia è la PRIMA cosa da rimettere in discussione quando il fit non scende. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
 possibili e i suoi click cadono a 0–1px dai dischetti rilevati: il fit non
 scendeva per colpa delle PROPOSTE automatiche, e il verdetto accusava lui.
 Chiuso: verdetto col test del crollo, niente «riclicca» sulle proposte, niente
@@ -559,6 +562,45 @@ allargare la ricerca non sposta le risposte che sappiamo giuste. Sonda:
 cliccare, e se il fit non scende è la prima cosa da rimettere in discussione —
 su tre foto di fila (grab-04, grab-06) la faccia dichiarata era sbagliata su
 uno o due anelli, e ogni cosa a valle nasceva avvelenata.
+
+**Undicesimo giro live (31/8, foto 4 = grab-05 di battiscopa3): «sulla focale
+dava problemi la 4… ho provato a rifarla ma non va».** Il messaggio nuovo del
+rifiuto AVEVA la risposta giusta e lui non l'ha potuta usare — ed è quello il
+difetto di questo giro.
+
+**La focale non c'entra** (era la sua ipotesi, misurata e scartata): sweep da 36
+a 52mm sui suoi pick, il minimo è piatto — 38mm→9.2px, 44mm→11.4px, 48mm→13.8px.
+Sei millimetri comprano due pixel: la 44 resta la lente verificata due volte, e
+non è lei a tenere alta questa foto. Quello che aveva mandato in vacca la
+rifinitura (10.993 → 47.1px, «la peggiore è la foto 4») era la foto 4 registrata
+con la faccia Z SBAGLIATA nel giro precedente: R stava misurando la lente su una
+posa avvelenata.
+
+**La foto 4 in chiaro**: l'unica lettura fisicamente possibile è **Xm Ym Zm** —
+lui aveva dichiarato **Zp**. Con Z sulla faccia m la traccia è 240.9 →
+**16.7** (tolto `xm09`, residuo 503px) → **11.4px** (tolto `xm04`, 24.7px):
+SOTTO l'asticella. Cioè la foto passa, e serviva un bottone solo. `xm09` sta a
+1px da un dischetto rilevato ma col nome sbagliato; `xm04` sta a 194px da
+qualunque candidato (lì il detector non vede niente).
+
+**IL DIFETTO: una risposta giusta che nessuno può eseguire.** Il messaggio
+diceva «legge X sulla faccia m, Z sulla faccia m» — vero — ma lui aveva
+dichiarato `Xm Ym Zp` e per ricavarne la mossa doveva confrontare tre lettere
+con le proprie a memoria. FIX: `rescue-face-phrase` ora emette il **DELTA
+rispetto alla dichiarazione corrente**, e il messaggio apre con il gesto:
+«LA MOSSA: cambia il bottone Zm (Xm va bene), poi ripremi 'r'». Se la lettura
+coincide con le facce già dichiarate, non parla di facce per niente e dice che
+il problema è nei nomi dei singoli click.
+
+**PATTERN ORMAI DA TRE FOTO, e la scelta di NON toccarlo**: la lettura giusta
+cade a un soffio dall'asticella (grab-04 14.0, grab-06 12.2, grab-05 12.7 nel
+soccorso mentre il solve piano ne fa 11.4) e viene rifiutata. Rilassare
+l'adozione violerebbe la regola pagata «un soccorso che non compra un fit sotto
+soglia non rinomina» — rinominare i click sulla forza di un fit sopra soglia
+persiste una congettura. La via d'uscita giusta è quella cablata qui: NON
+rinominare da soli, ma dire ALL'UTENTE quale bottone premere; dichiarata la
+faccia da lui, la rinomina non serve più e il solve normale ci arriva da sé
+(11.4px su grab-05).
 
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
