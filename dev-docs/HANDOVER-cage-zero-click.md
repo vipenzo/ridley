@@ -645,6 +645,57 @@ era una risposta giusta che nessuno poteva eseguire; oggi è una risposta
 AFFERMATA TROPPO FORTE. Ogni volta il codice sapeva abbastanza per dire il vero
 e diceva di più.
 
+**Tredicesimo giro (31/8, foto 4, set PULITO da 15 click): la disputa su Z
+resta APERTA, e stavolta una prova indipendente sta dalla parte di Vincenzo.**
+
+Il set nuovo è il migliore che questa foto abbia avuto: 8 click su 15 cadono a
+**1px** da un dischetto rilevato (xm00, xm05, xm10, ym00–ym03, ⊙ym). Nessuno
+scarto grossolano: il gate `gross-pick-px` lascia passare, e il messaggio torna
+ad affermare Zm — a 14.7px.
+
+**La sonda della predizione (`CAGE_AUTO_PREDICT`), costruita per rompere lo
+stallo senza usare i pick contesi**: si fitta la posa sui SOLI 8 click fidati
+(anelli X e Y, nessun pick di Z), rms 9.8px, e si chiede al modello dove cade
+l'anello Z:
+
+| mark | predetto | click di Vincenzo | distanza |
+|---|---|---|---|
+| zero-**zp** | [797 983] | [790 977] | **9px** |
+| zero-zm | [800 996] | [790 977] | 22px |
+| **zp00** | [858 992] | [845 986] | **14px** |
+| zm00 | [861 1005] | [845 986] | 25px |
+| **zp03** | [413 881] | [421 880] | **8px** |
+| zm03 | [414 894] | [421 880] | 16px |
+
+**Su tutti e tre i mark i suoi click stanno più vicini alle posizioni `zp` che
+alle `zm`, con un fattore ~2.** Cioè i NOMI che ha dato sono coerenti con dove
+il modello mette i mark zp — mentre il test delle normali dice che quella faccia
+è girata via di 44–48°. Le due prove si contraddicono e la foto non le concilia.
+
+**Cosa resta accertato, e cosa no**:
+- la sua REGOLA di lettura è giusta (sonda della chiralità, misurata: p =
+  antiorario in pixel);
+- i suoi click Z sono coerenti con le posizioni zp (prova indipendente sopra);
+- il test camera-dietro dice il contrario con margine largo (44–48°) — ma la
+  posa su cui poggia è fissata anche dall'anello **Y, la cui faccia è decisa da
+  soli 13–17°**: quello sì è un caso limite, e se Y è girato, Z lo segue;
+- **su questa foto il detector non vede NIENTE sull'anello Z** (dischetto
+  rilevato più vicino a ogni predizione: 45–202px), quindi non c'è un terzo
+  testimone.
+
+**Difetto chiuso in questo giro** (quello che lui ha riportato): «mi dice di
+cambiare il bottone Zm (ma è già Zp)». Il messaggio diceva «cambia il bottone
+Zm», che si legge «cambia il bottone Zm» — e se il pannello mostra Zp quel
+bottone non esiste. Ora dice **da → a**: «premi il bottone Zm al posto di Zp
+(Xm Ym restano come sono)», e apre con «LA MOSSA (SE SEI D'ACCORDO)», perché su
+questa foto l'app non ha titolo per dare un ordine.
+
+**PROSSIMA MOSSA PER CHIUDERLA, non ancora fatta**: la gabbia è INCOLLATA e la
+sessione ha altre foto registrate. Da quale lato del piano Z stava la camera in
+foto 4 è un fatto che le altre pose della sessione possono arbitrare — è la
+riconciliazione di sessione già in coda. Finché non c'è, su questa foto si segue
+la stampa (Vincenzo), non il banco.
+
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
 luminanza può ancora registrare (misurato sul sintetico nel test

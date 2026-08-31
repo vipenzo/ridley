@@ -2319,12 +2319,22 @@
       (empty? changed) nil
       ;; only some rings differ, and the rest are declared and agree
       :else
-      (str "cambia " (if (> (count changed) 1) "i bottoni " "il bottone ")
-           (str/join " e " (map (fn [[a s]] (btn a s)) changed))
+      ;; Name the button to press AND what is set now. "cambia il bottone Zm"
+      ;; reads as "change the Zm button" — and when the panel shows Zp there is
+      ;; no Zm button to change, so the instruction is nonsense at the very
+      ;; moment it matters (Vincenzo, 31/8: «mi dice di cambiare il bottone Zm
+      ;; (ma è già Zp)»). From → to, explicitly.
+      (str "premi " (if (> (count changed) 1) "i bottoni " "il bottone ")
+           (str/join " e " (map (fn [[a s]]
+                                  (str (btn a s)
+                                       (when-let [had (get declared a)]
+                                         (str " al posto di " (btn a had)))))
+                                changed))
            (when-let [ok (seq (remove (fn [[a _]] (contains? (set (map key changed)) a))
                                       by-axis))]
-             (str " (" (str/join " " (map (fn [[a s]] (btn a s)) ok)) " " 
-                  (if (> (count ok) 1) "vanno bene" "va bene") ")"))))))
+             (str " (" (str/join " " (map (fn [[a s]] (btn a s)) ok)) " "
+                  (if (> (count ok) 1) "restano" "resta") " come " 
+                  (if (> (count ok) 1) "sono" "è") ")"))))))
 
 (defn- cage-relabel-rescue
   "Recover a solve whose picks are RIGHT and whose labels are misread, one ring
@@ -2797,7 +2807,7 @@
                                                         (mapv :ci correspondences)
                                                         (get-in @session [:cage-face-choice idx]))]
                                           ;; lead with the gesture, then the number
-                                          (str "LA MOSSA: " delta ", poi ripremi 'r'. "
+                                          (str "LA MOSSA (se sei d'accordo): " delta ", poi ripremi 'r'. "
                                                "È l'unica lettura fisicamente possibile dei tuoi "
                                                "click e chiude a "
                                                (.toFixed (:rms-px (:sol near)) 1) "px. Non la "

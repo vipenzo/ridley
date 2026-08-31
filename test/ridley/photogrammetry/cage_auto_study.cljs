@@ -871,6 +871,66 @@
                           "   [cross " (fmt cross 1) "]"))))))
     (println (str "\n  regola nel tooltip: antiorario = p, orario = m"))))
 
+(defn- predict-probe!
+  "CAGE_AUTO_PREDICT=<n>: fit a pose from CAGE_AUTO_PICKS_FILE (picks you trust —
+   the ones sitting ON detected discs) and then say where the model puts a set of
+   OTHER marks, named in CAGE_AUTO_ASK (comma-separated ids). Reports each asked
+   mark's predicted pixel and its distance to the nearest DETECTED disc.
+
+   The point is to judge a ring the detector cannot see WITHOUT using that ring's
+   own clicks — the only way to break a tie between a bench verdict and a user
+   reading the printed part, when the disputed ring is exactly the one whose
+   picks are in question (battiscopa3 grab-05, 2026-08-31)."
+  []
+  (let [n (js/parseInt (aget (.-env js/process) "CAGE_AUTO_PREDICT") 10)
+        idx (dec n)
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse) (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        proxy (cage/registration-cage :d 176 :phases phases)
+        targets (cage-targets proxy)
+        by-id (into {} (map (juxt :id identity) targets))
+        trust (into {} (map (fn [[id px]] [(keyword id) (vec px)])
+                            (js->clj (js/JSON.parse
+                                      (.readFileSync fs (aget (.-env js/process)
+                                                              "CAGE_AUTO_PICKS_FILE") "utf8")))))
+        ask (mapv keyword (str/split (or (aget (.-env js/process) "CAGE_AUTO_ASK") "") #","))
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        file (nth files idx)]
+    (-> (decode (.join path dir file))
+        (.then
+         (fn [res]
+           (let [{:keys [data lum-at w h]} (sampler res)
+                 intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                 cands (mapv :center (bd/detect-blobs lum-at [w h]
+                                                      (assoc bd/cage-opts :rgba data)))
+                 near (fn [[u v]] (reduce min js/Infinity
+                                          (map (fn [[cu cv]] (Math/hypot (- cu u) (- cv v))) cands)))
+                 corr (vec (for [[id px] trust :when (by-id id)]
+                             {:ci id :world (:obj (by-id id)) :px px}))
+                 sol (pnp/solve-pnp corr intr {})
+                 c (cam/camera-center (:pose sol))]
+             (println (str "\n=== sonda della predizione: foto " n " (" file ") · posa da "
+                           (count corr) " click FIDATI · rms " (fmt (:rms-px sol) 1)
+                           "px · scartati " (pr-str (mapv :ci (:outliers sol))) " ==="))
+             (doseq [id ask]
+               (if-let [t (by-id id)]
+                 (let [p (cam/project intr (:pose sol) (:obj t))
+                       front? (pos? (la/v-dot (:normal t) (la/v-sub c (:obj t))))]
+                   (println (str "  " id
+                                 (if p (str " → predetto [" (js/Math.round (first p)) " "
+                                            (js/Math.round (second p)) "]"
+                                            " · dischetto rilevato più vicino "
+                                            (js/Math.round (near p)) "px")
+                                     " → fuori inquadratura")
+                                 " · faccia " (if front? "VERSO la camera" "girata VIA"))))
+                 (println (str "  " id " → nessun mark con questo nome")))))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
 (defn ^:export main [& _]
   (cond
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
@@ -879,4 +939,5 @@
     (aget (.-env js/process) "CAGE_AUTO_FACE") (face-probe!)
     (aget (.-env js/process) "CAGE_AUTO_JOINT") (joint-probe!)
     (aget (.-env js/process) "CAGE_AUTO_CHIR") (chirality-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_PREDICT") (predict-probe!)
     :else (main*)))
