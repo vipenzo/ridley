@@ -6,7 +6,8 @@
    registers and how far its camera lands from his.
 
        npx shadow-cljs compile cage-auto && node out/cage-auto.js"
-  (:require [ridley.photogrammetry.blob :as blob]
+  (:require [clojure.string :as str]
+            [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.blob-detect :as bd]
             [ridley.photogrammetry.bridge :as bridge]
             [ridley.photogrammetry.cage :as cage]
@@ -684,10 +685,135 @@
                                      " · possibile"))))))))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
+(defn- joint-probe!
+  "CAGE_AUTO_JOINT=<n>: the FULL joint search over ring namings that production
+   only approximates. For each of the 48 misreadings of the anchor ring (the one
+   with the most picks) solve from that ring alone, then let every other ring
+   pick its own best POSSIBLE misreading against that pose, refit, and keep what
+   survives the physical test.
+
+   `cage-relabel-rescue` anchors on two readings only — the two faces at rot 0 —
+   so when the anchor ring is itself rotated or mirrored (which is the ordinary
+   case: a crown of twelve equal discs reads the same turned) every ring
+   downstream is judged against a wrong pose. Built for battiscopa3 grab-06
+   (2026-08-31), where all eight clicks sat within a pixel of a detected disc
+   and the fit was 30px."
+  []
+  (let [n (js/parseInt (aget (.-env js/process) "CAGE_AUTO_JOINT") 10)
+        idx (dec n)
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse) (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        proxy (cage/registration-cage :d 176 :phases phases)
+        targets (cage-targets proxy)
+        by-id (into {} (map (juxt :id identity) targets))
+        picks (get-in state [:pnp (keyword (str idx)) :picks])
+        hand (if-let [pf (aget (.-env js/process) "CAGE_AUTO_PICKS_FILE")]
+               (into {} (map (fn [[id px]] [(keyword id) (vec px)])
+                             (js->clj (js/JSON.parse (.readFileSync fs pf "utf8")))))
+               (into {} (keep (fn [[k v]]
+                                (when-not (:proposed? v)
+                                  [(:id (nth targets (js/parseInt (name k) 10))) (:px v)]))
+                              picks)))
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        file (nth files idx)]
+    (-> (decode (.join path dir file))
+        (.then
+         (fn [res]
+           (let [{:keys [w h]} (sampler res)
+                 intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                 corr-of (fn [pm] (vec (for [[id px] pm :when (by-id id)]
+                                         {:ci id :world (:obj (by-id id)) :px px})))
+                 solve (fn [pm] (when (>= (count pm) 6) (pnp/solve-pnp (corr-of pm) intr {})))
+                 behind (fn [pose pm]
+                          (let [c (cam/camera-center pose)]
+                            (vec (for [[id _] pm
+                                       :let [t (by-id id) nrm (:normal t)]
+                                       :when (and nrm (neg? (la/v-dot nrm (la/v-sub c (:obj t)))))]
+                                   id))))
+                 relab (fn [pm rd] (into {} (keep (fn [[id px]]
+                                                    (when-let [j (cage/relabel id rd 12)]
+                                                      [j px])))
+                                         pm))
+                 rings (group-by (comp cage/anchor-axis key) hand)
+                 anchor-axis (key (apply max-key (comp count val) rings))
+                 anchor (into {} (get rings anchor-axis))
+                 others (into {} (mapcat val (dissoc rings anchor-axis)))
+                 ;; reproject-nearest: given a pose, the reading of ONE ring that
+                 ;; lands its picks closest to where that pose says its discs are,
+                 ;; among the POSSIBLE ones (the camera must be in front)
+                 best-for (fn [pose pm]
+                            (->> (cage/crown-misreadings 12)
+                                 (keep (fn [rd]
+                                         (let [pm' (relab pm rd)]
+                                           (when (= (count pm') (count pm))
+                                             (when (empty? (behind pose pm'))
+                                               (let [e (reduce
+                                                        + (for [[id px] pm'
+                                                                :let [p (cam/project intr pose (:obj (by-id id)))]]
+                                                            (if p (Math/hypot (- (first p) (first px))
+                                                                              (- (second p) (second px)))
+                                                                1e9)))]
+                                                 {:rd rd :err e :pm pm'}))))))
+                                 (sort-by :err) first))
+                 ;; CAGE_AUTO_SEEDALL=1 seeds each anchor reading from ALL the
+                 ;; picks; the default seeds from the ANCHOR RING ALONE, which is
+                 ;; what cage-relabel-rescue does. Keeping both apart is the only
+                 ;; way to say WHICH change buys a rescue (2026-08-31).
+                 seed-all? (boolean (aget (.-env js/process) "CAGE_AUTO_SEEDALL"))
+                 results
+                 (->> (cage/crown-misreadings 12)
+                      (keep (fn [rd]
+                              (let [a (relab anchor rd)]
+                                (when (= (count a) (count anchor))
+                                  (when-let [seed (if seed-all?
+                                                    (solve (merge a others))
+                                                    (pnp/solve-pnp (corr-of a) intr {}))]
+                                    (let [pose (:pose seed)
+                                          picked (keep (fn [[ax pm]]
+                                                         (best-for pose (into {} pm)))
+                                                       (dissoc rings anchor-axis))]
+                                      (when (= (count picked) (dec (count rings)))
+                                        (let [pm (apply merge a (map :pm picked))]
+                                          (when-let [sol (solve pm)]
+                                            {:anchor rd :pm pm :rms (:rms-px sol)
+                                             :behind (count (behind (:pose sol) pm))
+                                             :nout (count (:outliers sol))})))))))))
+                      (sort-by :rms))
+                 poss (filterv #(zero? (:behind %)) results)
+                 tag (fn [pm] (str/join " " (for [ax [:x :y :z]
+                                                  :let [fs (set (keep (fn [[id _]]
+                                                                        (when (= ax (cage/anchor-axis id))
+                                                                          (:sign (or (cage/mark-parts id)
+                                                                                     (cage/index-parts id)))))
+                                                                      pm))]
+                                                  :when (seq fs)]
+                                              (str (name ax) (if (> (count fs) 1) "?!"
+                                                                 (if (pos? (first fs)) "p" "m"))))))]
+             (println (str "\n=== sonda congiunta: foto " n " (" file ") · " (count hand)
+                           " click · anello di ancoraggio " (name anchor-axis)
+                           " (" (count anchor) " pick) · focale " (fmt focal 1) "mm ==="))
+             (println (str "  " (count results) " letture congiunte provate · "
+                           (count poss) " fisicamente possibili"))
+             (doseq [r (take 5 poss)]
+               (println (str "    " (tag (:pm r)) "  rms " (fmt (:rms r) 1) "px · ancora "
+                             (pr-str (:anchor r)) " · " (:nout r) " scartati")))
+             (when (empty? poss)
+               (println "  nessuna possibile; le migliori per rms, impossibili:")
+               (doseq [r (take 3 results)]
+                 (println (str "    " (tag (:pm r)) "  rms " (fmt (:rms r) 1)
+                               "px · camera dietro a " (:behind r) " punti")))))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
 (defn ^:export main [& _]
   (cond
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
     (aget (.-env js/process) "CAGE_AUTO_SEED") (seed-probe!)
     (aget (.-env js/process) "CAGE_AUTO_FIT") (fit-probe!)
     (aget (.-env js/process) "CAGE_AUTO_FACE") (face-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_JOINT") (joint-probe!)
     :else (main*)))

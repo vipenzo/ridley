@@ -2725,8 +2725,21 @@
                                       ;; useful sentence on the screen: it names
                                       ;; the faces to declare. Saying "non basta"
                                       ;; instead threw the answer away (grab-04).
+                                      ;; …and only when it is WITHIN REACH of the
+                                      ;; bar. A physically possible reading at
+                                      ;; 30.8px is not an answer, it is the least
+                                      ;; bad of a set of bad ones, and telling the
+                                      ;; user to declare its faces on that
+                                      ;; strength sends him to redo his face
+                                      ;; buttons for nothing (grab-06, 31/8 — the
+                                      ;; message I added the day before, misfiring
+                                      ;; at 30.8px on a bar of 12). Same rule as
+                                      ;; everywhere else here: above ~2x the bar a
+                                      ;; number is not evidence.
                                       (if-let [near (->> [hand-rescue rescue]
                                                          (filter (comp :rms-px :sol))
+                                                         (filter #(<= (:rms-px (:sol %))
+                                                                      (* 2.0 pnp/accept-rms-px)))
                                                          (sort-by (comp :rms-px :sol))
                                                          first)]
                                         (str "L'UNICA lettura fisicamente possibile dei tuoi click "
@@ -2739,12 +2752,32 @@
                                              ". Se è quello che VEDI, dichiaralo coi bottoni delle "
                                              "facce e ripremi 'r'; se non lo è, l'errore è nei nomi "
                                              "dei singoli click. ")
-                                        (str "Ho provato a rinominarli anello per anello, anche sui "
-                                             "tuoi soli click, e non basta. Due cause possibili: i "
-                                             "punti stanno tutti su UN anello (clicca qualche mark "
-                                             "su un secondo anello), oppure qualche click è finito "
-                                             "su un dischetto di un anello diverso da quello che "
-                                             "dice l'etichetta. "))
+                                        ;; "I tried and it wasn't enough" is a
+                                        ;; LIE when the search never ran, and it
+                                        ;; sends the user looking for a bad click
+                                        ;; instead of clicking more. The rename
+                                        ;; search needs one ring with at least
+                                        ;; four picks to build a pose from; on
+                                        ;; grab-06 the biggest ring had three and
+                                        ;; the whole rescue returned nil unasked
+                                        ;; (Vincenzo, 31/8).
+                                        (let [biggest (->> (mapv :ci correspondences)
+                                                           (keep #(cage/anchor-axis
+                                                                   (:id (nth targets %))))
+                                                           frequencies vals (reduce max 0))]
+                                          (if (< biggest 4)
+                                            (str "E la rinomina per anello NON HO POTUTO provarla: "
+                                                 "per ricostruire una posa le serve un anello con "
+                                                 "almeno 4 click, e il tuo più fornito ne ha "
+                                                 biggest ". Clicca altri mark sullo STESSO anello "
+                                                 "(4 o più) e ripremi 'r'. ")
+                                            (str "Ho provato a rinominarli anello per anello, anche "
+                                                 "sui tuoi soli click, e non basta. Due cause "
+                                                 "possibili: i punti stanno tutti su UN anello "
+                                                 "(clicca qualche mark su un secondo anello), "
+                                                 "oppure qualche click è finito su un dischetto di "
+                                                 "un anello diverso da quello che dice "
+                                                 "l'etichetta. "))))
                                       "Intanto lascio la posa che hai adesso."))
                                 (swap! session assoc :last-solve ::refused)
                                 ::refused)))))))

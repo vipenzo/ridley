@@ -42,7 +42,7 @@ uno, riscrivi codice sbagliato — è successo):
 (grab-01, 30/8 notte) e hanno subito trovato altro — vedi «Ottavo giro live» e
 «Nono giro live» sotto. Su grab-04 la dichiarazione non arrivava ai click già
 fatti (chiuso), e le facce vere di quella foto sono **Xp Ym Zm**, non le Xp Yp
-Zp dichiarate. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
+Zp dichiarate. Su grab-06 (foto 5) è la faccia X: **Xp Ym Zp**, non Xm. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
 possibili e i suoi click cadono a 0–1px dai dischetti rilevati: il fit non
 scendeva per colpa delle PROPOSTE automatiche, e il verdetto accusava lui.
 Chiuso: verdetto col test del crollo, niente «riclicca» sulle proposte, niente
@@ -509,6 +509,56 @@ la sonda concordava con la risposta sbagliata dell'app):
   set piccoli e su 13 pick lascia la verità fuori portata. Non l'ho toccata —
   alzarla lascia il pulitore mangiare punti buoni e ho le prove di una foto
   sola. Da decidere con più foto in mano.
+
+**Decimo giro live (31/8, foto 5 = grab-06 di battiscopa3): «non riesco a farla
+passare».** La foto è diversa dalle altre due: qui i click sono PERFETTI — tutti
+e otto a **0–1px** dal dischetto rilevato, e il detector su questa foto ne trova
+33 — eppure il fit non scende sotto 30px e ogni tentativo esce col rifiuto
+camera-dietro.
+
+**Cosa dicono le sonde** (banco, sui pick del log):
+- **La faccia X dichiarata è sbagliata.** Delle 8 combinazioni, l'unica
+  fisicamente possibile è **`xp ym zp`**; lui aveva dichiarato **Xm** Ym Zp.
+  Tutto quello che è successo dopo — compresa la rinomina automatica «la corona
+  era sfasata di 2 mark, letta al contrario» — è stato calcolato dentro la
+  famiglia sbagliata.
+- **Anche con le facce giuste il set non regge**: 130.6 → 56.5 (tolto
+  `⊙ym`) → 30.9px (tolto `xp05`), e lì il pulitore si ferma perché restano 6
+  punti, il minimo. Residui: `⊙ym` **249px**, `xp05` 100px, `xp07` 52px, il
+  resto 12–31px. Il messaggio dell'app («lo zero dell'anello Y non torna con
+  NESSUNA rilettura … quel click è su un dischetto sbagliato») era GIUSTO ed è
+  ora corroborato al banco.
+- **Il soccorso non ha nemmeno girato.** Sul secondo set (7 pick) l'anello più
+  fornito ne aveva 3, e `cage-relabel-rescue` esce subito su `(>= (count
+  anchor) 4)` — mentre il messaggio diceva «Ho provato a rinominarli anello per
+  anello … e non basta». Non aveva provato niente.
+
+**Due difetti chiusi, tutti e due di ONESTÀ DEL MESSAGGIO:**
+1. **La riga «unica lettura possibile» che avevo aggiunto il giorno prima
+   sparava a qualunque rms**: qui ha detto «chiude a 30.8px … se è quello che
+   VEDI, dichiaralo», mandandolo a rifare i bottoni delle facce sulla forza di
+   un fit senza valore. Ora esce solo entro ~2× l'asticella — la stessa regola
+   che vale in tutto il resto del namespace: sopra quella soglia un numero non
+   è una prova.
+2. **«Ho provato … e non basta» era una bugia quando la ricerca non era
+   partita.** Ora, se l'anello più fornito ha meno di 4 click, il rifiuto lo
+   dice e dà la mossa vera: clicca altri mark sullo STESSO anello.
+
+**MISURA DA TENERE** (non cablata, prove di un set solo): sul set B una posa
+seminata da TUTTI i pick con UN anello rietichettato trova `xp ym zp` a
+**12.2px** (secondo classificato 29.3 — margine largo) dove la produzione
+stava a 120.3px e rifiutava. La produzione semina solo dall'anello di
+ancoraggio (2 letture, rot 0) più le pose che il chiamante ha già in mano;
+«tutti i pick con un anello riletto» è un seme che non prova mai. Controprova
+sulle foto già caratterizzate: grab-01 vince con la lettura IDENTICA (11.1px,
+i suoi nomi, nessuna rinomina) e grab-04 con `xp ym zm` a 14.0px — cioè
+allargare la ricerca non sposta le risposte che sappiamo giuste. Sonda:
+`CAGE_AUTO_JOINT=<n>` (`CAGE_AUTO_SEEDALL=1` per il seme da tutti i pick).
+
+**REGOLA D'USO che ne esce, per Vincenzo**: la faccia si dichiara PRIMA di
+cliccare, e se il fit non scende è la prima cosa da rimettere in discussione —
+su tre foto di fila (grab-04, grab-06) la faccia dichiarata era sbagliata su
+uno o due anelli, e ogni cosa a valle nasceva avvelenata.
 
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
