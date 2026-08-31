@@ -2275,6 +2275,22 @@
                          :else a))
                  nil))))
 
+(def ^:private gross-pick-px
+  "A rejected pick above this many image px is not click noise — it is a pick
+   that means something else entirely: a wrong name, a disc of another ring, a
+   click nowhere near a disc. Five times the acceptance bar, so it can never
+   fire on ordinary hand scatter.
+
+   It exists to bound what a RESCUE may claim. A relabelling search reaches its
+   rms by dropping points; dropping one at 508px means the pose it kept was
+   dragged by that point before it went, and such a pose cannot arbitrate which
+   FACE of a ring the camera saw — a question decided by a sign. Measured on
+   battiscopa3 grab-05 (2026-08-31): the bench told Vincenzo the Z ring read on
+   the m face, with a comfortable 43° margin, from exactly such a set; he read
+   the chirality off the printed part and said p. His witness is the better one,
+   and the message had claimed 'the ONLY physically possible reading'."
+  (* 5.0 pnp/accept-rms-px))
+
 (defn- rescue-face-phrase
   "The relabel search's answer as a THING TO PRESS. Given `flip` (the search's
    ci→ci permutation) and the faces the user has already declared, return the
@@ -2758,6 +2774,22 @@
                                                          (filter (comp :rms-px :sol))
                                                          (filter #(<= (:rms-px (:sol %))
                                                                       (* 2.0 pnp/accept-rms-px)))
+                                                         ;; …and the reading must EXPLAIN the picks,
+                                                         ;; not merely survive them. A candidate that
+                                                         ;; reaches its rms only by discarding a point
+                                                         ;; hundreds of px out is a pose dragged by
+                                                         ;; whatever that point was, and it has no
+                                                         ;; standing to tell the user which FACE he is
+                                                         ;; looking at. Vincenzo read the chirality
+                                                         ;; straight off the print — «nella foto 4 il
+                                                         ;; ring Z è p, i mark girano antiorario» —
+                                                         ;; against a verdict computed from a set
+                                                         ;; holding a 508px pick (grab-05, 31/8). The
+                                                         ;; print is the better witness; the message
+                                                         ;; had claimed 'the ONLY possible reading'.
+                                                         (remove #(some (fn [o] (> (:residual-px o)
+                                                                                   gross-pick-px))
+                                                                        (:outliers (:sol %))))
                                                          (sort-by (comp :rms-px :sol))
                                                          first)]
                                         (if-let [delta (rescue-face-phrase
@@ -2788,6 +2820,20 @@
                                         ;; grab-06 the biggest ring had three and
                                         ;; the whole rescue returned nil unasked
                                         ;; (Vincenzo, 31/8).
+                                        (if-let [gross (->> [hand-rescue rescue]
+                                                            (keep :sol)
+                                                            (mapcat :outliers)
+                                                            (filter #(> (:residual-px %) gross-pick-px))
+                                                            (sort-by :residual-px >)
+                                                            first)]
+                                          (str "Non ti dico quale faccia sia, perché non lo so: la "
+                                               "lettura migliore ci arriva solo BUTTANDO il punto "
+                                               (corner-labels [(:ci gross)]) ", che le cade a "
+                                               (.toFixed (:residual-px gross) 0) "px — e una posa "
+                                               "tenuta su da uno scarto così non ha titolo per "
+                                               "giudicare le facce. Controlla PRIMA quel click "
+                                               "(nome sbagliato? dischetto di un altro anello?), "
+                                               "toglilo con la gomma o con 'o', e ripremi 'r'. ")
                                         (let [biggest (->> (mapv :ci correspondences)
                                                            (keep #(cage/anchor-axis
                                                                    (:id (nth targets %))))
@@ -2804,7 +2850,7 @@
                                                  "(clicca qualche mark su un secondo anello), "
                                                  "oppure qualche click è finito su un dischetto di "
                                                  "un anello diverso da quello che dice "
-                                                 "l'etichetta. "))))
+                                                 "l'etichetta. ")))))
                                       "Intanto lascio la posa che hai adesso."))
                                 (swap! session assoc :last-solve ::refused)
                                 ::refused)))))))

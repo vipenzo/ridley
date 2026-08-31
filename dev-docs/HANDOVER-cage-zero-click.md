@@ -43,9 +43,10 @@ uno, riscrivi codice sbagliato — è successo):
 «Nono giro live» sotto. Su grab-04 la dichiarazione non arrivava ai click già
 fatti (chiuso), e le facce vere di quella foto sono **Xp Ym Zm**, non le Xp Yp
 Zp dichiarate. Su grab-06 (foto 5) è la faccia X: **Xp Ym Zp**, non Xm. Su
-grab-05 (foto 4) è la Z: **Xm Ym Zm**, non Zp — e con quella dichiarata la foto
-chiude a 11.4px, sotto l'asticella. Tre foto di fila con una faccia sbagliata:
-la faccia è la PRIMA cosa da rimettere in discussione quando il fit non scende. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
+grab-05 (foto 4) NON è decisa: il banco diceva Zm, Vincenzo legge Zp sulla
+stampa, e la sonda della chiralità gli dà ragione sul METODO — vedi
+«Dodicesimo giro». Lì il set contiene un click a 508px e non basta a decidere:
+va ricliccato l'anello X sui dischetti che il detector vede davvero. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
 possibili e i suoi click cadono a 0–1px dai dischetti rilevati: il fit non
 scendeva per colpa delle PROPOSTE automatiche, e il verdetto accusava lui.
 Chiuso: verdetto col test del crollo, niente «riclicca» sulle proposte, niente
@@ -601,6 +602,48 @@ persiste una congettura. La via d'uscita giusta è quella cablata qui: NON
 rinominare da soli, ma dire ALL'UTENTE quale bottone premere; dichiarata la
 faccia da lui, la rinomina non serve più e il solve normale ci arriva da sé
 (11.4px su grab-05).
+
+**Dodicesimo giro (31/8, foto 4): «credo che tu stia sbagliando: il ring Z è p,
+i mark girano in senso antiorario» — e la sentenza del banco NON era autorizzata.**
+Quarto ribaltamento del suo dubbio; la regola resta quella («SONDA, non
+congetturare» — e sonda anche il TUO strumento, non solo la foto).
+
+**Prima cosa verificata: la sua regola di lettura è GIUSTA.** Sonda nuova
+`CAGE_AUTO_CHIR=1`: costruisce la gabbia, mette una camera davanti a ciascuna
+delle sei facce e misura IN PIXEL (v verso il basso, come l'occhio sulla foto)
+il verso dal dischetto grande al pallino piccolo. Risultato netto e uguale sui
+tre anelli: **p = ANTIORARIO, m = ORARIO**, esattamente il tooltip. Il sospetto
+che il modello fosse invertito (una regola scritta in coordinate matematiche
+legge al contrario in un'immagine) è MISURATO E SCARTATO: il suo metodo non è
+invertito.
+
+**Seconda cosa: la sentenza del banco era vera per la geometria e senza
+titolo.** Sotto i suoi nomi (Xm … Zp) i dischetti Z guardano via dalla camera
+di **43°** — non un caso limite, il test non è rumore lì. MA quella posa esce da
+un set che contiene `xm09` con un residuo di **508px** e due click (`xm04`,
+`xm06`) a 113–194px da qualunque dischetto che il detector veda su questa foto.
+Traccia coi suoi nomi: 240.6 → 14.4 (tolto xm09) → **9.3px** (tolto xm04) — cioè
+la SUA lettura, ripulita, fitta meglio (9.3) di quella che il banco proponeva
+(11.4 con Z su m). Una posa tenuta su buttando un punto a 508px non ha titolo
+per giudicare una faccia, che è una decisione di SEGNO.
+Controprova onesta: con Z=p fissato, nessuna rinumerazione dell'anello X scende
+sotto 53px. Quindi **questa foto, con questi click, non decide**: o la lettura
+di Z è sbagliata, o parecchi click X lo sono, e il set non contiene
+l'informazione per distinguerlo.
+
+**FIX (`gross-pick-px` = 5× l'asticella):** il rifiuto non afferma più una
+faccia quando la lettura che la sostiene ci arriva solo BUTTANDO un punto
+grossolano. Al suo posto nomina quel punto e la sua distanza («la lettura
+migliore ci arriva solo buttando #xm09, che le cade a 508px — una posa tenuta su
+da uno scarto così non ha titolo per giudicare le facce»). È lo stesso principio
+del test del CROLLO (30/8) applicato un piano più su: **una diagnosi non può
+essere più forte delle prove che la reggono.**
+
+**Lezione di metodo, la terza in una settimana**: due giorni fa il difetto era
+accusare punti innocenti perché nessuno chiedeva se il residuo crollasse; ieri
+era una risposta giusta che nessuno poteva eseguire; oggi è una risposta
+AFFERMATA TROPPO FORTE. Ogni volta il codice sapeva abbastanza per dire il vero
+e diceva di più.
 
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di

@@ -641,12 +641,23 @@
                  corr-of (fn [pm] (vec (for [[id px] pm :when (by-id id)]
                                          {:ci id :world (:obj (by-id id)) :px px})))
                  solve (fn [pm] (when (>= (count pm) 6) (pnp/solve-pnp (corr-of pm) intr {})))
-                 behind (fn [sol pm]
-                          (let [c (cam/camera-center (:pose sol))]
-                            (vec (for [[id _] pm
-                                       :let [t (by-id id) nrm (:normal t)]
-                                       :when (and nrm (neg? (la/v-dot nrm (la/v-sub c (:obj t)))))]
-                                   id))))
+                 ;; the camera-behind test with its MARGIN: the angle between the
+                 ;; disc's printed normal and the direction to the camera. At 89°
+                 ;; the disc is edge-on and the sign of the test is noise — a ring
+                 ;; seen nearly in profile cannot arbitrate its own face, and
+                 ;; saying it does is how the bench contradicted Vincenzo reading
+                 ;; the chirality straight off the print (2026-08-31).
+                 behind-deg (fn [sol pm]
+                              (let [c (cam/camera-center (:pose sol))]
+                                (vec (for [[id _] pm
+                                           :let [t (by-id id) nrm (:normal t)
+                                                 d (la/v-sub c (:obj t))
+                                                 nd (/ (la/v-dot nrm d) (la/v-norm d))]
+                                           :when (and nrm (neg? nd))]
+                                       [id (js/Math.round
+                                            (- 90.0 (* (/ 180.0 Math/PI)
+                                                       (Math/acos (max -1.0 (min 1.0 nd))))))]))))
+                 behind (fn [sol pm] (mapv first (behind-deg sol pm)))
                  flip-ring (fn [pm axis]
                              (into {} (map (fn [[id px]]
                                              [(if (= axis (cage/anchor-axis id))
@@ -681,7 +692,9 @@
                                    "  rms " (fmt (:rms-px sol) 1) "px"
                                    " · scartati " (pr-str (mapv :ci (:outliers sol)))
                                    (if (seq bh)
-                                     (str " · IMPOSSIBILE: camera dietro a " (pr-str bh))
+                                     (str " · IMPOSSIBILE: camera dietro a "
+                                          (pr-str (behind-deg sol pm))
+                                          " (id, gradi OLTRE il bordo: pochi gradi = il test non decide)")
                                      " · possibile"))))))))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
@@ -809,6 +822,55 @@
                                "px · camera dietro a " (:behind r) " punti")))))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
+(defn- chirality-probe!
+  "CAGE_AUTO_CHIR=1: what the MODEL says you SEE on each face — the sense of the
+   step from the big crown disc (mark 0) toward the small index dot, measured in
+   IMAGE pixels (v downward), for the face whose normal points at the camera.
+
+   This is the rule Vincenzo reads the photo with, and it is in the tooltip of
+   every face button: 'dal dischetto grande verso il pallino piccolo:
+   antiorario = p, orario = m'. If the model disagrees with it, every face he
+   declares is inverted — and a rule stated in MATH coordinates (v up) reads
+   backwards in an IMAGE (v down), which is exactly the kind of sign that
+   survives a long time unnoticed. Built 2026-08-31 after he said «nella foto 4
+   il ring Z è p (i mark girano in senso antiorario)» against the bench."
+  []
+  (let [proxy (cage/registration-cage
+               :d 176
+               :phases (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                               (js/JSON.parse) (js->clj :keywordize-keys true)))
+        targets (cage-targets proxy)
+        by-id (into {} (map (juxt :id identity) targets))
+        w 1920 h 1440
+        intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 44.0 (/ w h)) w h)]
+    (println (str "\n=== chiralita del modello: cosa VEDI su ciascuna faccia ==="))
+    (println "  (verso misurato in PIXEL, v verso il basso, come lo vede l'occhio sulla foto)")
+    (doseq [axis [:x :y :z] s [1 -1]]
+      (let [nrm (:normal (by-id (cage/index-id axis s)))
+            ;; a camera square in front of THIS face, far enough to see it flat
+            eye (mapv #(* 600.0 %) nrm)
+            pose (cam/look-at-pose eye [0.0 0.0 0.0]
+                                   (if (> (Math/abs (nth nrm 2)) 0.9) [0.0 1.0 0.0] [0.0 0.0 1.0]))
+            c (cam/camera-center pose)
+            m0 (:obj (by-id (cage/mark-id axis s 0)))
+            ix (:obj (by-id (cage/index-id axis s)))
+            centre [0.0 0.0 0.0]
+            front? (pos? (la/v-dot nrm (la/v-sub c m0)))
+            p0 (cam/project intr pose m0)
+            pi (cam/project intr pose ix)
+            pc (cam/project intr pose centre)]
+        (when (and p0 pi pc front?)
+          ;; cross product of (centre→bigdisc) x (bigdisc→smalldot) in image px.
+          ;; v points DOWN, so a POSITIVE cross is CLOCKWISE on screen.
+          (let [a [(- (first p0) (first pc)) (- (second p0) (second pc))]
+                b [(- (first pi) (first p0)) (- (second pi) (second p0))]
+                cross (- (* (first a) (second b)) (* (second a) (first b)))]
+            (println (str "  faccia " (name axis) (if (pos? s) "p" "m")
+                          " (normale verso la camera): dal dischetto grande al pallino piccolo → "
+                          (if (pos? cross) "ORARIO" "ANTIORARIO")
+                          "   [cross " (fmt cross 1) "]"))))))
+    (println (str "\n  regola nel tooltip: antiorario = p, orario = m"))))
+
 (defn ^:export main [& _]
   (cond
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
@@ -816,4 +878,5 @@
     (aget (.-env js/process) "CAGE_AUTO_FIT") (fit-probe!)
     (aget (.-env js/process) "CAGE_AUTO_FACE") (face-probe!)
     (aget (.-env js/process) "CAGE_AUTO_JOINT") (joint-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_CHIR") (chirality-probe!)
     :else (main*)))
