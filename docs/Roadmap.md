@@ -59,6 +59,14 @@ raffinamento) — su gabbia sintetica legge 3.00° ±0.00 sul colpevole e 0.00 s
 innocenti. La difficoltà si sposta dal costruire al misurare, come per
 `plate-calib`.
 
+*Svolta d'interfaccia (2026-08-31, decisione di Vincenzo)*: tredici giri live
+sulla sessione battiscopa3 hanno mostrato che il collo di bottiglia non è più
+l'algoritmo ma la FACCIA DICHIARATA a mano (sbagliata su tre foto di fila, e
+ogni errore avvelena tutto il valle). Prossima fetta: la **gabbia virtuale
+orientata a occhio col gizmo** — le facce non si dichiarano più, si leggono
+dalla posa; la posa a occhio fa anche da seme per l'auto-lettura. Entry point
+`dev-docs/HANDOVER-cage-zero-click.md`, blocco ATTERRAGGIO.
+
 *Gate manuale PASSATO e riconoscitore automatico avviato (2026-08-23/24)*: il
 gesto a mano si è dimostrato chiuso — una corona da sola è invariante per
 rotazione e specchiata dall'altra faccia (48 riletture, stesso rms), e sopra un

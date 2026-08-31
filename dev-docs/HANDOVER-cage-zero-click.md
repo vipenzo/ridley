@@ -6,9 +6,10 @@ Vincenzo (2026-08-27): «se non riusciamo ad avere la registrazione automatica
 delle foto sarà tutto inutile». La leva 1 (identità coi denti) e la leva 2
 (arbitro del gemello) sono DENTRO e misurate; al banco 2/8 vere con zero falsi
 e una registrazione a 0.2mm sulla sessione dichiarata. Ma la settimana dal vivo
-ha spostato il collo di bottiglia dall'algoritmo all'**INTERFACCIA DEL
-CLICK**: era il pannello a imporre facce sbagliate, ed è lì che nascevano tre
-serate di rifiuti.
+ha spostato il collo di bottiglia dall'algoritmo alla **FACCIA DICHIARATA**:
+prima imposta dal pannello, poi dichiarata coi toggle e sbagliata su tre foto
+di fila. Decisione del 31/8: le facce si LEGGONO dalla posa della gabbia
+virtuale orientata a occhio col gizmo — è la fetta da costruire.
 
 Entry point precedente, con tutta la storia della gabbia (detector, riletture,
 anello incollato a 90°, chiave di montaggio, portapezzi, la settimana
@@ -17,88 +18,150 @@ stato dei lavori per ripartire.
 
 ---
 
-## ATTERRAGGIO — 30/8 sera, leggi PRIMA questo
+## ATTERRAGGIO — 31/8 sera, leggi PRIMA questo
 
-**Dove siamo**: il meccanismo automatico regge (leve 1 e 2 costruite, testate
-993/0, misurate al banco). Il lavoro vivo è il flusso a mano di Vincenzo sulla
-sessione `~/Pictures/RidleyScan/battiscopa3` (5 grab, 1920×1440, lente 44
-manuale, gabbia `(registration-cage :d 176 :phases {:y 180 :x 180})`).
+**LA DECISIONE DI VINCENZO (31/8, dopo tredici giri live): basta prove coi
+toggle a mano, si costruisce la GABBIA VIRTUALE COL GIZMO.** Parole sue: «mi
+sono un po' stufato di continuare a fare prove, mi sembra che giriamo in tondo.
+Partirei con l'implementazione della gabbia virtuale col gizmo e il valore dei
+tre toggle Xm/p Ym/p Zm/p lo deriverei dalla posizione della gabbia». È la
+fetta che questo stesso file aveva in coda come «la fetta grossa», e la
+settimana le ha dato ragione nel modo più caro: su TRE foto di fila (grab-04,
+grab-05, grab-06) una o due facce dichiarate a mano erano sbagliate, ogni
+errore di faccia avvelena tutto il valle (solve, soccorsi, diagnosi), e il
+dibattito foto-per-foto non converge. Il suo flusso fisico reale — «prendo in
+mano la gabbia e la appaio alla foto» — va virtualizzato: orienti la gabbia a
+occhio finché combacia, e le facce non si DICHIARANO più, si LEGGONO dalla posa.
 
-**I tre fatti di dominio, verificati, che governano tutto** (se ne dimentichi
-uno, riscrivi codice sbagliato — è successo):
-1. **La gabbia è INCOLLATA** (attack). Il montaggio non è per-assemblaggio:
-   è una costante fisica come `:d`, cambiabile solo ristampando. Il pezzo si
-   riposiziona con gli stick, gli anelli mai. Perciò su gabbia DICHIARATA un
-   indice letto specchiato/girato accusa la REGISTRAZIONE, mai la gabbia.
-2. **Le fasi `{:y 180 :x 180}` sono vere e verificate tre volte** (palcoscenico
-   settimane fa, banco senza fasi che rilegge k6/k6, app col modello fasato che
-   legge k0). Dichiarate → tutti gli anelli nominali.
-3. **La lente è 44mm** (iPhone Continuity), MAI l'EXIF (i grab non ce l'hanno).
-   Il default 48 ha avvelenato tre serate di seguito: obs del montaggio nate
-   sotto la lente sbagliata leggono la famiglia specchiata e fabbricano falsi
-   GEMELLO. Ora c'è il gate (`cage-obs-focal-ok?`) + la focale nell'impronta.
+**Sessione di lavoro**: `~/Pictures/RidleyScan/battiscopa3` (5 grab 1920×1440,
+lente 44 A MANO, gabbia `(registration-cage :d 176 :phases {:y 180 :x 180})`).
+Stato foto: 1 registrata (8.3px sui soli click); 2 registrata ma
+SOSPETTA-GEMELLO (11.9px, X/Z letti specchiati su gabbia incollata); 3
+(grab-04) le facce vere sono Xp Ym Zm, da rifare; 4 (grab-05) CONTESA su Z
+(sotto); 5 (grab-06) facce vere Xp Ym Zp, da rifare. La rifinitura `R` va
+rifatta SOLO a foto sane: l'ultima è stata rifiutata (10.9 → 47px) perché
+misurava la lente su una posa avvelenata.
 
-**Cosa fare per primo**: i toggle delle facce hanno PASSATO il primo giro vivo
-(grab-01, 30/8 notte) e hanno subito trovato altro — vedi «Ottavo giro live» e
-«Nono giro live» sotto. Su grab-04 la dichiarazione non arrivava ai click già
-fatti (chiuso), e le facce vere di quella foto sono **Xp Ym Zm**, non le Xp Yp
-Zp dichiarate. Su grab-06 (foto 5) è la faccia X: **Xp Ym Zp**, non Xm. Su
-grab-05 (foto 4) NON è decisa: il banco diceva Zm, Vincenzo legge Zp sulla
-stampa, e la sonda della chiralità gli dà ragione sul METODO — vedi
-«Dodicesimo giro». Lì il set contiene un click a 508px e non basta a decidere:
-va ricliccato l'anello X sui dischetti che il detector vede davvero. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
-possibili e i suoi click cadono a 0–1px dai dischetti rilevati: il fit non
-scendeva per colpa delle PROPOSTE automatiche, e il verdetto accusava lui.
-Chiuso: verdetto col test del crollo, niente «riclicca» sulle proposte, niente
-✓ e niente pallino armato sopra l'asticella, e il ripiego sui soli click a mano
-(`retry-on-hand-picks!`, 13.8 → 9.2px misurati). **Gate live pendente**: rifare
-il giro su grab-01 — Azzera → facce (Xm Ym Zp) → click → `r` — atteso ~9.2px con
-xm05/xm08 accusati a ragione (lì il crollo c'è). Poi le altre foto, poi `R`.
+### La fetta: come costruirla (impianto già esistente, nominato)
 
-**Difetti aperti, nominati** (in ordine di rendimento):
-- **Memoria per-camera della focale** (`~/.ridley/`): la 44 è stata misurata
-  due volte e ogni sessione nuova riparte da 48. È la trappola che ha morso
-  più di ogni altra cosa in questa settimana.
-- **La gabbia orientabile col gizmo** (idea di Vincenzo, la fetta grossa):
-  quando il doppio pallino non si vede i nomi non hanno senso PER
-  COSTRUZIONE; lui risolve prendendo in mano la gabbia e appaiandola alla
-  foto. Virtualizzarlo dà facce giuste, nomi giusti E un seme umano per `a`
-  (altro colpo al cold start). Impianto da riusare: gizmo del proxy foto 0 +
-  palcoscenico P4b.
-- **`max-outliers` a 2 è tarato su set piccoli** (nuovo, 31/8): su 13 pick il
-  pulitore si ferma a 14.0px quando la verità sta a 6.8 quattro scarti più in
-  là, e tutto a valle (`rename-worthy?`, il verdetto, l'adozione) giudica il
-  numero sbagliato. Misurato su grab-04. Non toccato: alzare la valvola le fa
-  mangiare punti buoni, e le prove sono di una foto sola.
-- **Accettazione senza asticella**: «registrata sui restanti (72.1px)» — il
-  retry senza outlier accetta QUALUNQUE rms. Sopra ~2× l'asticella deve
-  rifiutare, non persistere una posa selvaggia. (Il 30/8 notte è stata tolta
-  almeno la BUGIA: sopra l'asticella niente ✓, niente colpevoli nominati e
-  niente pallino armato — ma la posa selvaggia si persiste ancora.)
-- **Rinomina prima del solve**: `relabel-picks!` rinomina PRIMA, e un solve poi
-  rifiutato lascia i nomi del gemello sui pick (viola «un soccorso che non
-  compra un fit sotto soglia non rinomina»; il rollback attraversa il confine
+1. **Il gesto c'è già.** `install-gizmo!` (edit_acquire, ~1042) apre il gizmo
+   su OGNI foto: su foto 0 i commit muovono il PROXY (`on-photo0-commit!`),
+   sulle altre si invertono sulla CAMERA (`on-inv-commit!`). La wireframe del
+   proxy è già disegnata sopra la foto. "Appaiare a occhio" = orbitare finché
+   combacia: meccanicamente esiste, oggi il commit muove solo la posa e non
+   dice niente alle facce.
+2. **La derivazione delle facce è una funzione pura che esiste quasi tutta.**
+   `bridge/pnp-target-points` calcola già `:visible?` per-mark dal segno di
+   `(dot heading (- cam-pos world))` (culling della gabbia). La faccia di un
+   anello sotto una posa = il segno il cui indice/normale guarda la camera.
+   Da scrivere: `faces-from-pose` (per ciascun asse → 1/-1/nil) e il cablaggio
+   nei commit del gizmo: dopo ogni commit si ricalcola `:cage-face-choice idx`
+   e si passa da **`reface-picks-to-declaration!`** (già costruita, 31/8: porta
+   i click GIÀ FATTI sulla faccia derivata, pixel fermi, e toglie i doppioni
+   dicendolo — senza questa il derivato lascerebbe pick a due facce, il bug
+   pagato su grab-04).
+3. **GUARDIA DEL PROFILO, obbligatoria**: un anello quasi di taglio non
+   dichiara la faccia. Su grab-05 la faccia Y era decisa da **13–17°** e quella
+   sentenza ha retto mezza giornata di diagnosi sbagliate; sotto ~20° di
+   margine l'asse resta nil (culling per-mark della posa, nessuna
+   dichiarazione) e il pannello lo dice («Y è quasi di profilo: da questa
+   angolazione la faccia non si legge»).
+4. **I tre bottoni RESTANO**, come display del derivato e override: la regola
+   «mi fido dei tuoi occhi, non della posa» resta vera — ma ora la posa è la
+   SUA, fatta a occhio, quindi il conflitto dovrebbe sparire nel caso normale.
+5. **La posa a occhio è anche un SEME**: `pnp/solve-pnp` accetta già `:seed`
+   («e.g. the gizmo pose» — è nel docstring) e la catena di soccorso già
+   riprova `:method :seeded` dalla posa a schermo. Il colpo grosso in coda:
+   passarla al ramo `a` (auto-read) come gate delle ipotesi — un seme umano
+   grossolano vale più di quattro click (cold start).
+6. **Domanda di design da fare a Vincenzo PRIMA di scrivere**: vuole
+   trascinare la GABBIA (come tiene in mano la stampa) o la camera? Sulle foto
+   ≥1 il commit si inverte comunque sulla camera — è solo questione di quale
+   metafora mostrano le maniglie. E: derivazione live durante il drag o al
+   commit? (Il redraw live della wireframe c'è già; la derivazione al commit è
+   più semplice e probabilmente basta.)
+
+### I QUATTRO fatti di dominio, verificati (dimenticarne uno = codice sbagliato, è successo)
+
+1. **La gabbia è INCOLLATA** (attack). Il montaggio è una costante fisica come
+   `:d`; su gabbia DICHIARATA un indice specchiato/girato accusa la
+   REGISTRAZIONE, mai la gabbia.
+2. **Le fasi `{:y 180 :x 180}` sono vere** (verificate tre volte). Dichiarate
+   → tutti gli anelli nominali.
+3. **La lente è 44mm** (iPhone Continuity), MAI l'EXIF (i grab non ce l'hanno);
+   il default 48 ha avvelenato tre serate. Gate `cage-obs-focal-ok?` attivo.
+4. **La regola del passetto è GIUSTA e il modello la rispetta** (nuovo, 31/8,
+   sonda `CAGE_AUTO_CHIR`): dal dischetto grande al pallino piccolo,
+   ANTIORARIO in pixel = faccia p, ORARIO = m, identico sui tre anelli.
+   Il metodo di lettura di Vincenzo sulla stampa NON è invertito.
+
+### La CONTESA APERTA su grab-05 (foto 4), lasciata onesta
+
+Il banco dice Zm (test delle normali, margine 44–48°); Vincenzo legge Zp sulla
+stampa. La sonda della predizione (`CAGE_AUTO_PREDICT`: posa dai soli 8 click a
+1px dai dischetti rilevati, NESSUN pick Z) mette i suoi click Z più vicini alle
+posizioni **zp** che alle zm su tutti e tre i mark (9/14/8px contro 22/25/16) —
+ma la stessa posa poggia sull'anello Y deciso da 13–17°, e il detector su
+questa foto non vede NIENTE sull'anello Z. Le due prove si contraddicono e la
+foto non le concilia. Regola in vigore: si segue la STAMPA (lui), non il banco.
+La gabbia orientata a occhio dovrebbe risolverla di passaggio; l'arbitro di
+fondo resta la riconciliazione di sessione (in coda).
+
+### Difetti aperti, nominati (in ordine di rendimento)
+
+- **Memoria per-camera della focale** (`~/.ridley/`): la 44 misurata due volte,
+  ogni sessione nuova riparte da 48. La trappola che ha morso più di tutto.
+- **`max-outliers` 2 tarato su set piccoli**: su 13+ pick il pulitore si ferma
+  a 14px quando la verità sta a 6.8 quattro scarti più in là. Non toccato
+  (prove di una foto sola); con la gabbia a occhio i set cresceranno e il
+  difetto morderà di più.
+- **Accettazione senza asticella**: il retry senza outlier persiste QUALUNQUE
+  rms (72px visti). La bugia è tolta (niente ✓ né colpevoli sopra l'asticella)
+  ma la posa selvaggia si persiste ancora.
+- **Rinomina prima del solve**: `relabel-picks!` rinomina PRIMA e un solve
+  rifiutato lascia i nomi del gemello sui pick (rollback attraverso il confine
   asincrono di `on-solve-pnp!`).
-- **COLD START** (sotto): chiuso per gabbie dichiarate, aperto per le altre.
+- **Seme congiunto** (misurato 31/8, non cablato): `cage-relabel-rescue` semina
+  solo dall'anello d'ancoraggio (2 letture, rot 0) e serve un anello con ≥4
+  pick; una posa seminata da TUTTI i pick con un anello riletto ha trovato
+  12.2px dove la produzione stava a 120 (grab-06, secondo classificato 29.3, e
+  su grab-01/04 non sposta le risposte giuste). Sonda `CAGE_AUTO_JOINT`
+  (+`CAGE_AUTO_SEEDALL=1`). Il seme del gizmo potrebbe renderla superflua.
+- **COLD START**: chiuso per gabbie dichiarate, aperto per le altre.
+- **Banco ≠ app su battiscopa2 foto 4** (campionatore luminanza): i RIFIUTI del
+  banco non sono un pavimento del tasso vero.
 
-**Strumenti nuovi di questa settimana, usali**: `CAGE_AUTO_SEED=<n>` (la sonda
-del seme: click di una foto → distanza dal candidato rilevato, solve sui soli
-click, migliore rietichettatura per anello — ha chiuso due casi che a occhio
-erano indecidibili), `CAGE_AUTO_FIT=<n>` (il fit dell'app smontato: click a mano
-contro click+proposte, e la TRACCIA onesta del pulitore — è la sonda che dice se
-uno scarto è un colpevole o un capro espiatorio), `CAGE_AUTO_FACE=<n>` (le otto
-dichiarazioni di faccia sui soli click, filtrate dal test fisico: l'rms da solo
-sceglie SEMPRE la faccia girata via), `CAGE_AUTO_PICKS_FILE=<json>` (per set di
-click che non sono mai arrivati allo stato: il rifiuto camera-dietro non li
-salva), `CAGE_AUTO_PHASES`, `CAGE_AUTO_NOCTX`, `CAGE_AUTO_ZERO`,
-`CAGE_AUTO_CTXONLY`.
+### La settimana in tre lezioni (i dettagli nei «giri» sotto, 8°–13°)
 
-**Come lavorare con Vincenzo su questo fronte** (confermato tre volte questa
-settimana): i suoi log incollati sono lo strumento di misura principale, e il
-suo DUBBIO va preso sul serio — «sei sicuro della diagnosi? io le vedo poco
-mosse» ha ribaltato una mia sentenza sbagliata, e «avevo messo p perché mi
-presentava solo quelli» ha trovato la causa a monte di tre serate. Prima di
-sentenziare su una foto: SONDA, non congettura.
+1. **Test del CROLLO**: uno scarto è un colpevole solo se toglierlo fa crollare
+   l'rms sotto l'asticella; sennò è il capro espiatorio di un fit brutto
+   dappertutto (quattro coppie diverse accusate su grab-01, tutti click a 1px).
+2. **Una diagnosi non può essere più forte delle prove**: `gross-pick-px` — una
+   lettura che regge solo buttando un punto a 508px non ha titolo per
+   giudicare una faccia. E il verdetto va dato come GESTO eseguibile («premi
+   Zm al posto di Zp»), non come stato da confrontare a memoria.
+3. **Il dubbio di Vincenzo ha ribaltato quattro sentenze su quattro**. Prima di
+   sentenziare: SONDA — e sonda anche il TUO strumento (la sonda della
+   chiralità è nata così).
+
+### Strumenti al banco (build `:cage-auto`, tutti in `cage_auto_study.cljs`)
+
+`CAGE_AUTO_SEED=<n>` (click → distanza dal rilevato, solve sui soli click,
+rietichettatura per anello POSSIBLE-FIRST) · `CAGE_AUTO_FIT=<n>` (la traccia
+onesta del pulitore; `CAGE_AUTO_FLIP=xz` prova anelli sull'altra faccia) ·
+`CAGE_AUTO_FACE=<n>` (le 8 dichiarazioni col test fisico e i GRADI di margine)
+· `CAGE_AUTO_JOINT=<n>` (ricerca congiunta) · `CAGE_AUTO_CHIR=1` (chiralità
+del modello in pixel) · `CAGE_AUTO_PREDICT=<n>` + `CAGE_AUTO_ASK=id,id`
+(predice mark da pick fidati) · `CAGE_AUTO_PICKS_FILE=<json>` (set dal log:
+i rifiuti non salvano) · `CAGE_AUTO_PHASES` / `CAGE_AUTO_FOCAL` /
+`CAGE_AUTO_DIR` / `CAGE_AUTO_ZERO` / `CAGE_AUTO_NOCTX` / `CAGE_AUTO_CTXONLY`.
+Compilare col CLI (`npx shadow-cljs compile cage-auto`), MAI `:app` — e MAI
+compile via nREPL con clj-nrepl-eval (il timeout del client incastra la
+sessione; la memoria `feedback_shadow_cljs_concurrent_compile` ha il dettaglio).
+
+**Come lavorare con Vincenzo**: i suoi log incollati sono lo strumento di
+misura principale; il suo dubbio va preso sul serio (4/4 questa settimana);
+i messaggi devono nominare il GESTO, mai chiedergli un diff a memoria.
 
 ---
 
