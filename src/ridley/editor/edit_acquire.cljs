@@ -1650,6 +1650,59 @@
           "non i tuoi occhi")
      "di nuovo solo i mark rivolti verso di te")))
 
+(defn- reface-picks-to-declaration!
+  "Move photo `idx`'s picks on ring `axis` onto the DECLARED face, and say what
+   moved. Returns [n-moved n-dropped].
+
+   Declaring a face used to change only what the panel OFFERS, which quietly left
+   the picks already made on the other face sitting in the set. That is not a
+   cosmetic inconsistency: the two faces of a ring are 3mm apart through the
+   plastic and point OPPOSITE WAYS, so a set holding `yp03` and `zero-ym`
+   describes a cage seen from both sides at once. No pose can satisfy it — the
+   camera is behind one of them whichever way it faces — and no ring-level
+   rescue can cure it either, because flipping the ring carries the contradiction
+   along with it. Every solve is refused, and the refusal blames a click.
+
+   Measured on battiscopa3 grab-04 (2026-08-31): Vincenzo clicked ⊙ym, then
+   declared Yp. Of the eight face combinations of his picks, ZERO were physically
+   possible; with the stale ⊙ym renamed, one is. He had done nothing wrong — the
+   declaration simply did not reach backwards.
+
+   The pixel never moves: the same disc is on both faces, so only the NAME
+   changes. A pick whose new name is already taken is dropped instead — two marks
+   on one disc wreck the whole pose, not just that point."
+  [idx axis sign]
+  (let [targets (pnp-targets)
+        ;; cage-crown-count is defined further down; same expression
+        n (or (:cage-marks (:proxy-mesh @session)) 12)
+        id->ci (into {} (map-indexed (fn [i t] [(:id t) i])) targets)
+        face-of (fn [ci] (let [id (:id (nth targets ci))]
+                           (:sign (or (cage/mark-parts id) (cage/index-parts id)))))
+        ring-of (fn [ci] (cage/anchor-axis (:id (nth targets ci))))
+        picks (get-in @session [:pnp-picks idx] {})
+        wrong (filterv (fn [ci] (and (= axis (ring-of ci))
+                                     (= (- sign) (face-of ci))))
+                       (keys picks))
+        flipped (into {} (keep (fn [ci]
+                                 (when-let [j (id->ci (cage/relabel
+                                                       (:id (nth targets ci))
+                                                       {:flip-face? true :mirror? false :rot 0} n))]
+                                   [ci j]))
+                               wrong))
+        taken (set (remove (set wrong) (keys picks)))
+        moves (into {} (remove (fn [[_ j]] (contains? taken j)) flipped))
+        drops (into #{} (remove (set (keys moves))) wrong)]
+    (when (seq wrong)
+      (swap! session update-in [:pnp-picks idx]
+             (fn [m] (-> (apply dissoc m wrong)
+                         (into (map (fn [[ci j]] [j (get m ci)])) moves))))
+      ;; the stale flags describe names that no longer exist
+      (swap! session update-in [:pnp-residuals idx] #(apply dissoc % wrong))
+      (swap! session update-in [:pnp-outliers idx] #(when % (into #{} (remove (set wrong)) %)))
+      (swap! session update-in [:pnp-occluded idx]
+             #(when % (into #{} (keep (fn [ci] (if (contains? (set wrong) ci) (moves ci) ci))) %))))
+    [(count moves) (count drops)]))
+
 (defn- toggle-cage-face!
   "Declare (or un-declare) which FACE of ring `axis` this photo shows — the
    judgement Vincenzo makes by holding the cage up to the picture, which the
@@ -1657,24 +1710,40 @@
    offered on that ring, whatever the pose believes. Pressed again: back to the
    pose's own culling."
   [axis sign]
-  (swap! session update-in [:cage-face-choice (:current-idx @session)]
-         (fn [c] (let [c (or c {})]
-                   (if (= sign (get c axis)) (dissoc c axis) (assoc c axis sign)))))
-  ;; an armed mark on the face just hidden would keep the old name in hand
-  (when-let [a (:pnp-armed @session)]
-    (when-not (contains? (visible-corner-set) a)
-      (swap! session assoc :pnp-armed nil)))
-  (redraw-pnp-preview!)
-  (redraw-overlay-dots!)
-  (update-panel!)
-  (let [c (get-in @session [:cage-face-choice (:current-idx @session)])]
-    (set-status-message!
-     (if (seq c)
-       (str "facce dichiarate da te: "
-            (str/join " " (for [[a s] (sort-by (comp str key) c)]
-                            (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
-            " — su quegli anelli ti offro solo quella faccia, qualunque cosa creda la posa")
-       "facce di nuovo decise dalla posa (nessun anello dichiarato)"))))
+  (let [idx (:current-idx @session)
+        on? (not= sign (get-in @session [:cage-face-choice idx axis]))]
+    (swap! session update-in [:cage-face-choice idx]
+           (fn [c] (let [c (or c {})]
+                     (if (= sign (get c axis)) (dissoc c axis) (assoc c axis sign)))))
+    ;; The declaration reaches BACKWARDS over the picks already made, not only
+    ;; forwards over what the panel offers. See reface-picks-to-declaration!.
+    (let [[moved dropped] (if on? (reface-picks-to-declaration! idx axis sign) [0 0])]
+      ;; an armed mark on the face just hidden would keep the old name in hand
+      (when-let [a (:pnp-armed @session)]
+        (when-not (contains? (visible-corner-set) a)
+          (swap! session assoc :pnp-armed nil)))
+      (redraw-pnp-preview!)
+      (redraw-overlay-dots!)
+      (update-panel!)
+      (when (or (pos? moved) (pos? dropped)) (save-acquire-state!))
+      (let [c (get-in @session [:cage-face-choice idx])]
+        (set-status-message!
+         (str
+          (if (seq c)
+            (str "facce dichiarate da te: "
+                 (str/join " " (for [[a s] (sort-by (comp str key) c)]
+                                 (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+                 " — su quegli anelli ti offro solo quella faccia, qualunque cosa creda la posa")
+            "facce di nuovo decise dalla posa (nessun anello dichiarato)")
+          (when (pos? moved)
+            (str " · " moved " click che avevi già messo sull'altra faccia di "
+                 (str/upper-case (name axis)) " " (if (> moved 1) "sono passati" "è passato")
+                 " su questa: stesso dischetto attraverso la plastica, solo il nome cambia"))
+          (when (pos? dropped)
+            (str " · " dropped " " (if (> dropped 1) "click erano" "click era")
+                 " sull'altra faccia e il nome nuovo era già occupato: "
+                 (if (> dropped 1) "tolti" "tolto")
+                 " (due mark sullo stesso dischetto mandano a gambe all'aria la posa)"))))))))
 
 (defn- toggle-mark-names! []
   (swap! session update :show-names? not)
@@ -2206,6 +2275,23 @@
                          :else a))
                  nil))))
 
+(defn- rescue-face-phrase
+  "Which FACE each ring ends up on once `flip` is applied to `cis` — 'X sulla
+   faccia p, Y sulla m, Z sulla m'. The relabel search's answer stated in the
+   only vocabulary the user acts in: the three face buttons."
+  [flip targets cis]
+  (let [face (fn [ci] (let [id (:id (nth targets ci))]
+                        (or (cage/mark-parts id) (cage/index-parts id))))
+        by-axis (into (sorted-map)
+                      (keep (fn [ci] (when-let [p (face (flip ci))]
+                                       [(:axis p) (:sign p)])))
+                      cis)]
+    (if (empty? by-axis)
+      "gli stessi anelli"
+      (str/join ", " (for [[a s] by-axis]
+                       (str (str/upper-case (name a)) " sulla faccia "
+                            (if (pos? s) "p" "m")))))))
+
 (defn- cage-relabel-rescue
   "Recover a solve whose picks are RIGHT and whose labels are misread, one ring
    at a time.
@@ -2286,14 +2372,22 @@
                   (concat anchor-poses extra-poses))
             best (reduce (fn [a b] (if (or (nil? a) (< (:rms-px (:sol b)) (:rms-px (:sol a)))) b a))
                          nil candidates)]
-        (when (and best
-                   (pos? (:changed best))
-                   ;; no worse than what the user had, or good in absolute
-                   ;; terms — the guard above already established that this is
-                   ;; the physically possible reading and the old one was not
-                   (<= (:rms-px (:sol best)) (max baseline-rms pnp/accept-rms-px)))
+        (when (and best (pos? (:changed best)))
+          ;; `:adoptable?` is the old gate, unchanged: no worse than what the
+          ;; user had, or good in absolute terms — the guard above already
+          ;; established that this is the physically possible reading and the
+          ;; old one was not. What changed (2026-08-31) is that a candidate
+          ;; failing it is RETURNED rather than swallowed. Both callers ask
+          ;; `rename-worthy?` before adopting, so nothing is adopted that was
+          ;; not adopted before — but the refusal can now say what the only
+          ;; possible reading was and how far off it sat, instead of "non
+          ;; basta". Measured on battiscopa3 grab-04: the sole physically
+          ;; possible reading of Vincenzo's thirteen clicks was 14.0px against
+          ;; a bar of 12, and the whole search result was thrown away for those
+          ;; two pixels while he was told to hunt for a bad click.
           {:sol (:sol best)
            :changed (:changed best)
+           :adoptable? (<= (:rms-px (:sol best)) (max baseline-rms pnp/accept-rms-px))
            :flip (fn [ci]
                    (or (when-let [t (get (:by-axis best) (axis-of ci))]
                          (id->ci (cage/relabel (:id (nth targets ci)) t n)))
@@ -2521,7 +2615,8 @@
                                       "nomi corretti. Il residuo non poteva accorgersene — è "
                                       "identico nei due casi — ma la camera finiva dietro i "
                                       "dischetti che avevi fotografato")))
-                      (if (and rescue (rename-worthy? (:sol rescue)) (not (sees-marks? retry)))
+                      (if (and rescue (:adoptable? rescue) (rename-worthy? (:sol rescue))
+                               (not (sees-marks? retry)))
                         (do (relabel-picks! idx (:flip rescue))
                             (assoc (:sol rescue) :note
                                    (str "erano i NOMI, non i click: " (:changed rescue)
@@ -2591,7 +2686,8 @@
                                               "dischetti attraverso la plastica, nomi corretti."
                                               prop-note)))
 
-                              (and hand-rescue (rename-worthy? (:sol hand-rescue)))
+                              (and hand-rescue (:adoptable? hand-rescue)
+                                   (rename-worthy? (:sol hand-rescue)))
                               (do (drop-proposals!)
                                   (relabel-picks! idx (:flip hand-rescue))
                                   (assoc (:sol hand-rescue) :note
@@ -2621,13 +2717,35 @@
                                 (set-status-message!
                                  (str "NON applicata: ogni soluzione mette la camera DIETRO almeno "
                                       "uno dei dischetti che hai cliccato, che è impossibile — quel "
-                                      "dischetto l'hai fotografato. Ho provato a rinominarli "
-                                      "anello per anello, anche sui tuoi soli click, e non basta. "
-                                      "Due cause possibili: i punti stanno tutti su UN anello "
-                                      "(clicca qualche mark su un secondo anello), oppure qualche "
-                                      "click è finito su un dischetto di un anello diverso da "
-                                      "quello che dice l'etichetta. Intanto lascio la posa che "
-                                      "hai adesso."))
+                                      "dischetto l'hai fotografato. "
+                                      ;; The search is not empty just because
+                                      ;; nothing was adoptable. When it found a
+                                      ;; physically possible reading and only the
+                                      ;; bar stopped it, that reading is the most
+                                      ;; useful sentence on the screen: it names
+                                      ;; the faces to declare. Saying "non basta"
+                                      ;; instead threw the answer away (grab-04).
+                                      (if-let [near (->> [hand-rescue rescue]
+                                                         (filter (comp :rms-px :sol))
+                                                         (sort-by (comp :rms-px :sol))
+                                                         first)]
+                                        (str "L'UNICA lettura fisicamente possibile dei tuoi click "
+                                             "chiude a " (.toFixed (:rms-px (:sol near)) 1)
+                                             "px (sopra l'asticella di "
+                                             (.toFixed pnp/accept-rms-px 0) ", per questo non la "
+                                             "applico da sola) e legge "
+                                             (rescue-face-phrase (:flip near) targets
+                                                                 (mapv :ci correspondences))
+                                             ". Se è quello che VEDI, dichiaralo coi bottoni delle "
+                                             "facce e ripremi 'r'; se non lo è, l'errore è nei nomi "
+                                             "dei singoli click. ")
+                                        (str "Ho provato a rinominarli anello per anello, anche sui "
+                                             "tuoi soli click, e non basta. Due cause possibili: i "
+                                             "punti stanno tutti su UN anello (clicca qualche mark "
+                                             "su un secondo anello), oppure qualche click è finito "
+                                             "su un dischetto di un anello diverso da quello che "
+                                             "dice l'etichetta. "))
+                                      "Intanto lascio la posa che hai adesso."))
                                 (swap! session assoc :last-solve ::refused)
                                 ::refused)))))))
 
@@ -2863,6 +2981,30 @@
               (do (swap! session assoc-in [:pnp-picks idx] picks)
                   nil))))))))
 
+(defn- two-faced-rings
+  "The rings whose picks name BOTH of their faces — {axis #{cis}} — or nil.
+
+   This is impossible before any solving is attempted, and saying so costs one
+   pass over the picks. The two faces of a ring are the same discs 3mm apart
+   through the plastic and their printed normals point OPPOSITE WAYS, so a set
+   holding `yp03` and `zero-ym` claims the camera was in front of both: it was
+   in front of neither. Every solve is then refused camera-dietro, and the
+   refusal blames a click on the wrong ring — a diagnosis that sends the user
+   hunting through picks that are all fine (Vincenzo, battiscopa3 grab-04,
+   2026-08-31: the culprit was a ⊙ym clicked before he declared Yp).
+
+   Not a solver concern — a solver sees only world points — so it lives here,
+   where the labels do."
+  []
+  (let [targets (pnp-targets)
+        parts (fn [ci] (let [id (:id (nth targets ci))]
+                         (or (cage/mark-parts id) (cage/index-parts id))))]
+    (not-empty
+     (into {} (keep (fn [[axis cis]]
+                      (when (> (count (set (map (comp :sign parts) cis))) 1)
+                        [axis (set cis)])))
+           (group-by (comp :axis parts) (filter parts (keys (pnp-picks))))))))
+
 (defn- on-solve-pnp!
   "Solve the current photo's declared correspondences (robustly — a mislabeled
    corner is auto-rejected) and APPLY the pose, then STAY in PnP mode: rejected
@@ -2875,10 +3017,31 @@
    snapped wrong simply shows up as a red outlier of the final fit, to re-click."
   []
   (when-let [[iw ih] (backdrop/image-size)]
-    (let [n (count (pnp-picks))]
-      (if (< n (min-pnp-picks))
+    (let [n (count (pnp-picks))
+          two-faced (when (cage-proxy?) (two-faced-rings))]
+      (cond
+        two-faced
+        ;; refuse BEFORE solving, and name the contradiction: no pose exists, so
+        ;; letting the solver discover that produces a camera-dietro refusal that
+        ;; blames the wrong thing
+        (set-status-message!
+         (str "Non risolvo: su "
+              (if (> (count two-faced) 1) "questi anelli hai click " "questo anello hai click ")
+              "su TUTTE E DUE le facce — "
+              (str/join "; "
+                        (for [[axis cis] (sort-by (comp str key) two-faced)]
+                          (str (str/upper-case (name axis)) ": " (corner-labels cis))))
+              ". Le due facce guardano da parti opposte, quindi nessuna posa può"
+              " averle fotografate entrambe. Dichiara la faccia di "
+              (str/join "/" (map (comp str/upper-case name key) (sort-by (comp str key) two-faced)))
+              " col suo bottone — i click passano da soli sulla faccia giusta"
+              " — oppure togli con la gomma quelli di troppo."))
+
+        (< n (min-pnp-picks))
         (set-status-message!
          (str "PnP: servono almeno " (min-pnp-picks) " " (pnp-noun) " piazzati (ne hai " n ")"))
+
+        :else
         (if-let [sol (let [r (solve-and-apply! iw ih)]
                        (when-not (= r ::refused) r))]
           (let [added (propose-and-snap! (:pose sol) (session-intrinsics iw ih))

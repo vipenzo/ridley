@@ -480,15 +480,33 @@
              (report "solve sui SOLI click, nomi tuoi" (solve hand) hand)
              (doseq [[axis ids] (map (fn [[a m]] [a (vec (keys m))]) axes)]
                (let [others (into {} (mapcat (fn [[a m]] (when (not= a axis) m)) axes))
-                     best (first (sort-by (juxt :nout :rms)
-                                          (keep (fn [rd]
-                                                  (when-let [sol (solve (merge others (relab ids rd)))]
-                                                    {:rd rd :rms (:rms-px sol)
-                                                     :nout (count (:outliers sol))}))
-                                                (cage/crown-misreadings 12))))]
-                 (println (str "  anello " (name axis) " rietichettato (altri fermi): meglio "
+                     ;; POSSIBLE-FIRST, the rule the production code lives by:
+                     ;; reprojection error cannot see a change of face (3mm
+                     ;; through the plastic), so ranking by rms alone hands back
+                     ;; the reading whose discs face away — every time. The
+                     ;; physical test decides the candidate SET, the error only
+                     ;; ranks within it. Without this the probe agreed with the
+                     ;; app's own wrong answer on grab-04 (2026-08-31).
+                     cands (keep (fn [rd]
+                                   (let [pm (merge others (relab ids rd))]
+                                     (when-let [sol (solve pm)]
+                                       {:rd rd :rms (:rms-px sol)
+                                        :nout (count (:outliers sol))
+                                        :behind (count (behind sol pm))})))
+                                 (cage/crown-misreadings 12))
+                     poss (filterv #(zero? (:behind %)) cands)
+                     best (first (sort-by (juxt :nout :rms) (or (seq poss) cands)))]
+                 (println (str "  anello " (name axis) " rietichettato (altri fermi): "
+                               (count poss) "/" (count cands) " possibili · meglio "
                                (pr-str (:rd best)) " → rms " (fmt (:rms best) 1)
-                               "px · " (:nout best) " scartati")))))))
+                               "px · " (:nout best) " scartati"
+                               (if (zero? (:behind best)) " · possibile"
+                                   (str " · IMPOSSIBILE (camera dietro a "
+                                        (:behind best) " punti)"))))
+                 (when (seq poss)
+                   (doseq [c (take 3 (sort-by (juxt :nout :rms) poss))]
+                     (println (str "      possibile: " (pr-str (:rd c)) " → rms "
+                                   (fmt (:rms c) 1) "px · " (:nout c) " scartati")))))))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
 (defn- fit-probe!
@@ -512,7 +530,21 @@
         entry (fn [[k v]] (let [t (nth targets (js/parseInt (name k) 10))]
                             {:ci (:id t) :world (:obj t) :normal (:normal t)
                              :px (:px v) :prop? (boolean (:proposed? v))}))
-        all (mapv entry picks)
+        by-id (into {} (map (juxt :id identity) targets))
+        ;; CAGE_AUTO_FLIP=yz re-reads those rings on their OTHER face before
+        ;; tracing — the way to ask "would the fit collapse if this ring's
+        ;; declared face were the other one?"
+        flips (set (map str (or (aget (.-env js/process) "CAGE_AUTO_FLIP") "")))
+        reface (fn [id] (if (contains? flips (name (cage/anchor-axis id)))
+                          (or (cage/relabel id {:flip-face? true :mirror? false :rot 0} 12) id)
+                          id))
+        all (mapv (fn [{:keys [ci px prop?]}]
+                    (let [j (reface ci) t (by-id j)]
+                      {:ci j :world (:obj t) :normal (:normal t) :px px :prop? prop?}))
+                  (if-let [pf (aget (.-env js/process) "CAGE_AUTO_PICKS_FILE")]
+                    (mapv (fn [[id px]] {:ci (keyword id) :px (vec px) :prop? false})
+                          (js->clj (js/JSON.parse (.readFileSync fs pf "utf8"))))
+                    (mapv entry picks)))
         hand (filterv (complement :prop?) all)
         focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
                   (get-in state [:focal :mm] 48.0))
@@ -586,10 +618,16 @@
         targets (cage-targets proxy)
         by-id (into {} (map (juxt :id identity) targets))
         picks (get-in state [:pnp (keyword (str idx)) :picks])
-        hand (into {} (keep (fn [[k v]]
-                              (when-not (:proposed? v)
-                                [(:id (nth targets (js/parseInt (name k) 10))) (:px v)]))
-                            picks))
+        ;; CAGE_AUTO_PICKS_FILE works here too: the camera-dietro refusal prints
+        ;; its pick list in the log and saves nothing, so that log line is often
+        ;; the ONLY record of the set that failed
+        hand (if-let [pf (aget (.-env js/process) "CAGE_AUTO_PICKS_FILE")]
+               (into {} (map (fn [[id px]] [(keyword id) (vec px)])
+                             (js->clj (js/JSON.parse (.readFileSync fs pf "utf8")))))
+               (into {} (keep (fn [[k v]]
+                                (when-not (:proposed? v)
+                                  [(:id (nth targets (js/parseInt (name k) 10))) (:px v)]))
+                              picks)))
         focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
                   (get-in state [:focal :mm] 48.0))
         files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
@@ -615,12 +653,21 @@
                                                 id)
                                               px])
                                            pm)))
-                 face-of (fn [pm axis]
-                           (some (fn [[id _]]
-                                   (when (= axis (cage/anchor-axis id))
-                                     (or (:sign (cage/mark-parts id))
-                                         (:sign (cage/index-parts id)))))
-                                 pm))]
+                 ;; the SET of faces a ring's picks name. More than one means the
+                 ;; picks contradict themselves — crown on one face, zero-index
+                 ;; on the other is physically unseeable and no relabeling of the
+                 ;; RING can cure it (battiscopa3 grab-04, 2026-08-31)
+                 faces-of (fn [pm axis]
+                            (set (keep (fn [[id _]]
+                                         (when (= axis (cage/anchor-axis id))
+                                           (or (:sign (cage/mark-parts id))
+                                               (:sign (cage/index-parts id)))))
+                                       pm)))
+                 face-tag (fn [pm axis]
+                            (let [fs (faces-of pm axis)]
+                              (cond (empty? fs) "--"
+                                    (> (count fs) 1) (str (name axis) "?!")
+                                    :else (str (name axis) (if (pos? (first fs)) "p" "m")))))]
              (println (str "\n=== sonda delle facce: foto " n " (" file ") · " (count hand)
                            " click a mano · focale " (fmt focal 1) "mm ==="))
              (doseq [fx [false true] fy [false true] fz [false true]]
@@ -628,9 +675,8 @@
                           fx (flip-ring :x) fy (flip-ring :y) fz (flip-ring :z))]
                  (when-let [sol (solve pm)]
                    (let [bh (behind sol pm)]
-                     (println (str "  x" (if (pos? (or (face-of pm :x) 0)) "p" "m")
-                                   " y" (if (pos? (or (face-of pm :y) 0)) "p" "m")
-                                   " z" (if (pos? (or (face-of pm :z) 0)) "p" "m")
+                     (println (str "  " (face-tag pm :x) " " (face-tag pm :y)
+                                   " " (face-tag pm :z)
                                    "  rms " (fmt (:rms-px sol) 1) "px"
                                    " · scartati " (pr-str (mapv :ci (:outliers sol)))
                                    (if (seq bh)

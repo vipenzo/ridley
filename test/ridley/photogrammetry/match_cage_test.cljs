@@ -735,3 +735,76 @@
                            (println "  errore:" (str e))
                            (is false "il ramo reale non deve lanciare")
                            (done))))))))
+
+(deftest a-ring-clicked-on-both-faces-has-no-possible-pose
+  ;; The fact the editor's pre-solve guard rests on, asserted here where the
+  ;; geometry lives. The two faces of a ring carry the same discs 3mm apart
+  ;; through the plastic and their printed normals point OPPOSITE ways, so a set
+  ;; naming `yp03` and `zero-ym` claims the camera was in front of both. It was
+  ;; in front of neither, and no relabelling of the RING can help: flipping it
+  ;; carries the contradiction along, both members swapping together.
+  ;;
+  ;; Vincenzo hit it on battiscopa3 grab-04 (2026-08-31) by clicking ⊙ym and THEN
+  ;; declaring Yp — the declaration changed what the panel offered and left the
+  ;; pick where it was. Of the eight face combinations of his thirteen clicks,
+  ;; ZERO were physically possible; with the stale ⊙ym renamed, one was. Until
+  ;; this the app answered with a camera-dietro refusal that blamed a click.
+  (println "\n=== gabbia: un anello cliccato su DUE facce non ha nessuna posa possibile ===")
+  (let [{:keys [proxy targets intr pose]} (setup eye)
+        by-id (into {} (map (juxt :id identity)) targets)
+        px-of (fn [id] (cam/project intr pose (:obj (by-id id))))
+        ;; the faces this vantage actually shows — the rms cannot tell them apart
+        ;; (3mm through the plastic) so they must come from the geometry
+        sign-of (fn [axis] (let [f (visible-face targets pose axis)]
+                             (:sign (or (cage/mark-parts (:id (first (:marks f))))
+                                        (cage/index-parts (:id (first (:marks f))))))))
+        ys (sign-of :y) zs (sign-of :z)
+        ;; a perfectly clean, perfectly named set: two rings, plus both zeros
+        honest (into {} (keep (fn [id] (when-let [p (px-of id)] [id p])))
+                     (concat (for [i [0 1 3 6 9]] (cage/mark-id :y ys i))
+                             (for [i [0 2 6]] (cage/mark-id :z zs i))
+                             [(cage/index-id :y ys) (cage/index-id :z zs)]))
+        ;; the same clicks, with the Y ring's ZERO filed under the other face —
+        ;; exactly one name changed, every pixel identical
+        two-faced (-> honest
+                      (dissoc (cage/index-id :y ys))
+                      (assoc (cage/index-id :y (- ys)) (px-of (cage/index-id :y ys))))
+        solve (fn [pm] (pnp/solve-pnp
+                        (vec (for [[id p] pm] {:ci id :world (:obj (by-id id)) :px p}))
+                        intr {}))
+        behind (fn [pm]
+                 (when-let [sol (solve pm)]
+                   (let [c (cam/camera-center (:pose sol))]
+                     (vec (for [[id _] pm
+                                :let [t (by-id id) nrm (:normal t)]
+                                :when (and nrm (neg? (la/v-dot nrm (la/v-sub c (:obj t)))))]
+                            id)))))
+        ;; every way the RING can be re-read, face and numbering together
+        ring-readings (fn [pm axis]
+                        (for [rd (cage/crown-misreadings marks)]
+                          (into {} (map (fn [[id p]]
+                                          [(if (= axis (cage/anchor-axis id))
+                                             (or (cage/relabel id rd marks) id)
+                                             id)
+                                           p]))
+                                pm)))]
+
+    (testing "the honest set is possible, and the solve recovers the pose"
+      (let [sol (solve honest)]
+        (println (str "  set onesto: rms " (.toFixed (:rms-px sol) 2) "px · camera dietro a "
+                      (pr-str (behind honest))))
+        (is (some? sol))
+        (is (empty? (behind honest))
+            "a correctly named set puts the camera in front of every clicked disc")))
+
+    (testing "one name moved to the other face makes EVERY re-reading impossible"
+      (let [bad (behind two-faced)
+            rescued (remove #(seq (behind %)) (ring-readings two-faced :y))]
+        (println (str "  ⊙y sull'altra faccia: camera dietro a " (count bad)
+                      " punti · riletture dell'anello Y possibili: "
+                      (count rescued) "/" (count (cage/crown-misreadings marks))))
+        (is (seq bad)
+            "a set naming both faces of one ring cannot put the camera in front of all of them")
+        (is (empty? rescued)
+            (str "no re-reading of the ring can cure it — the contradiction travels "
+                 "with the flip, got " (count rescued) " survivors"))))))

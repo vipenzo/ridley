@@ -39,8 +39,10 @@ uno, riscrivi codice sbagliato — è successo):
    GEMELLO. Ora c'è il gate (`cage-obs-focal-ok?`) + la focale nell'impronta.
 
 **Cosa fare per primo**: i toggle delle facce hanno PASSATO il primo giro vivo
-(grab-01, 30/8 notte) e hanno subito trovato altro — vedi «Ottavo giro live»
-sotto. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
+(grab-01, 30/8 notte) e hanno subito trovato altro — vedi «Ottavo giro live» e
+«Nono giro live» sotto. Su grab-04 la dichiarazione non arrivava ai click già
+fatti (chiuso), e le facce vere di quella foto sono **Xp Ym Zm**, non le Xp Yp
+Zp dichiarate. Le facce che Vincenzo dichiara sono risultate le uniche fisicamente
 possibili e i suoi click cadono a 0–1px dai dischetti rilevati: il fit non
 scendeva per colpa delle PROPOSTE automatiche, e il verdetto accusava lui.
 Chiuso: verdetto col test del crollo, niente «riclicca» sulle proposte, niente
@@ -59,6 +61,11 @@ xm05/xm08 accusati a ragione (lì il crollo c'è). Poi le altre foto, poi `R`.
   foto. Virtualizzarlo dà facce giuste, nomi giusti E un seme umano per `a`
   (altro colpo al cold start). Impianto da riusare: gizmo del proxy foto 0 +
   palcoscenico P4b.
+- **`max-outliers` a 2 è tarato su set piccoli** (nuovo, 31/8): su 13 pick il
+  pulitore si ferma a 14.0px quando la verità sta a 6.8 quattro scarti più in
+  là, e tutto a valle (`rename-worthy?`, il verdetto, l'adozione) giudica il
+  numero sbagliato. Misurato su grab-04. Non toccato: alzare la valvola le fa
+  mangiare punti buoni, e le prove sono di una foto sola.
 - **Accettazione senza asticella**: «registrata sui restanti (72.1px)» — il
   retry senza outlier accetta QUALUNQUE rms. Sopra ~2× l'asticella deve
   rifiutare, non persistere una posa selvaggia. (Il 30/8 notte è stata tolta
@@ -443,6 +450,65 @@ in piedi più del 75% dell'errore).
 RESIDUO ONESTO su grab-01, e ora l'app lo dirà bene: tolte le proposte, il
 pulitore scarta xm05 e xm08 con un crollo VERO (17.8 → 12.5 → 9.2px). Quei due
 valgono un riclick — sono l'unica cosa che gli era stata chiesta a ragione.
+
+**Nono giro live (31/8, foto 3 = grab-04 di battiscopa3): «non ne vuole
+sapere».** Tre difetti indipendenti, tutti misurati, tutti chiusi.
+
+**1. La dichiarazione della faccia non arrivava ai click GIÀ FATTI.** Nel log:
+`click (⊙ym)` e SUBITO DOPO `facce dichiarate da te: Xp Yp Zp`. Il toggle
+cambiava solo ciò che il pannello OFFRE; il pick `⊙ym` restava lì. Risultato:
+un set che nomina `yp00…yp09` e `zero-ym`, cioè le DUE facce dello stesso
+anello. Le due facce guardano da parti opposte: nessuna posa può averle
+fotografate entrambe, e nessuna rilettura dell'ANELLO può curarlo, perché il
+flip si porta dietro la contraddizione (crown e zero si scambiano insieme).
+Misurato sul suo stato: delle 8 combinazioni di facce, **ZERO possibili**; col
+solo `⊙ym` rinominato, una lo diventa. L'app se n'era pure accorta a metà
+(«quel dischetto era già assegnato a #⊙ym: ora è #⊙yp, e quello resta da
+ripiazzare») e ha lasciato l'orfano nel mucchio. FIX
+`reface-picks-to-declaration!`: dichiarare una faccia RIPORTA i click di
+quell'anello sulla faccia dichiarata — stesso dischetto attraverso la plastica,
+cambia solo il nome, il pixel non si muove — e chi trova il nome nuovo già
+occupato viene tolto, dicendolo. Test
+`a-ring-clicked-on-both-faces-has-no-possible-pose` (set onesto 0.00px camera
+davanti a tutto; un solo nome spostato → 0/48 riletture possibili).
+
+**2. Nessuno controllava che un anello avesse i click su UNA faccia sola** —
+cosa che si vede prima di ogni solve, in una passata sui pick. Senza il
+controllo il solutore scopriva l'impossibile e usciva col rifiuto
+camera-dietro, che accusa «un click su un dischetto di un anello diverso»:
+diagnosi sbagliata, e Vincenzo a cercare fra click tutti giusti. FIX
+`two-faced-rings` + rifiuto PRIMA del solve, che nomina i pick colpevoli e la
+mossa (dichiara la faccia di quell'anello, oppure gomma).
+
+**3. Il soccorso aveva TROVATO la lettura giusta e l'ha buttata per 2 pixel.**
+`cage-relabel-rescue` restituiva `nil` quando il candidato superava
+`(max baseline-rms 12)`; su grab-04 la baseline era 11.2 e l'unica lettura
+fisicamente possibile dei 13 click chiude a **14.0px** → scartata in silenzio,
+e il messaggio diceva «e non basta». FIX: il candidato si RESTITUISCE con
+`:adoptable?`, i due call site chiedono quel flag (adozione invariata, nessuna
+soglia toccata) e il rifiuto ora dice qual è la lettura possibile, a quanti px,
+e su quali facce va dichiarata (`rescue-face-phrase`).
+
+**Cosa dicono le misure su grab-04** (sonde: `CAGE_AUTO_FACE`/`CAGE_AUTO_FIT`
+ora leggono anche `CAGE_AUTO_PICKS_FILE`, e la rietichettatura per anello della
+sonda del seme è **possible-first** come la produzione — senza il filtro fisico
+la sonda concordava con la risposta sbagliata dell'app):
+- i suoi click sull'anello Y sono ottimi (0–3px dal dischetto rilevato); i tre
+  doppi pallini stanno invece a 148–168px da qualunque candidato — su questa
+  foto il detector ne trova 18 in tutto e i marcatori di zero non li vede;
+- l'unica lettura possibile dei 13 click è **Xp Ym Zm** (14.0px). Lui aveva
+  dichiarato **Xp Yp Zp**: Y e Z sono sull'altra faccia;
+- la cura richiede di girare Y e Z INSIEME. Ad anello singolo con gli altri
+  fermi: 0/48 possibili per X e per Z, e per Y solo scarti da ≥167px. Col solo
+  Z già girato, l'anello Y ha 8/48 possibili e la migliore è il puro cambio di
+  faccia a 14.0px, la seconda a 66.3 — cioè, applicato il filtro fisico, la
+  risposta è netta;
+- sotto `Xp Ym Zm` la traccia è 17.2 → 15.5 → **14.0** → 11.8 → **6.8**px: il
+  crollo vero arriva al QUARTO scarto, ma `max-outliers` è 2 e il pulitore si
+  ferma a 14.0. **DIFETTO ANCORA APERTO, nominato**: la valvola a 2 è tarata su
+  set piccoli e su 13 pick lascia la verità fuori portata. Non l'ho toccata —
+  alzarla lascia il pulitore mangiare punti buoni e ho le prove di una foto
+  sola. Da decidere con più foto in mano.
 
 **BUCO RESIDUO, nominato**: il COLD START — una sessione senza nessun
 montaggio noto non ha arbitro, e un gemello con fuori-anello ≥2 e zero di
