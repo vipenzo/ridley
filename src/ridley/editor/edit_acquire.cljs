@@ -3200,9 +3200,21 @@
                             (cond
                               (and retry-hand (sees-hand? retry-hand) (rename-worthy? retry-hand))
                               (do (drop-proposals!)
+                                  ;; NOT "registrata sui tuoi soli click", which is
+                                  ;; what this said until 2026-09-02: the note rides
+                                  ;; the FIRST solve and is printed at the end of a
+                                  ;; message describing the LAST one, after
+                                  ;; propose-and-snap! has put fresh marks in. On
+                                  ;; Vincenzo's grab-01 that produced one line saying
+                                  ;; both "9 marker agganciati in automatico" and
+                                  ;; "registrata sui tuoi soli click" — the second
+                                  ;; false, and the reader left to guess which. It
+                                  ;; may only report what it did: drop the stale
+                                  ;; proposals. What the final fit stands on is the
+                                  ;; :hand-only clause's business, and that one knows.
                                   (assoc retry-hand :note
-                                         (str "le PROPOSTE della vecchia posa bloccavano il solve: "
-                                              "tolte, registrata sui tuoi soli click")))
+                                         (str "le PROPOSTE della vecchia posa bloccavano il "
+                                              "solve: tolte")))
 
                               hand-flip-ok?
                               (do (drop-proposals!)
