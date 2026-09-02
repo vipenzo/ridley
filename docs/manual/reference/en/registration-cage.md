@@ -12,6 +12,7 @@ status: experimental
 `(registration-cage :d 176)`
 `(registration-cage :d 176 :marks 12 :disc 2.5 :h 3)`
 `(registration-cage :d 176 :phases {:x 2.5})`
+`(registration-cage :d 176 :flips #{:y} :phases {:y 0})`  ; a ring glued turned over
 `(registration-cage :d 176 :index-phase 0)`   ; a cage printed before 2026-08-22
 
 ## Description
@@ -61,6 +62,11 @@ they were there to enforce a rigidity the mounting now supplies physically.
   `:z` the smallest), positive by the right-hand rule on that axis. Default 0,
   meaning nominal. See *The rotation you cannot impose* below — this is a
   number you **measure**, not a tolerance you try to hit.
+- `:flips` — which rings were glued **turned over**, as a set of axes
+  (`#{:y}`). The other mounting freedom, and the same philosophy as `:phases`:
+  a constant of the cage you built, declared once — never a reason to reprint.
+  See *The ring glued turned over* below. Declaring a flip **changes what that
+  ring's phase measures**, so re-measure it afterwards.
 
 ## Why three rings, and why three sizes
 
@@ -287,6 +293,48 @@ zero-index says which.
 
 Printing is unaffected — `acquire-cage` always prints the nominal cage. `:phases`
 describes the one you built.
+
+## The ring glued turned over — `:flips`
+
+The joints leave one more freedom than the phase: a ring can be glued **turned
+over**, face for face, and still seat (verified physically on the reference
+cage, 2026-08-28 — its Y ring is mounted that way). Like an unlucky phase this
+is not a defect to fix by reprinting: the cage is epoxied, the mounting is a
+constant of the object, and the model can carry it:
+
+```clojure
+(registration-cage :d 176 :flips #{:y} :phases {:y 0 :x 180})
+```
+
+A flip is modelled as the physical motion it is — a 180° **proper rotation** of
+the printed ring about one of its own diameters, then the ring's `:phases`
+turn. No mirror is involved: a real ring cannot be mirrored, only turned over,
+and whichever diameter it actually turned about, the difference is an in-plane
+rotation the phase absorbs. Which is also the caveat: **declaring a flip
+changes what that ring's phase measures.** A phase fitted while the model
+assumed the ring unflipped is void for that ring; re-measure it on the as-built
+model (the phase machinery above works unchanged, and the drawn double dots
+let you check the result by eye).
+
+Mark ids keep the **print's** labels: after `:flips #{:y}`, `:yp…` still names
+the discs of the printed p face — which now faces −y. That is the same
+convention your eyes use: the zero-index figure is chiral, and its chirality
+belongs to the *print*, so the reading rule (from the big disc to the small
+inner one: counter-clockwise in the image = p) gives the same answer whether
+the ring is mounted flipped or not. What changes is *which side of the cage*
+that face looks out of — and the editor's face-from-pose derivation accounts
+for it, so the toggles light up with the print's labels, correctly.
+
+How you notice one: the virtual cage refuses to match the photographed one —
+the glue tabs sit on the wrong side of the ring, the double dots land mirrored
+— and, at the bench, the ring's index detects cleanly but in the mirrored
+housing (this is exactly how the reference cage's Y ring was found). Declare
+the flip, re-measure that ring's phase, and the drawn cage becomes the glued
+one, tabs and all.
+
+Printing is unaffected, same as `:phases`: `acquire-cage` prints the nominal
+cage, and `printable-ring` must be taken from a model declared **without**
+`:flips`.
 
 ## The zero-index is off-axis, and that is what tells the two faces apart
 

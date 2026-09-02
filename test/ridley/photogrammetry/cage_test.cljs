@@ -918,3 +918,105 @@
       (is (= shown (mapv flip hidden)) "ribaltare la faccia riporta i nomi veri")
       (is (guard shown (fit (mapv flip hidden)))
           "il ribaltamento rimette la camera davanti ai dischetti"))))
+
+;; ---------------------------------------------------------------------------
+;; :flips — the OTHER mounting freedom. The reference cage's Y ring is glued
+;; TURNED OVER (physical test 2026-08-28; found from photographs as the ring's
+;; index detected cleanly but in the MIRRORED housing, leva 2). Declared, not
+;; reprinted: a flip is a 180° PROPER rotation of the printed ring about one
+;; of its own diameters — no mirror, a physical ring cannot be mirrored — and
+;; the residual in-plane turn is what that ring's :phases measures.
+;; ---------------------------------------------------------------------------
+
+(defn- approx3 [a b]
+  (every? true? (map #(< (Math/abs (- %1 %2)) 1e-9) a b)))
+
+(defn- cross3 [[ax ay az] [bx by bz]]
+  [(- (* ay bz) (* az by)) (- (* az bx) (* ax bz)) (- (* ax by) (* ay bx))])
+
+(defn- signed-index-angle
+  "Signed angle (deg) from mark 0 to the zero-index of face (axis, sign),
+   about that face's OUTWARD normal — the number the passetto rule reads:
+   +10° at twelve marks = the index a third of a step CCW = face p."
+  [cage axis sign]
+  (let [as (:anchors cage)
+        m0 (get as (cage/mark-id axis sign 0))
+        ix (get as (cage/index-id axis sign))
+        r0 (:up m0) r1 (:up ix)
+        h (:heading m0)
+        s (dot h (cross3 r0 r1))
+        c (dot r0 r1)]
+    (* (Math/atan2 s c) (/ 180.0 Math/PI))))
+
+(deftest flip-is-a-rotation-not-a-mirror
+  (testing "l'anello Y ribaltato: ogni sua ancora mappa per [−x −y z] (180°
+            attorno al diametro cage-z), gli altri anelli non si muovono di un
+            bit, e :flips assente/vuoto è la gabbia di prima"
+    (let [nom (cage/registration-cage :d 176)
+          flp (cage/registration-cage :d 176 :flips #{:y})
+          m (fn [[x y z]] [(- x) (- y) z])]
+      (doseq [[id a] (:anchors flp)]
+        (let [b (get (:anchors nom) id)]
+          (if (= :y (cage/anchor-axis id))
+            (do (is (approx3 (:position a) (m (:position b))) (str id " posizione"))
+                (is (approx3 (:heading a) (m (:heading b))) (str id " heading")))
+            (is (= a b) (str id " (anello non ribaltato) deve restare identico")))))
+      (is (= (:anchors nom) (:anchors (cage/registration-cage :d 176 :flips #{})))
+          "flips vuoto = nominale, bit per bit")
+      (is (= #{:y} (:cage-flips flp)) "il montaggio viaggia sulla mesh")
+      (is (= #{:y} (:cage-flips (cage/registration-cage :d 176 :flips {:y true :x false})))
+          "accetta anche la forma mappa"))))
+
+(deftest flip-mirrors-the-housing-not-the-print
+  (testing "la chiralità della FIGURA STAMPATA è invariante (una rotazione non
+            specchia niente): il passetto letto sulla faccia p della stampa dà
+            +10° attorno alla SUA normale uscente, ribaltata o no"
+    (let [nom (cage/registration-cage :d 176)
+          flp (cage/registration-cage :d 176 :flips #{:y})]
+      (is (< (Math/abs (- 10.0 (signed-index-angle nom :y 1))) 1e-6))
+      (is (< (Math/abs (- -10.0 (signed-index-angle nom :y -1))) 1e-6))
+      (is (< (Math/abs (- 10.0 (signed-index-angle flp :y 1))) 1e-6)
+          "la faccia p della stampa legge p anche ribaltata")
+      (testing "ma l'ALLOGGIO è specchiato: nella gabbia ribaltata la corona che
+                GUARDA +y è quella m della stampa (legge −10°), dove la nominale
+                mostrava la p (+10°) — la firma che la leva 2 ha rilevato"
+        (let [heading-of (fn [c axis sign]
+                           (:heading (get (:anchors c) (cage/mark-id axis sign 0))))]
+          (is (approx3 [0.0 1.0 0.0] (heading-of nom :y 1)))
+          (is (approx3 [0.0 -1.0 0.0] (heading-of flp :y 1))
+              "yp (etichetta di stampa) ora guarda −y")
+          (is (approx3 [0.0 1.0 0.0] (heading-of flp :y -1))
+              "e da +y si vede la faccia ym della stampa"))))))
+
+(deftest flip-then-phase-in-assembly-order
+  (testing "flip PRIMA, fase misurata DOPO — l'ordine fisico del montaggio: la
+            fase di un anello dichiarato ribaltato si misura sul modello as-built"
+    (let [flp90 (cage/registration-cage :d 176 :flips #{:y} :phases {:y 90})
+          flp0 (cage/registration-cage :d 176 :flips #{:y})]
+      (doseq [[id a] (:anchors flp90)
+              :when (= :y (cage/anchor-axis id))]
+        (let [b (get (:anchors flp0) id)]
+          (is (approx3 (:position a) (cage/turn-about-axis :y (:position b) 90.0))
+              (str id ": posizione = flip poi giro di fase"))
+          (is (approx3 (:heading a) (cage/turn-about-axis :y (:heading b) 90.0))
+              (str id ": heading idem")))))))
+
+(deftest flip-carries-the-fabrication-features
+  (testing "alette e feritoie dell'anello ribaltato si ribaltano con lui (la
+            gabbia DISEGNATA deve essere quella INCOLLATA), le altre restano"
+    (let [nom (cage/registration-cage :d 176)
+          flp (cage/registration-cage :d 176 :flips #{:y})
+          m (fn [[x y z]] [(- x) (- y) z])
+          by-owner (fn [c] (group-by :owner (:tabs c)))]
+      (doseq [[t-nom t-flp] (map vector (:y (by-owner nom)) (:y (by-owner flp)))]
+        (is (approx3 (:center t-flp) (m (:center t-nom)))
+            (str (:kind t-nom) " di Y ribaltata"))
+        (is (= (:size t-flp) (:size t-nom)) "le misure della scatola non cambiano"))
+      (doseq [ax [:x :z]]
+        (is (= (ax (by-owner nom)) (ax (by-owner flp)))
+            (str "le linguette di " (name ax) " non si muovono")))
+      (doseq [[s-nom s-flp] (map vector (:stick-slots nom) (:stick-slots flp))]
+        (if (= :y (:axis s-nom))
+          (do (is (approx3 (:position s-flp) (m (:position s-nom))))
+              (is (approx3 (:up s-flp) (m (:up s-nom))) "il corpo sale dall'altra faccia"))
+          (is (= s-nom s-flp)))))))

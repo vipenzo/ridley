@@ -618,6 +618,34 @@
         c (Math/cos a) sn (Math/sin a)]
     (place axis [(- (* u c) (* v sn)) (+ (* u sn) (* v c)) n])))
 
+(defn flip-in-ring
+  "A point (or direction — the map is linear) of ring `axis` taken through the
+   ring being TURNED OVER: a 180° rotation about its own local-u diameter,
+   (u,v,n) → (u,−v,−n) in ring coordinates.
+
+   A PROPER rotation, deliberately: a physical ring cannot be mirrored, only
+   turned over, so no reflection belongs in the model. Which diameter it turns
+   about does not matter — any other choice differs from this one by an
+   in-plane rotation, and that residue is exactly what the ring's `:phases`
+   number declares. So (flip, phase) spans every mounting the joints leave
+   open, with no redundancy."
+  [axis p]
+  (let [[u v n] (unplace axis p)]
+    (place axis [u (- v) (- n)])))
+
+(defn- mount-anchor
+  "One anchor of a FLIPPED ring carried from print frame to as-built frame:
+   the flip first, then the measured phase turn (`po-deg`, degrees) — the
+   physical order of assembly: the ring was turned over, then it seated at
+   whatever rotation the epoxy caught. Both maps are linear, so :heading and
+   :up ride the same transform as :position."
+  [axis po-deg a]
+  (let [t #(turn-about-axis axis (flip-in-ring axis %) po-deg)]
+    (cond-> a
+      (:position a) (update :position t)
+      (:heading a) (update :heading t)
+      (:up a) (update :up t))))
+
 (defn- ring-radius [{:keys [axis obj]}]
   (let [[u v _] (unplace axis obj)] (Math/sqrt (+ (* u u) (* v v)))))
 
@@ -848,6 +876,40 @@
              (:phases {:x 90}), found live on 2026-08-24 after a day of the
              candidates saying 'rot 3' and the clicked zero saying 'rot 0' —
              both were right.
+     :flips  which rings were glued TURNED OVER, as a set of axes (#{:y}) or a
+             map {:y true}. The other mounting freedom, and like :phases it is
+             a constant of the built cage to DECLARE, never a defect to fix by
+             reprinting: the reference cage's Y ring is mounted flipped
+             (physical test 2026-08-28 — a flip the joints do not forbid), it
+             was discovered from photographs (the ring's zero-index detected
+             cleanly but sitting in the MIRRORED housing, leva 2), and the
+             cage is glued with epoxy — the choice is model it or bin it.
+
+             A flip is modelled as the physical motion it is: a 180° proper
+             rotation of the printed ring about one of its own diameters
+             (flip-in-ring), then the ring's :phases turn. No mirror — a real
+             ring cannot be mirrored — and no new parameter beyond the boolean:
+             whichever diameter it was actually turned over, the difference is
+             an in-plane rotation that the ring's phase absorbs. Which means:
+             DECLARING A FLIP CHANGES WHAT THAT RING'S PHASE MEASURES — a
+             phase fitted under the unflipped assumption is void for that ring
+             and must be re-measured on the as-built model.
+
+             Anchor ids keep the PRINT's labels: after a flip, :yp… names the
+             discs of the printed p face, which now faces −y. That is the
+             reading gesture's own convention — the passetto rule (big disc →
+             small pallino, CCW in the image = p) reads the printed figure's
+             chirality, which mounting cannot change — so what the eye reads
+             off a photograph and what the id says stay the same fact. The
+             face-from-pose derivation accounts for the flip instead
+             (bridge/cage-faces-from-pose).
+
+             Fabrication features (tabs, slots) flip with their ring, so the
+             drawn cage matches the glued one; they still do not take the
+             :phases turn (an axis-aligned box cannot turn 30° and stay a box)
+             — exact for phases that are multiples of 180°, which his
+             measured cages so far all are; crowns and indices, the things
+             the solver and the double pallini live on, are exact always.
 
    Returns a three-ring mesh with, under :anchors, six crowns of `marks` plus six
    zero-indices — `:zp00`…, `:zm00`…, `:yp00`…, `:ym00`…, `:xp00`…, `:xm00`…,
@@ -860,7 +922,7 @@
    The anchors are non-coplanar, so `pnp/solve-pnp` routes them to the general
    DLT rather than the planar homography — pick marks on TWO rings and the pose
    is conditioned on all six degrees of freedom with no mirror twin to reject."
-  [& {:keys [d marks disc h seg phases index-phase]
+  [& {:keys [d marks disc h seg phases flips index-phase]
       :or {h default-h seg 64 index-phase default-index-phase}}]
   (when-not (and (number? d) (pos? d))
     (throw (js/Error.
@@ -884,10 +946,22 @@
                       {:verts [] :faces [] :groups {}}
                       rings)
         phase-off (fn [axis] (deg->rad (or (get phases axis) 0.0)))
+        flip? (if (map? flips)
+                (into #{} (keep (fn [[k v]] (when v k))) flips)
+                (set flips))
         anchors (reduce (fn [acc {:keys [axis crown index]}]
-                          (let [po (phase-off axis)]
-                            (into acc (concat (face-anchors axis 1 crown index n h po index-phase)
-                                              (face-anchors axis -1 crown index n h po index-phase)))))
+                          (if (flip? axis)
+                            ;; as-built ring: generate the PRINT (phase 0), then
+                            ;; flip it over and turn it by the measured phase —
+                            ;; the assembly's own order (see :flips above)
+                            (let [po-deg (or (get phases axis) 0.0)]
+                              (into acc
+                                    (map (fn [[id a]] [id (mount-anchor axis po-deg a)]))
+                                    (concat (face-anchors axis 1 crown index n h 0.0 index-phase)
+                                            (face-anchors axis -1 crown index n h 0.0 index-phase))))
+                            (let [po (phase-off axis)]
+                              (into acc (concat (face-anchors axis 1 crown index n h po index-phase)
+                                                (face-anchors axis -1 crown index n h po index-phase))))))
                         {}
                         rings)]
     {:type :mesh
@@ -913,13 +987,41 @@
      :cage-marks n
      :cage-h h
      :cage-phases phases
+     :cage-flips flip?
      :cage-index-phase index-phase
      :rings rings
      ;; Fabrication rides on the proxy for the same reason the marks do: the
      ;; `acquire-cage` library must not restate any of this, or the printed cage
      ;; and the model of it drift apart without either one looking wrong.
-     :tabs (joint-tabs d h)
-     :stick-slots (stick-slots d h)
+     ;; A flipped ring's features flip with it (as-built, not as-designed) —
+     ;; the drawn tabs must sit where the glued ones are, or the eye alignment
+     ;; they exist for would be aligning to a cage that was never built.
+     :tabs (mapv (fn [t] (cond-> t
+                           (flip? (:owner t))
+                           (update :center (partial flip-in-ring (:owner t)))))
+                 (joint-tabs d h))
+     ;; A slot is part of its ring, so it takes the ring's mounting whole: the
+     ;; flip first, then the PHASE — unlike the tabs, which are not turned
+     ;; because a turned tab would not reach its partner (that is precisely why
+     ;; only the largest ring's rotation is free; see :phases). Slots did not
+     ;; take the phase while they were fabrication-only data. They must now:
+     ;; they are DRAWN over the photograph as an alignment reference, and a
+     ;; reference drawn where the plastic is not is worse than none — on a cage
+     ;; with :phases {:x 90} the eye would be lining the model up with a lie.
+     ;; Invisible at 180° (the two slots sit 60°/240°, so a half turn maps the
+     ;; pair onto itself) — which is exactly why nothing Vincenzo aligned by
+     ;; could contradict the X ring's declared 180° on 2026-09-01.
+     :stick-slots (mapv (fn [{:keys [axis] :as sl}]
+                          (let [po-deg (or (get phases axis) 0.0)
+                                mount (fn [v]
+                                        (cond->> v
+                                          (flip? axis) (flip-in-ring axis)
+                                          true (#(turn-about-axis axis % po-deg))))]
+                            (-> sl
+                                (update :position mount)
+                                (update :heading mount)
+                                (update :up mount))))
+                        (stick-slots d h))
      :aperture (aperture d)}))
 
 (defn printable-ring
@@ -931,6 +1033,10 @@
    Same numbers as the cage — they are the cage's own anchors and tabs put
    through `unplace`, not a second computation — only turned the way a printer
    wants them.
+
+   Print from a cage declared WITHOUT :flips: a flip describes how an existing
+   assembly was GLUED, and a printable-ring taken from a flipped model would
+   bake that mounting into the plastic of a new part.
 
    It exists because two rings out of three stand on EDGE in cage coordinates,
    and a 3MF written that way asks the user to rotate them in the slicer. A ring
