@@ -107,10 +107,12 @@
    sullo zero del bloccaggio, che lavora sull'asse minore stampato in piano."
   (scale-shape (circle 2) 1 1.1))
 
-(def ^:private slot-body-w 8.0)     ; larghezza del corpo (azimutale)
-(def ^:private slot-body-len 14.0)  ; lunghezza lungo il canale (radiale)
-(def ^:private slot-rise 6.0)       ; quanto il corpo sale sopra la faccia
-(def ^:private channel-lift 2.5)    ; quota dell'asse del canale sopra la faccia
+;; Le MISURE del corpo e del canale non stanno più qui: viaggiano sul proxy,
+;; dentro ogni slot (`:body-w :body-len :body-h :body-lift :channel-lift
+;; :channel-r`), come già facevano posa, linguette e dischetti. Erano l'ultimo
+;; pezzo di gabbia descritto fuori dal modello, e dal 1/9/2026 gli slot si
+;; DISEGNANO anche sopra la foto: tre consumatori dello stesso numero sono tre
+;; occasioni di divergere, e una divergenza qui non si vede — si stampa.
 
 (defn- to-ring-frame
   "Porta una mesh costruita nel frame PIATTO dell'anello (anello in XY, normale
@@ -130,10 +132,12 @@
    geometria si costruisce nel frame piatto e si porta in posa con
    `to-ring-frame` — così i numeri vivono in un posto solo, nel proxy.
 
-   Il corpo: un blocco che dal PIATTO DI STAMPA (−h/2) sale a `slot-rise` sopra
-   la faccia — fuso con la fascia dove la copre, in piedi sul piatto dove la
-   sborda verso il centro: la ricetta delle linguette, zero sbalzi. Il canale:
-   l'ellisse collaudata, asse maggiore verticale, passante e abbondante."
+   Il corpo: un blocco che dal PIATTO DI STAMPA (−h/2) sale sopra la faccia —
+   fuso con la fascia dove la copre, in piedi sul piatto dove la sborda verso
+   il centro: la ricetta delle linguette, zero sbalzi. Il canale: l'ellisse
+   collaudata, asse maggiore verticale, passante e abbondante. Le misure le
+   porta ogni slot (`:body-w :body-len :body-h :body-lift :channel-lift
+   :channel-r`): vengono dal proxy, non da qui."
   [slots h axis flat?]
   (let [;; ORIENTA PRIMA, TRASLA DOPO: rotate gira attorno alla creation-pose,
         ;; che mesh-translate porta con sé — ruotare dopo la traslazione fa
@@ -143,16 +147,16 @@
         ;; già pronta dai dati di posa del proxy.
         orient (fn [m azim] (let [r (rotate m :z azim)]
                               (if flat? r (to-ring-frame r axis))))
-        body-h (+ h slot-rise)
         one (fn [mk lift]
-              (map (fn [{:keys [azimuth-deg position up]}]
-                     (mesh-translate (orient (mk) azimuth-deg)
-                                     (v+ position (v* up lift))))
+              (map (fn [sl]
+                     (mesh-translate (orient (mk sl) (:azimuth-deg sl))
+                                     (v+ (:position sl) (v* (:up sl) (lift sl)))))
                    slots))]
-    [(one (fn [] (box slot-body-w body-h slot-body-len))
-          (- (/ body-h 2.0) (/ h 2.0)))
-     (one (fn [] (scale (cyl 2 80) 1 1.0 1.1))
-          (+ (/ h 2.0) channel-lift))]))
+    [(one (fn [sl] (box (:body-w sl) (:body-h sl) (:body-len sl)))
+          (fn [sl] (:body-lift sl)))
+     (one (fn [sl] (let [[across up] (:channel-r sl)]
+                     (scale (cyl across 80) 1 1.0 (/ up across))))
+          (fn [sl] (+ (/ h 2.0) (:channel-lift sl))))]))
 
 (defn stick
   "Uno stick da stampare: sezione ellittica collaudata (4.0×3.6), lungo `len`

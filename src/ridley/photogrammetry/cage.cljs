@@ -434,6 +434,42 @@
    both sides."
   [60.0 240.0])
 
+;; --- the stick-slot body, in ONE place --------------------------------------
+;;
+;; These were the `acquire-cage` library's own constants until 2026-09-01, the
+;; last piece of cage fabrication still described outside the proxy. They moved
+;; here for the reason every other one did: the library must not restate
+;; geometry, or the printed cage and the model of it drift apart without either
+;; looking wrong. What made it urgent is that the slots are now DRAWN over the
+;; photograph as well as printed (Vincenzo: «anche loro sono elementi chirali
+;; riconoscibili»), so the same numbers must reach a third consumer.
+
+(def ^:private slot-body-w
+  "Width (mm) of the slot body, across the channel — azimuthal on its ring."
+  8.0)
+
+(def ^:private slot-body-len
+  "Length (mm) of the slot body along the channel — radial on its ring."
+  14.0)
+
+(def ^:private slot-rise
+  "How far (mm) the body stands proud of the ring's face. The body spans the
+   band and stands the rest on the print bed, so it prints with no overhang —
+   the tabs' recipe."
+  6.0)
+
+(def ^:private slot-channel-lift
+  "Height (mm) of the channel's axis above the ring's face."
+  2.5)
+
+(def ^:private slot-channel-r
+  "Semi-axes (mm) of the elliptical channel, [across along-up] — the tested
+   4.0×4.4 section. The MAJOR axis lies along the ring's own axis, which is
+   vertical in print: a horizontal hole loses a few tenths there to the sagging
+   bridge, and this puts that loss on the 0.4mm insertion clearance rather than
+   on the minor axis, which is what the quarter-turn locks against."
+  [2.0 2.2])
+
 (defn stick-slots
   "The poses of the STICK-SLOTS on a cage of diameter `d` — the part-holder
    Vincenzo designed, printed and tested (2026-08-25): an elliptical stick slides
@@ -450,19 +486,35 @@
    the ring's own axis, the face the body rises from — the same face the tabs
    rise from, so the ring still prints flat with everything growing upward.
 
+   Plus the BODY and CHANNEL each slot is made of, `h` being the ring
+   thickness: :body-w across the channel, :body-len along it, :body-h its full
+   height (band plus rise) and :body-lift how far its centre sits above
+   :position — the four numbers a box needs — and :channel-lift / :channel-r
+   for the elliptical hole through it. They live here rather than in the
+   `acquire-cage` library (where they were until 2026-09-01) because they now
+   have three consumers — printing, the flat printable ring, and the cage drawn
+   over the photograph — and three copies of a number is three chances to drift.
+
    Fabrication data, not registration data: slots carry no marks and take no
    part in the solve, so `:phases` does not move them."
-  [d]
-  (vec (for [k (range ring-count)
-             alpha slot-azimuths]
-         (let [axis (ring-axis k)
-               a (* alpha (/ Math/PI 180.0))
-               r (- (:outer (ring-radii d k)) 7.0)]
-           {:axis axis
-            :azimuth-deg alpha
-            :position (place axis [(* r (Math/cos a)) (* r (Math/sin a)) 0.0])
-            :heading (place axis [(- (Math/cos a)) (- (Math/sin a)) 0.0])
-            :up (place axis [0.0 0.0 1.0])}))))
+  [d h]
+  (let [body-h (+ h slot-rise)]
+    (vec (for [k (range ring-count)
+               alpha slot-azimuths]
+           (let [axis (ring-axis k)
+                 a (* alpha (/ Math/PI 180.0))
+                 r (- (:outer (ring-radii d k)) 7.0)]
+             {:axis axis
+              :azimuth-deg alpha
+              :position (place axis [(* r (Math/cos a)) (* r (Math/sin a)) 0.0])
+              :heading (place axis [(- (Math/cos a)) (- (Math/sin a)) 0.0])
+              :up (place axis [0.0 0.0 1.0])
+              :body-w slot-body-w
+              :body-len slot-body-len
+              :body-h body-h
+              :body-lift (- (/ body-h 2.0) (/ h 2.0))
+              :channel-lift slot-channel-lift
+              :channel-r slot-channel-r})))))
 
 ;; --- anchors ----------------------------------------------------------------
 
@@ -867,7 +919,7 @@
      ;; `acquire-cage` library must not restate any of this, or the printed cage
      ;; and the model of it drift apart without either one looking wrong.
      :tabs (joint-tabs d h)
-     :stick-slots (stick-slots d)
+     :stick-slots (stick-slots d h)
      :aperture (aperture d)}))
 
 (defn printable-ring
