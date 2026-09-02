@@ -215,6 +215,12 @@ constrained fit comes back at 1.91px held out against the free fit's 2.06px.
   folder. Deleting the second one throws away the registration and nothing else.
 - A live-grabbed frame has no turntable angle. It is kept as a *free* photograph,
   which the ring model leaves alone by design.
+- `R` is robust: a view the joint fit gets **worse** with loses its *vote on
+  the lens* — automatically, down to a floor of four views — and keeps
+  everything else: the photo stays in the film with its pose and clicks. A
+  photo is worth what it shows (an oblique vantage may be exactly the one your
+  tracing needs), so registration quality decides the vote, never membership.
+  Every exclusion is announced.
 - A grabbed frame has no EXIF either, so its focal length must be *measured* —
   and once a session measures it (a plate grab, or `R`), it is filed under that
   camera **at that delivered size** in `~/.ridley/cameras.json`. The next

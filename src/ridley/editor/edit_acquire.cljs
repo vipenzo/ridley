@@ -4779,7 +4779,16 @@
    fusion itself closed to 0.13 mm (2026-08-06): 4-5 px of per-photo rms, worth
    a millimetre or two of depth.
 
-   Reuses each photo's own clicks; asks for nothing new."
+   Reuses each photo's own clicks; asks for nothing new.
+
+   ROBUST since 2026-09-02 (direttiva di Vincenzo, dopo grab-04): a view the
+   joint fit gets WORSE with loses its VOTE on the lens — leave-one-out on the
+   worst per-view residual, retried down to a floor of four views — and keeps
+   everything else: film, pose, clicks. A photo is worth what it SHOWS (an
+   all-rings-oblique vantage can be exactly the one the tracing needs), so
+   registration quality decides the vote, never membership. Every exclusion
+   is announced, log and status — misurare e riferire, mai compensare in
+   silenzio."
   []
   (if-let [[iw ih] (backdrop/image-size)]
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
@@ -4853,7 +4862,29 @@
                                   :picks (vec (for [[ci {:keys [px]}] picks]
                                                 {:world (:obj (nth targets ci)) :px px}))})))
                            (range (count (:photos @session)))))
-          out (bundle/refine-session views (:focal-mm @session))]
+          ;; LEAVE-ONE-OUT quando peggiora — direttiva di Vincenzo (2/9 sera,
+          ;; dopo grab-04): una foto vale per il PEZZO che mostra, non per come
+          ;; registra — un'inquadratura che mette tutti gli anelli di taglio
+          ;; può essere esattamente quella che serve al ricalco, e buttarla dal
+          ;; film per far passare la R è la cura sbagliata. Quindi: se il fit
+          ;; congiunto peggiora, la vista peggiore smette di votare sulla
+          ;; LENTE e si riprova, finché migliora o restano quattro viste (il
+          ;; minimo con cui una focale condivisa significa qualcosa). La foto
+          ;; resta nel film, con posa e click suoi; l'esclusione si dice
+          ;; sempre, a voce alta — misura e riferisce, mai compensare in
+          ;; silenzio.
+          [out active-views held-out]
+          (loop [vs views held []]
+            (let [o (bundle/refine-session vs (:focal-mm @session))]
+              (if (and (not (:error o))
+                       (> (:rms-px o) (+ (:rms-px (:before o)) 1e-9))
+                       (> (count vs) 4)
+                       (seq (:per-view o)))
+                (let [idxs (:views o)
+                      w (nth idxs (first (apply max-key second
+                                                (map-indexed vector (:per-view o)))))]
+                  (recur (vec (remove #(= w (:idx %)) vs)) (conj held w)))
+                [o vs held])))]
       (doseq [idx unregistered]
         (auto-log! (str "  foto " (inc idx) " ha click ma NON è registrata: non vota "
                         "sulla lente. Registrala prima (Azzera, 4 click + doppio "
@@ -4874,36 +4905,54 @@
         ;; focal clamped at the limit — and photo 8 became unsolvable at 60.7mm.
         ;; Keep what we had, say why, name the worst view.
         (> (:rms-px out) (+ (:rms-px (:before out)) 1e-9))
-        (let [idxs (:views out)
-              per (:per-view out)
-              worst (when (seq per)
-                      (nth idxs (first (apply max-key second (map-indexed vector per)))))]
+        ;; here even the leave-one-out above ran dry: the fit worsens ANCHE
+        ;; sulle quattro viste migliori. That is no longer one bad photo — it
+        ;; is the set (or the lens hypothesis) as a whole, and the message
+        ;; says what was tried instead of pointing a finger the user cannot
+        ;; act on (grab-04, 2/9: «guardala» on a photo whose vantage was the
+        ;; problem left him stuck; deleting it was the wrong cure — his call).
+        (do
           (auto-log! (str "=== rifinitura RIFIUTATA: peggiorava ("
                           (modal/fmt-number (:rms-px (:before out))) " → "
-                          (modal/fmt-number (:rms-px out)) " px) ==="))
+                          (modal/fmt-number (:rms-px out)) " px)"
+                          (when (seq held-out)
+                            (str " anche senza le foto "
+                                 (str/join "/" (map inc (sort held-out)))))
+                          " ==="))
           (set-status-message!
            (str "Rifinitura NON applicata: peggiorava ("
                 (modal/fmt-number (:rms-px (:before out))) " → "
-                (modal/fmt-number (:rms-px out)) " px). Tengo focale e pose che avevi."
-                (when worst
-                  ;; «guardala» alone left Vincenzo stuck on a photo he COULD
-                  ;; not improve (2/9: grab-04, all three rings 11-19° of
-                  ;; taglio — the vantage itself is bad). Say the way out too:
-                  ;; a photo is cheap, dropping it is a legitimate move.
-                  (str " La peggiore è la foto " (inc worst)
-                       ": guardala prima di rifare R. Se non riesci a "
-                       "migliorarla (capita: certe inquadrature mostrano "
-                       "tutti gli anelli di taglio), toglila dal film — "
-                       "bottone «Delete view " (inc worst) "» nel pannello, "
-                       "premuto due volte — e ripremi R: una foto si rifà, "
-                       "una lente storta avvelena tutto.")))))
+                (modal/fmt-number (:rms-px out)) " px)"
+                (if (seq held-out)
+                  (str ", e ho provato anche a togliere dal voto "
+                       (if (> (count held-out) 1) "le foto " "la foto ")
+                       (str/join "/" (map inc (sort held-out)))
+                       " — non basta: non è una foto sola, è il set (o la "
+                       "lente di partenza). Controlla i click segnati rossi "
+                       "sulle foto peggiori, o registra una vista in più con "
+                       "un anello ben di faccia.")
+                  ". ")
+                " Tengo focale e pose che avevi.")))
 
         :else
         (let [{:keys [focal-mm poses rms-px before]} out]
-          (doseq [[view pose] (map vector (filterv #(and (:pose %) (>= (count (:picks %)) 4)) views)
+          ;; active-views, NOT views: a held-out photo's pose must not be
+          ;; overwritten by a zip against the subset's poses — it kept its own
+          (doseq [[view pose] (map vector (filterv #(and (:pose %) (>= (count (:picks %)) 4))
+                                                   active-views)
                                    poses)]
             (swap! session assoc-in [:camera-poses (:idx view)]
                    (bridge/solver-pose->camera pose proxy-pose)))
+          ;; the exclusions, said out loud — the photo stays in the film with
+          ;; its pose and clicks; it only lost its vote on the LENS. A photo
+          ;; is worth what it SHOWS (l'inquadratura può essere quella giusta
+          ;; per il pezzo — Vincenzo, 2/9): registration quality decides the
+          ;; vote, never membership.
+          (doseq [idx (sort held-out)]
+            (auto-log! (str "  foto " (inc idx) " NON ha votato sulla lente: il fit "
+                            "congiunto peggiorava con lei. Resta nel film con la sua "
+                            "posa e i suoi click — se la vuoi riallineata alla lente "
+                            "nuova, premi 'r' su di lei.")))
           ;; :refined, not :manual. The joint fit is the BEST focal the session will
           ;; ever have — one lens against every view's picks — and calling it "manual"
           ;; made it indistinguishable from a slider nudge, so the next live grab
@@ -4964,7 +5013,15 @@
           (enter-photo! (:current-idx @session))
           (set-status-message!
            (str "Rifinitura: focale " (modal/fmt-number focal-mm) " mm, riproiezione "
-                (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px")))))
+                (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px"
+                (when (seq held-out)
+                  (str " · " (if (> (count held-out) 1) "le foto " "la foto ")
+                       (str/join "/" (map inc (sort held-out)))
+                       " non " (if (> (count held-out) 1) "hanno" "ha")
+                       " votato sulla lente (peggiorava con "
+                       (if (> (count held-out) 1) "loro" "lei")
+                       "): resta nel film coi suoi click — 'r' su di lei per "
+                       "riallinearla")))))))
     (set-status-message! "Rifinitura: nessuna foto caricata.")))
 
 ;; ============================================================
