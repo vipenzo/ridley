@@ -4886,7 +4886,17 @@
                 (modal/fmt-number (:rms-px (:before out))) " → "
                 (modal/fmt-number (:rms-px out)) " px). Tengo focale e pose che avevi."
                 (when worst
-                  (str " La peggiore è la foto " (inc worst) ": guardala prima di rifare R.")))))
+                  ;; «guardala» alone left Vincenzo stuck on a photo he COULD
+                  ;; not improve (2/9: grab-04, all three rings 11-19° of
+                  ;; taglio — the vantage itself is bad). Say the way out too:
+                  ;; a photo is cheap, dropping it is a legitimate move.
+                  (str " La peggiore è la foto " (inc worst)
+                       ": guardala prima di rifare R. Se non riesci a "
+                       "migliorarla (capita: certe inquadrature mostrano "
+                       "tutti gli anelli di taglio), toglila dal film — "
+                       "bottone «Delete view " (inc worst) "» nel pannello, "
+                       "premuto due volte — e ripremi R: una foto si rifà, "
+                       "una lente storta avvelena tutto.")))))
 
         :else
         (let [{:keys [focal-mm poses rms-px before]} out]
