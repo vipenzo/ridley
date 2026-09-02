@@ -751,6 +751,49 @@
                    :d (reduce min (map :d winners))
                    :contested? (pos? against)}]))))
 
+(def eye-gate-frac
+  "How far — as a fraction of the eye camera's own distance to the cage
+   centre — an accepted reading's camera may land from the EYE-ALIGNED pose
+   before the reading dies. The measured twins of this bench shipped their
+   camera 325/447/548/643/764mm from the truth at working ranges of
+   300-600mm — ratios from ~0.65 up — while a hand alignment of the drawn
+   cage is off by tens of mm and degrees. 0.4 splits those populations with
+   margin on both sides. The one twin family that can sneak under it is the
+   reflection of a NEAR-EDGE-ON ring (camera 2·D·sinθ away, small θ) — and
+   at those obliquities the profile guard already refuses to read the face,
+   so the index witness stays the arbiter there, as before."
+  0.4)
+
+(def eye-face-margin-deg
+  "A face the EYE pose sees more than this many degrees below its own horizon
+   is not even attempted. The margin is generous on purpose: the eye pose is
+   coarse (hand-aligned), so faces near the horizon stay in play — but the
+   through-plastic twin is never near the horizon, it is the face the eye
+   plainly sees the BACK of (an oblique working view puts it 35-90° under),
+   and killing it before the solve is what saves the identity budget."
+  20.0)
+
+(def eye-accept-rms-px
+  "The eye-seed's OWN acceptance bar, deliberately tighter than
+   pnp/accept-rms-px: a hunt reading carries identity evidence (a pinned
+   index, a counted crown), so a 12px fit rides on more than its residual —
+   an eye-seed carries NOTHING but its fit, and must prove itself on it.
+   Measured (battiscopa3, 2026-09-02): true eye-seed registrations sit at
+   0.7-4.3px; the one degenerate a sloppier eye produced (8 corr, camera
+   32mm out — the quiet lie this channel fears most) passed the general bar
+   at 11.8px. Eight splits those populations with margin."
+  8.0)
+
+(defn eye-compatible?
+  "Is `pose`'s camera where the user's eye-aligned `eye-pose` says the camera
+   is — within `eye-gate-frac` of the eye camera's distance to the cage
+   centre (the origin of the solver frame)? The gate of the gizmo seed:
+   «un seme umano grossolano vale più di quattro click»."
+  [eye-pose pose]
+  (let [ec (cam/camera-center eye-pose)
+        d (la/v-norm (la/v-sub (cam/camera-center pose) ec))]
+    (<= d (* eye-gate-frac (la/v-norm ec)))))
+
 (defn auto-read
   "Read the cage from a frame with NO clicks at all: `candidates` from
    blob-detect, `targets` from pnp-target-points, `judge` a disc-presence test
@@ -798,6 +841,17 @@
       decides. On rings the session knows nothing about, behavior is exactly
       as before — the bar can only move UP.
 
+   `:eye-pose` is the user's HAND-ALIGNED pose (the gizmo's «prendo in mano la
+   gabbia e la appaio alla foto»), solver frame — the third lever, and the one
+   that needs no session history, so it closes the cold start for undeclared
+   cages too. Coarse by construction and used only for what coarseness can
+   answer: (1) faces the eye plainly sees the back of are never attempted
+   (eye-face-margin-deg keeps near-horizon faces in play), which kills the
+   through-plastic twin before the solve; (2) an accepted pose must put the
+   camera where the eye put it (eye-compatible?), which kills the turned and
+   far twins whatever they explain. It never CHOOSES among survivors — the
+   evidence-based ranking stays in charge of that.
+
    Every result carries `:index-obs` (this pose's observations) so the caller
    can fold them into the session mounting and DIAGNOSE the assembly — never
    compensate it (direttiva 2026-08-28): a `:rev` sense on a ring is the
@@ -806,7 +860,7 @@
   ([candidates targets intrinsics judge marks] (auto-read candidates targets intrinsics judge marks nil))
   ([candidates targets intrinsics judge marks opts]
    (let [{:keys [disc-r min-seed-crown tol-px trace max-identify concentric? teeth?
-                 mounting blobs min-off-ring]
+                 mounting blobs min-off-ring eye-pose]
           :or {disc-r 1.25 min-seed-crown 8 max-identify 18 min-off-ring 2
                tol-px (:tol-px default-opts)}} opts
          note! (fn [m] (when trace (swap! trace conj m)) nil)
@@ -887,15 +941,96 @@
                               :teeth (mapv (:teeth ct) ids)
                               :riders (count (:riders ct))})))
                        hyps))
-         faces (ring-faces targets)
+         ;; the EYE's face pre-filter: a face the hand-aligned pose plainly
+         ;; sees the back of is never attempted — the through-plastic twin is
+         ;; exactly that face, and it dies here for free instead of at the
+         ;; solve. Faces within eye-face-margin-deg of the eye's horizon stay
+         ;; in play: the eye pose is coarse by construction.
+         all-faces (ring-faces targets)
+         faces (if eye-pose
+                 (let [ec (cam/camera-center eye-pose)
+                       lim (- (Math/sin (* eye-face-margin-deg (/ Math/PI 180.0))))]
+                   (filterv (fn [{:keys [face-normal zero-obj]}]
+                              (or (nil? face-normal)
+                                  (let [dir (la/v-sub ec zero-obj)
+                                        n (la/v-norm dir)]
+                                    (or (zero? n)
+                                        (>= (/ (la/v-dot face-normal dir) n) lim)))))
+                            all-faces))
+                 all-faces)
          by-id (into {} (map (juxt :id identity) targets))
-         budget (volatile! (inc max-identify))]
+         budget (volatile! (inc max-identify))
+         ;; ── the eye as a DIRECT SEED, tried before the ellipse hunt ────────
+         ;; The gate alone measured ZERO on battiscopa3 (2026-09-02): those
+         ;; 1920×1440 frames die at IDENTIFY — no reading ever reaches the
+         ;; gate. But the eye pose doesn't need an identity: assign every mark
+         ;; mutual-nearest under it and let the solve snap in (ICP, 60→26px).
+         ;; Measured on the same five frames, eye at 17-30px of reprojection
+         ;; (a hand alignment ON the image): 5/5, camera 0.7-5.3mm from the
+         ;; hand truth, rms 0.7-4.3px, in milliseconds — against the hunt's
+         ;; 0/5 in 17-36 SECONDS. Held to the same bars as every reading:
+         ;; accept-rms, the physical guard, ≥2 rings, the witness's
+         ;; non-contradiction, and the eye's own camera gate (an ICP that
+         ;; wandered off is a wrong answer, wherever it started). Plus a floor
+         ;; of min-seed-crown correspondences: the one degenerate the bench
+         ;; produced (eye at 42px) passed rms at 11.2 on SEVEN corr — a fit
+         ;; too small to trust is refused, and the ellipse hunt takes over.
+         eye-read
+         (when eye-pose
+           (let [icp-pose (reduce (fn [pose tol]
+                                    (when pose
+                                      (let [c (assign targets cands intrinsics pose tol)]
+                                        (when (>= (count c) 6)
+                                          (:pose (pnp/solve-pnp c intrinsics {}))))))
+                                  eye-pose [60.0 26.0])
+                 corr (when icp-pose (assign targets cands intrinsics icp-pose tol-px))
+                 full (when (>= (count corr) 6) (pnp/solve-pnp corr intrinsics {}))
+                 obs (when full
+                       (:obs (index-witness targets (or blobs cands) intrinsics
+                                            (:pose full) marks {:claimed corr})))
+                 contradiction (when full
+                                 (first (filter (fn [{:keys [axis] :as o}]
+                                                  (when-let [m (get mounting axis)]
+                                                    (or (not= (:sense o) (:sense m))
+                                                        (not= (:k o) (:k m)))))
+                                                obs)))
+                 guard-ok? (when full
+                             (sees-its-own-picks?
+                              {:picks (into {} (map (fn [c] [(:ci c) (:px c)]) corr))
+                               :pose (:pose full)}
+                              by-id))
+                 by-ring (when corr
+                           (frequencies (keep #(some-> (or (cage/mark-parts (:ci %))
+                                                           (cage/index-parts (:ci %)))
+                                                       :axis)
+                                              corr)))
+                 ok? (and full
+                          (<= (:rms-px full) eye-accept-rms-px)
+                          (>= (count corr) min-seed-crown)
+                          (>= (count by-ring) 2)
+                          guard-ok?
+                          (nil? contradiction)
+                          (eye-compatible? eye-pose (:pose full)))]
+             (note! {:stage :eye-seed :corr (count corr)
+                     :rms (some-> full :rms-px) :rings (count by-ring)
+                     :guard guard-ok? :mounting-veto (some? contradiction)
+                     :accepted ok?})
+             (when ok?
+               {:pose (:pose full) :rms-px (:rms-px full)
+                :corr corr :explained (count corr)
+                :off-ring (- (count corr) (apply max 0 (vals by-ring)))
+                :index-obs obs
+                :eye-seed? true
+                :seed nil})))]
      (note! {:stage :hyps :sizes (mapv count hyps) :candidates (count cands)
              ;; the sets themselves and the axis votes: the bench compares them
              ;; against the truth pose's per-ring candidates, which is how the
              ;; 2026-08-29 budget starvation was caught — sizes alone could not
              ;; say whether the true ring was IN the list and never tried
              :sets hyps
+             :eye-hidden-faces (when eye-pose
+                                 (mapv (fn [f] [(:axis f) (:sign f)])
+                                       (remove (set faces) all-faces)))
              :teeth (mapv (fn [s] (some-> (:teeth s) count)) (or seeds []))})
      ;; BEST accepted wins — never the first. The same 11 candidate discs
      ;; identify as ring X AND as ring Y (same circle, different radius: the
@@ -905,185 +1040,201 @@
      ;; the 12, putting the camera 697mm out). The identity budget caps the
      ;; cost instead: the search stops grinding junk after :max-identify
      ;; attempts, which took refusals from 40-65s to 10-25.
-     (->> (for [[hi hyp] (map-indexed vector hyps)
-                face faces
-                ;; two attempts per (hypothesis, face), not either-or: the
-                ;; tooth-locked identity is free and digests riders, but at a
-                ;; pathological obliquity the comb itself can misfile (measured:
-                ;; ring X seen from 150mm off its own plane — anomaly gaps past
-                ;; a quarter tooth), so the baseline enumeration keeps running
-                ;; under the SAME budget rules as before. The bench cannot go
-                ;; below baseline by construction; the teeth add wins.
-                :let [{:keys [pts teeth]} (when seeds (nth seeds hi))
-                      enum-pts (mapv #(nth cands %) (take marks hyp))]
-                attempt (cond-> []
-                          teeth (conj {:pts pts :teeth teeth})
-                          (and (>= (count enum-pts) 4) (pos? (vswap! budget dec)))
-                          (conj {:pts enum-pts}))
-                :let [res (mp/assign-marks (:pts attempt) (:marks face)
-                                           (:zero-obj face) intrinsics judge
-                                           {:disc-r disc-r
-                                            :face-normal (:face-normal face)
-                                            :teeth (:teeth attempt)})
-                      known-sense (get-in mounting [(:axis face) :sense])
-                      ;; a NOMINALLY-mounted ring (fwd, slot 0) cannot testify
-                      ;; about its own seed: the index disc is the same pixel
-                      ;; through the plastic, so the true reading and its
-                      ;; through-plastic twin read the identical (fwd, 0) —
-                      ;; measured (battiscopa2 foto 1, 2026-08-29): the zp
-                      ;; twin shipped 447mm out ENDORSED by its own invariant
-                      ;; Z observation at 1px. Only an off-nominal pair
-                      ;; separates the faces (the twin always reads its seed
-                      ;; index at (fwd, 0) — its zero-hit pinned it there —
-                      ;; while the true reading reads the mounting: foto 7's
-                      ;; twin fwd(k0) vs true rev(k11)). Same lesson as the
-                      ;; hand flow: l'arbitro vero è l'indice dell'ALTRO
-                      ;; anello — or the seed's own, only when the mounting
-                      ;; is off-nominal
-                      seed-nominal? (and known-sense
-                                         (= [:fwd 0]
-                                            [(get-in mounting [(:axis face) :sense])
-                                             (get-in mounting [(:axis face) :k])]))
-                      ;; the confirmation is DEMANDED only of a sense the
-                      ;; session has seen at least twice (a single observation
-                      ;; can be junk) and only where a seed observation CAN
-                      ;; discriminate — on a nominal ring it cannot, so the
-                      ;; old zero-hit rule stands there unrelaxed
-                      demand? (and known-sense
-                                   (not seed-nominal?)
-                                   (>= (get-in mounting [(:axis face) :votes] 1) 2))
-                      _ (note! {:stage :seed :hyp (count hyp) :hyp-i hi
-                                :face [(:axis face) (:sign face)]
-                                :teeth (some-> (:teeth attempt) count)
-                                :crown-hits (:crown-hits res)
-                                :zero-hit? (:zero-hit? res)})]
-                ;; a ring the session knows is mounted turned/flipped puts its
-                ;; index NOWHERE NEAR the model's zero slot: the pixel-judge
-                ;; zero cannot be demanded of the true reading there — the
-                ;; index observation decides after the solve instead. Relaxed
-                ;; only where the observation WILL be demanded, so the bar
-                ;; never drops: it moves from the luminance judge to the
-                ;; detector's discs
-                :when (and res (>= (:crown-hits res) min-seed-crown)
-                           (or (:zero-hit? res) demand?))
-                ;; THE GAUGE. Without a trusted zero the seed's ROTATION is
-                ;; arbitrary: the 12 whole-step turns of the crown labels all
-                ;; fit the seed ring exactly, and each puts the camera
-                ;; somewhere else — orbited k steps about the ring's axis.
-                ;; Measured (foto 7, 2026-08-30): the endorsed true-face
-                ;; reading shipped 325mm out because its gauge was two steps
-                ;; round — index on its slot (sense is gauge-free), crown
-                ;; perfect, camera orbited. On a session-known ring EVERY
-                ;; gauge is tried and the off-ring floor + endorsement decide:
-                ;; only the true turn explains marks beyond the seed's ring.
-                ;; (A luminance-pinned gauge is not exempt — on a mounted ring
-                ;; the model-slot zero is junk by construction, which is
-                ;; exactly what elected foto 6's 548mm twin.)
-                gauge (if demand? (range marks) [0])
-                :let [pose-g (if (zero? gauge)
-                               (:pose res)
-                               (let [m (count (:marks face))
-                                     corr-g (vec (for [[ci mi] (:assignment res)]
-                                                   {:world (:obj (nth (:marks face)
-                                                                      (mod (+ mi gauge) m)))
-                                                    :px (nth (:pts attempt) ci)}))
-                                     seed (pnp/estimate-homography corr-g intrinsics)]
-                                 (when seed
-                                   (or (:pose (pnp/refine corr-g intrinsics seed
-                                                          {:sigma-px 1.0}))
-                                       seed))))]
-                :when pose-g
-                :let [corr (assign targets cands intrinsics pose-g tol-px)
-                      full (when (>= (count corr) 6)
-                             (pnp/solve-pnp corr intrinsics {}))
-                      suspect (when full
-                                (phase-probe targets cands intrinsics
-                                             (:pose full) (:axis face) marks tol-px))
-                      guard-ok? (when full
-                                  (sees-its-own-picks?
-                                   {:picks (into {} (map (fn [c] [(:ci c) (:px c)]) corr))
-                                    :pose (:pose full)}
-                                   by-id))
-                      wit (when full
-                            (index-witness targets (or blobs cands) intrinsics
-                                           (:pose full) marks {:claimed corr}))
-                      obs (:obs wit)
-                      ;; every check below matches the FULL pair (sense, k) —
-                      ;; both pose-absolute. Sense alone lets the cage turned
-                      ;; 180° about another axis through (sense-preserving,
-                      ;; k shifted by half the marks; foto 7, 643mm, spiega 18)
-                      agrees? (fn [{:keys [axis sense k]}]
-                                (let [m (get mounting axis)]
-                                  (and m (= sense (:sense m)) (= k (:k m)))))
-                      ;; …and only a DISCRIMINATING agreement counts as
-                      ;; evidence FOR: on the seed's own ring a nominal
-                      ;; (fwd, 0) observation is twin-invariant — the index is
-                      ;; the same pixel through the plastic — so it endorses
-                      ;; the reflection exactly as well as the truth (the
-                      ;; 447mm case, see seed-nominal? above). Another ring's
-                      ;; agreement always discriminates: every twin the seed
-                      ;; race can generate mirrors the OTHER rings' senses
-                      discriminating? (fn [{:keys [axis] :as o}]
-                                        (and (agrees? o)
-                                             (or (not= (:axis face) axis)
-                                                 (not= [:fwd 0]
-                                                       [(get-in mounting [axis :sense])
-                                                        (get-in mounting [axis :k])]))))
-                      contradiction (first (filter (fn [{:keys [axis] :as o}]
-                                                     (and (get mounting axis)
-                                                          (not (agrees? o))))
-                                                   obs))
-                      confirmed? (or (not demand?)
-                                     (boolean (some #(and (= (:axis face) (:axis %))
-                                                          (discriminating? %))
-                                                    obs)))
-                      ;; ENDORSEMENT: the sharpest DISCRIMINATING observation
-                      ;; — the ranking currency below. Infinity when nothing
-                      ;; endorses
-                      endorse-d (reduce min js/Infinity
-                                        (keep (fn [o] (when (discriminating? o) (:d o)))
-                                              obs))
-                      ;; marks the pose accounts for BEYOND the seed's own
-                      ;; ring. Twice a currency: it separates the ring-family
-                      ;; twins (same circle, other radius), and it is the
-                      ;; ACCEPTANCE floor — the namespace's founding
-                      ;; measurement says a pose standing on one ring alone
-                      ;; does not generalize to the rest of the cage, and the
-                      ;; bench confirmed it for machine seeds (2026-08-30:
-                      ;; both far registrations, 325 e 807mm, explained ZERO
-                      ;; off-ring marks — the index is coplanar with its
-                      ;; crown, so even an endorsed one-ring solve leaves
-                      ;; depth and tilt standing on nothing; foto 8's true
-                      ;; pose explained 4)
-                      off-ring (count (remove (fn [{:keys [ci]}]
-                                                (= (:axis face)
-                                                   (:axis (or (cage/mark-parts ci)
-                                                              (cage/index-parts ci)))))
-                                              corr))
-                      _ (note! {:stage :solve :face [(:axis face) (:sign face)]
-                                :gauge gauge
-                                :corr (count corr)
-                                :off-ring off-ring
-                                :rms (some-> full :rms-px)
-                                :guard guard-ok?
-                                :obs obs
-                                :mounting-veto (some? contradiction)
-                                :mounting-confirmed confirmed?
-                                :suspect (some? suspect)})]
-                :when (and full
-                           (<= (:rms-px full) pnp/accept-rms-px)
-                           guard-ok?
-                           (>= off-ring min-off-ring)
-                           (nil? contradiction)
-                           confirmed?)]
-            {:pose (:pose full) :rms-px (:rms-px full)
-             :corr corr :explained (count corr)
-             :off-ring off-ring
-             :index-obs obs
-             :endorse-d endorse-d
-             :phase-suspect (some-> suspect (assoc :axis (:axis face)))
-             :seed {:axis (:axis face) :sign (:sign face)
-                    :crown-hits (:crown-hits res)}})
+     ;;
+     ;; …unless the EYE already read it: an accepted eye-seed IS the answer —
+     ;; it stood on every bar the hunt's winners stand on, it agrees with the
+     ;; human's own alignment by construction, and the hunt costs 20-35s of
+     ;; grinding for readings the gate would then judge against that same eye.
+     (or eye-read
+         (->> (for [[hi hyp] (map-indexed vector hyps)
+                    face faces
+                    ;; two attempts per (hypothesis, face), not either-or: the
+                    ;; tooth-locked identity is free and digests riders, but at a
+                    ;; pathological obliquity the comb itself can misfile (measured:
+                    ;; ring X seen from 150mm off its own plane — anomaly gaps past
+                    ;; a quarter tooth), so the baseline enumeration keeps running
+                    ;; under the SAME budget rules as before. The bench cannot go
+                    ;; below baseline by construction; the teeth add wins.
+                    :let [{:keys [pts teeth]} (when seeds (nth seeds hi))
+                          enum-pts (mapv #(nth cands %) (take marks hyp))]
+                    attempt (cond-> []
+                              teeth (conj {:pts pts :teeth teeth})
+                              (and (>= (count enum-pts) 4) (pos? (vswap! budget dec)))
+                              (conj {:pts enum-pts}))
+                    :let [res (mp/assign-marks (:pts attempt) (:marks face)
+                                               (:zero-obj face) intrinsics judge
+                                               {:disc-r disc-r
+                                                :face-normal (:face-normal face)
+                                                :teeth (:teeth attempt)})
+                          known-sense (get-in mounting [(:axis face) :sense])
+                          ;; a NOMINALLY-mounted ring (fwd, slot 0) cannot testify
+                          ;; about its own seed: the index disc is the same pixel
+                          ;; through the plastic, so the true reading and its
+                          ;; through-plastic twin read the identical (fwd, 0) —
+                          ;; measured (battiscopa2 foto 1, 2026-08-29): the zp
+                          ;; twin shipped 447mm out ENDORSED by its own invariant
+                          ;; Z observation at 1px. Only an off-nominal pair
+                          ;; separates the faces (the twin always reads its seed
+                          ;; index at (fwd, 0) — its zero-hit pinned it there —
+                          ;; while the true reading reads the mounting: foto 7's
+                          ;; twin fwd(k0) vs true rev(k11)). Same lesson as the
+                          ;; hand flow: l'arbitro vero è l'indice dell'ALTRO
+                          ;; anello — or the seed's own, only when the mounting
+                          ;; is off-nominal
+                          seed-nominal? (and known-sense
+                                             (= [:fwd 0]
+                                                [(get-in mounting [(:axis face) :sense])
+                                                 (get-in mounting [(:axis face) :k])]))
+                          ;; the confirmation is DEMANDED only of a sense the
+                          ;; session has seen at least twice (a single observation
+                          ;; can be junk) and only where a seed observation CAN
+                          ;; discriminate — on a nominal ring it cannot, so the
+                          ;; old zero-hit rule stands there unrelaxed
+                          demand? (and known-sense
+                                       (not seed-nominal?)
+                                       (>= (get-in mounting [(:axis face) :votes] 1) 2))
+                          _ (note! {:stage :seed :hyp (count hyp) :hyp-i hi
+                                    :face [(:axis face) (:sign face)]
+                                    :teeth (some-> (:teeth attempt) count)
+                                    :crown-hits (:crown-hits res)
+                                    :zero-hit? (:zero-hit? res)})]
+                    ;; a ring the session knows is mounted turned/flipped puts its
+                    ;; index NOWHERE NEAR the model's zero slot: the pixel-judge
+                    ;; zero cannot be demanded of the true reading there — the
+                    ;; index observation decides after the solve instead. Relaxed
+                    ;; only where the observation WILL be demanded, so the bar
+                    ;; never drops: it moves from the luminance judge to the
+                    ;; detector's discs
+                    :when (and res (>= (:crown-hits res) min-seed-crown)
+                               (or (:zero-hit? res) demand?))
+                    ;; THE GAUGE. Without a trusted zero the seed's ROTATION is
+                    ;; arbitrary: the 12 whole-step turns of the crown labels all
+                    ;; fit the seed ring exactly, and each puts the camera
+                    ;; somewhere else — orbited k steps about the ring's axis.
+                    ;; Measured (foto 7, 2026-08-30): the endorsed true-face
+                    ;; reading shipped 325mm out because its gauge was two steps
+                    ;; round — index on its slot (sense is gauge-free), crown
+                    ;; perfect, camera orbited. On a session-known ring EVERY
+                    ;; gauge is tried and the off-ring floor + endorsement decide:
+                    ;; only the true turn explains marks beyond the seed's ring.
+                    ;; (A luminance-pinned gauge is not exempt — on a mounted ring
+                    ;; the model-slot zero is junk by construction, which is
+                    ;; exactly what elected foto 6's 548mm twin.)
+                    gauge (if demand? (range marks) [0])
+                    :let [pose-g (if (zero? gauge)
+                                   (:pose res)
+                                   (let [m (count (:marks face))
+                                         corr-g (vec (for [[ci mi] (:assignment res)]
+                                                       {:world (:obj (nth (:marks face)
+                                                                          (mod (+ mi gauge) m)))
+                                                        :px (nth (:pts attempt) ci)}))
+                                         seed (pnp/estimate-homography corr-g intrinsics)]
+                                     (when seed
+                                       (or (:pose (pnp/refine corr-g intrinsics seed
+                                                              {:sigma-px 1.0}))
+                                           seed))))]
+                    :when pose-g
+                    :let [corr (assign targets cands intrinsics pose-g tol-px)
+                          full (when (>= (count corr) 6)
+                                 (pnp/solve-pnp corr intrinsics {}))
+                          suspect (when full
+                                    (phase-probe targets cands intrinsics
+                                                 (:pose full) (:axis face) marks tol-px))
+                          guard-ok? (when full
+                                      (sees-its-own-picks?
+                                       {:picks (into {} (map (fn [c] [(:ci c) (:px c)]) corr))
+                                        :pose (:pose full)}
+                                       by-id))
+                          wit (when full
+                                (index-witness targets (or blobs cands) intrinsics
+                                               (:pose full) marks {:claimed corr}))
+                          obs (:obs wit)
+                          ;; every check below matches the FULL pair (sense, k) —
+                          ;; both pose-absolute. Sense alone lets the cage turned
+                          ;; 180° about another axis through (sense-preserving,
+                          ;; k shifted by half the marks; foto 7, 643mm, spiega 18)
+                          agrees? (fn [{:keys [axis sense k]}]
+                                    (let [m (get mounting axis)]
+                                      (and m (= sense (:sense m)) (= k (:k m)))))
+                          ;; …and only a DISCRIMINATING agreement counts as
+                          ;; evidence FOR: on the seed's own ring a nominal
+                          ;; (fwd, 0) observation is twin-invariant — the index is
+                          ;; the same pixel through the plastic — so it endorses
+                          ;; the reflection exactly as well as the truth (the
+                          ;; 447mm case, see seed-nominal? above). Another ring's
+                          ;; agreement always discriminates: every twin the seed
+                          ;; race can generate mirrors the OTHER rings' senses
+                          discriminating? (fn [{:keys [axis] :as o}]
+                                            (and (agrees? o)
+                                                 (or (not= (:axis face) axis)
+                                                     (not= [:fwd 0]
+                                                           [(get-in mounting [axis :sense])
+                                                            (get-in mounting [axis :k])]))))
+                          contradiction (first (filter (fn [{:keys [axis] :as o}]
+                                                         (and (get mounting axis)
+                                                              (not (agrees? o))))
+                                                       obs))
+                          confirmed? (or (not demand?)
+                                         (boolean (some #(and (= (:axis face) (:axis %))
+                                                              (discriminating? %))
+                                                        obs)))
+                          ;; ENDORSEMENT: the sharpest DISCRIMINATING observation
+                          ;; — the ranking currency below. Infinity when nothing
+                          ;; endorses
+                          endorse-d (reduce min js/Infinity
+                                            (keep (fn [o] (when (discriminating? o) (:d o)))
+                                                  obs))
+                          ;; marks the pose accounts for BEYOND the seed's own
+                          ;; ring. Twice a currency: it separates the ring-family
+                          ;; twins (same circle, other radius), and it is the
+                          ;; ACCEPTANCE floor — the namespace's founding
+                          ;; measurement says a pose standing on one ring alone
+                          ;; does not generalize to the rest of the cage, and the
+                          ;; bench confirmed it for machine seeds (2026-08-30:
+                          ;; both far registrations, 325 e 807mm, explained ZERO
+                          ;; off-ring marks — the index is coplanar with its
+                          ;; crown, so even an endorsed one-ring solve leaves
+                          ;; depth and tilt standing on nothing; foto 8's true
+                          ;; pose explained 4)
+                          off-ring (count (remove (fn [{:keys [ci]}]
+                                                    (= (:axis face)
+                                                       (:axis (or (cage/mark-parts ci)
+                                                                  (cage/index-parts ci)))))
+                                                  corr))
+                          ;; the EYE's camera gate: a solved pose whose camera is
+                          ;; not where the hand-aligned pose put it is a twin or a
+                          ;; junk constellation, whatever it explains — the human
+                          ;; seed outranks the score («un seme umano grossolano
+                          ;; vale più di quattro click»)
+                          eye-ok? (or (nil? eye-pose)
+                                      (nil? full)
+                                      (eye-compatible? eye-pose (:pose full)))
+                          _ (note! {:stage :solve :face [(:axis face) (:sign face)]
+                                    :gauge gauge
+                                    :corr (count corr)
+                                    :off-ring off-ring
+                                    :rms (some-> full :rms-px)
+                                    :guard guard-ok?
+                                    :obs obs
+                                    :mounting-veto (some? contradiction)
+                                    :mounting-confirmed confirmed?
+                                    :eye-veto (and eye-pose full (not eye-ok?))
+                                    :suspect (some? suspect)})]
+                    :when (and full
+                               (<= (:rms-px full) pnp/accept-rms-px)
+                               guard-ok?
+                               (>= off-ring min-off-ring)
+                               (nil? contradiction)
+                               confirmed?
+                               eye-ok?)]
+                {:pose (:pose full) :rms-px (:rms-px full)
+                 :corr corr :explained (count corr)
+                 :off-ring off-ring
+                 :index-obs obs
+                 :endorse-d endorse-d
+                 :phase-suspect (some-> suspect (assoc :axis (:axis face)))
+                 :seed {:axis (:axis face) :sign (:sign face)
+                        :crown-hits (:crown-hits res)}})
           ;; ENDORSED READINGS OUTRANK EVERYTHING, sharpest endorsement first —
           ;; and only then the old key. Measured reason (foto 7, 2026-08-30):
           ;; with the twins vetoed, the race came down to the TRUE reading
@@ -1098,5 +1249,5 @@
           ;; BORROW the same disc through another ring's slots, but the wrong
           ;; interpretation predicts it off by the scale mismatch (11.7px
           ;; against the true reading's 1.4)
-          (sort-by (juxt :endorse-d (comp - :explained) (comp - :off-ring) :rms-px))
-          first))))
+              (sort-by (juxt :endorse-d (comp - :explained) (comp - :off-ring) :rms-px))
+              first)))))

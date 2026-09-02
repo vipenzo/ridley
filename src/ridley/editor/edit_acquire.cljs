@@ -1145,6 +1145,11 @@
   ;; changed, so this photo's faces are re-read from it. The other photos'
   ;; cameras were transported RIGIDLY above, so their readings still hold.
   (derive-faces-from-pose! (:current-idx @session))
+  ;; …and the aligned pose becomes this photo's EYE SEED: a commit is the
+  ;; human act «prendo in mano la gabbia e la appaio», which is exactly what
+  ;; 'a' may gate its hypotheses by. Only committed poses earn the stamp — a
+  ;; bare turntable seed gating the automatic would kill true readings.
+  (swap! session update :eye-posed (fnil conj #{}) (:current-idx @session))
   ;; Persist the hand-aligned proxy pose. Only the solver paths ('s'/'r'/'f')
   ;; used to save, so a manual gizmo alignment was lost on re-entry — the root of
   ;; "realign the proxy every test" (Vincenzo 2026-07-25). The proxy pose is the
@@ -1255,6 +1260,9 @@
     (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))
     ;; This photo's camera just moved: re-read its faces from the new pose.
     (derive-faces-from-pose! idx)
+    ;; a commit is the human act — the pose becomes this photo's eye seed
+    ;; for 'a' (see on-photo0-commit's twin stamp)
+    (swap! session update :eye-posed (fnil conj #{}) idx)
     (save-acquire-state!)))
 
 ;; ============================================================
@@ -4041,11 +4049,23 @@
                         ;; current focal
                         mounting (when (cage-obs-focal-ok?)
                                    (session-cage-mounting idx))
+                        ;; the EYE SEED (lever 3): this photo's pose, but only
+                        ;; when it is HUMAN — committed by gizmo (:eye-posed)
+                        ;; or vouched by a registration. A bare turntable seed
+                        ;; gating the hypotheses would kill true readings,
+                        ;; which is worse than no gate at all.
+                        eye-pose (when (or (contains? (or (:eye-posed @session) #{}) idx)
+                                           (registered-result?
+                                            (get-in @session [:acquire-results idx])))
+                                   (when-let [cp (get-in @session [:camera-poses idx])]
+                                     (bridge/editor->solver-pose
+                                      cp (get-in @session [:proxy-mesh :creation-pose]))))
                         rr (match-cage/auto-read (mapv :center cands) targets k
                                                  judge marks
                                                  {:disc-r disc-r
                                                   :mounting mounting
                                                   :blobs cands
+                                                  :eye-pose eye-pose
                                                   ;; the comb identity (lever 1)
                                                   ;; rides only where the
                                                   ;; mounting arbiter has
@@ -4053,12 +4073,21 @@
                                                   ;; session context its extra
                                                   ;; reach registered the twins
                                                   ;; (misurato 30/8, 548/764mm)
-                                                  :teeth? (boolean (seq mounting))})]
+                                                  ;; — or where the user's own
+                                                  ;; eye does (the gizmo seed
+                                                  ;; kills the same twins)
+                                                  :teeth? (boolean (or (seq mounting)
+                                                                       eye-pose))})]
                     (if (nil? rr)
                       (say!
                        (str "Da sola non ci riesco su questa foto (" (count cands)
                             " dischetti trovati, nessun anello identificato con certezza). "
-                            "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'."))
+                            "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'."
+                            (when eye-pose
+                              (str " Ho provato anche dalla tua posa a occhio, ma il fit "
+                                   "non reggeva le barre: se la gabbia disegnata ti sembra "
+                                   "già appaiata bene, il problema sono i dischetti rilevati "
+                                   "(pochi, o su un anello solo)."))))
                       (let [canvas (viewport/get-canvas)
                             ;; a clean slate: with zero hand clicks whatever picks
                             ;; exist are STALE proposals of an older pose — left
@@ -4080,8 +4109,14 @@
                                           0 (:corr rr))]
                         (remember-cage-mounting! idx (:index-obs rr))
                         (say!
-                         (str "Gabbia letta DA SOLA: anello "
-                              (name (:axis (:seed rr))) " + zero-indice trovati nella foto, "
+                         (str (if (:eye-seed? rr)
+                                ;; the eye-seed result has no seed RING to name
+                                ;; (:seed nil) — and naming the mechanism tells
+                                ;; the user his alignment is what did the work
+                                (str "Gabbia letta dalla TUA posa a occhio: ")
+                                (str "Gabbia letta DA SOLA: anello "
+                                     (name (:axis (:seed rr)))
+                                     " + zero-indice trovati nella foto, "))
                               added " dischetti piazzati (rms " (.toFixed (:rms-px rr) 1) "px)"
                               (when (:phase-suspect rr)
                                 (str " · ATTENZIONE: l'anello "
@@ -7894,6 +7929,12 @@
                                           (into {} (for [[i c] (:cage-face-choice @session)
                                                          :when (seq c)]
                                                      [(str i) c]))
+                                          ;; the photos whose pose the user
+                                          ;; aligned BY HAND (gizmo commit) —
+                                          ;; the eye seed 'a' gates by. A
+                                          ;; human act, so it survives reload
+                                          ;; like the picks do
+                                          :eye-posed (vec (sort (:eye-posed @session)))
                                           :cage-mounting-obs
                                           (let [pm (:proxy-mesh @session)]
                                             {:cage {:d (:cage-d pm)
@@ -7964,7 +8005,7 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal grab-camera marks mark-plane plate-calib cage-mounting-obs cage-face-choice]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal grab-camera marks mark-plane plate-calib cage-mounting-obs cage-face-choice eye-posed]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
           int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
@@ -8016,6 +8057,10 @@
                                [(js/parseInt (name k) 10)
                                 (into {} (map (fn [[a s]] [(keyword (name a)) s]) v))])
                              cage-face-choice))))
+      ;; the hand-aligned photos come back with their stamp: the eye seed is a
+      ;; human act, and 'a' after a reload deserves the same gate
+      (when (seq eye-posed)
+        (swap! session assoc :eye-posed (set eye-posed)))
       ;; Leva 2 — the mounting vote comes back with the session, but ONLY under
       ;; the cage it was measured against: slots are model-frame, so a session
       ;; reopened with :phases declared (or another cage entirely) makes the

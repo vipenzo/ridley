@@ -80,6 +80,39 @@
     (when (and pp cam-pose)
       (bridge/editor->solver-pose cam-pose pp))))
 
+(defn- perturbed-eye
+  "The bench's stand-in for the user's HAND-ALIGNED pose: the truth camera
+   swung `deg` degrees about the cage centre (fixed skew axis — deterministic,
+   the bench must reproduce) with its range stretched 12%, re-aimed at the
+   centre. A COARSE pose on purpose: the eye seed's whole claim is that
+   grossolano basta, so the bench feeds it an alignment as sloppy as a hand
+   would make."
+  ([truth deg] (perturbed-eye truth deg 1.12))
+  ([truth deg scale]
+   (when truth
+     (let [mat-vec (fn [[[a b c] [d e f] [g h i]] [x y z]]
+                     [(+ (* a x) (* b y) (* c z))
+                      (+ (* d x) (* e y) (* f z))
+                      (+ (* g x) (* h y) (* i z))])
+           mat-mul (fn [m1 m2]
+                     (let [t2 (apply mapv vector m2)]
+                       (mapv (fn [row] (mapv #(la/v-dot row %) t2)) m1)))
+           transpose (fn [m] (apply mapv vector m))
+           ;; the whole CAMERA rotated rigidly about the cage centre by Q and
+           ;; its range stretched — orientation carried along, so the truth's
+           ;; own roll is preserved. The first cut used look-at-pose, which
+           ;; re-derives the roll from an up hint: even at 3° that mismatched
+           ;; the real camera's roll and showed as 260-700px of reprojection —
+           ;; an 'eye' no hand would produce.
+           ax (let [a [0.3 0.5 0.8]] (la/v-scale a (/ 1.0 (la/v-norm a))))
+           th (* deg (/ Math/PI 180.0))
+           Q (cam/rodrigues (la/v-scale ax th))
+           R (cam/rodrigues (:rvec truth))
+           R' (mat-mul R (transpose Q))
+           C' (la/v-scale (mat-vec Q (cam/camera-center truth)) scale)]
+       {:rvec (cam/rot-mat->rodrigues R')
+        :t (la/v-scale (mat-vec R' C') -1.0)}))))
+
 (defn- family-hits
   "Under the TRUTH pose: for each visible (ring,face) family, which detector
    candidates sit within 8px of one of its marks. {[axis sign] {:n-vis n
@@ -317,15 +350,38 @@
                              cands (mapv :center blobs)
                              judge (fn [px r] (blob/disc-at? lum-at px r))
                              tr (atom [])
+                             ;; CAGE_AUTO_EYE=<deg>: the gizmo seed, simulated —
+                             ;; the truth pose swung <deg>° (default 12) and
+                             ;; stretched 12%, handed to auto-read as the
+                             ;; user's hand alignment of the drawn cage
+                             eye (when-let [e (aget (.-env js/process) "CAGE_AUTO_EYE")]
+                                   (perturbed-eye (solver-camera state i)
+                                                  (let [d (js/parseFloat e)]
+                                                    (if (js/isNaN d) 12.0 d))
+                                                  ;; 1.05 come la sonda EYESEED:
+                                                  ;; la mano allinea SULL'IMMAGINE,
+                                                  ;; l'errore di distanza è piccolo
+                                                  1.05))
                              rr (mc/auto-read cands targets intr judge 12
                                               {:disc-r disc-r :trace tr
                                                :concentric? conc? :teeth? teeth?
-                                               :mounting mounting :blobs blobs})
+                                               :mounting mounting :blobs blobs
+                                               :eye-pose eye})
                              ms (- (.now js/Date) t0)
                              truth (solver-camera state i)]
                          (when (seq mounting)
                            (println (str "      montaggio (dalle altre foto): "
                                          (fmt-mounting mounting))))
+                         (when (and eye truth)
+                           (println (str "      occhio simulato a "
+                                         (fmt (la/v-norm (la/v-sub (cam/camera-center eye)
+                                                                   (cam/camera-center truth)))
+                                              0)
+                                         "mm dalla posa a mano (gate a "
+                                         (fmt (* mc/eye-gate-frac
+                                                 (la/v-norm (cam/camera-center eye)))
+                                              0)
+                                         "mm)")))
                          (when (aget (.-env js/process) "CAGE_AUTO_RECALL")
                            (when-let [rl (recall-line (family-hits targets intr truth cands))]
                              (println (str "      recall (sotto la posa a mano): " rl))))
@@ -370,8 +426,11 @@
                              (swap! score update (if ok? :ok :far) inc)
                              (println (str "  foto " (inc i) " (" (nth files i) "): "
                                            (count cands) " candidati · seme "
-                                           (name (:axis (:seed rr))) (if (pos? (:sign (:seed rr))) "p" "m")
-                                           " (" (:crown-hits (:seed rr)) " corona)"
+                                           (if (:eye-seed? rr)
+                                             "OCCHIO (la tua posa)"
+                                             (str (name (:axis (:seed rr)))
+                                                  (if (pos? (:sign (:seed rr))) "p" "m")
+                                                  " (" (:crown-hits (:seed rr)) " corona)"))
                                            " · spiega " (:explained rr)
                                            " (fuori-anello " (:off-ring rr) ")"
                                            " · rms " (fmt (:rms-px rr) 1)
@@ -1084,10 +1143,112 @@
                  (println (str "  index-witness (lo strumento vero) dice: " (pr-str obs)))))))
           (.catch (fn [e] (println (str "  ERRORE: " (str e)))))))))
 
+(defn- eyeseed-probe!
+  "CAGE_AUTO_EYESEED=<deg>: the eye pose as a DIRECT SEED, measured — per
+   photo with a saved pose: the truth swung <deg>° (+12% range) stands in for
+   the user's hand alignment, and from it alone (no ellipses, no identity):
+   mutual-nearest assign of detector candidates to the cage's marks at a
+   generous tolerance, solve, then re-assign/re-solve at shrinking tolerance
+   (ICP, three rounds). Reports per round the correspondence count and rms,
+   and at the end the camera's distance from the truth plus the acceptance
+   facts the automatic branch would judge by. Born when the eye-as-GATE runs
+   changed nothing on battiscopa3 (0/5 with and without teeth, 2026-09-02):
+   these frames die at IDENTIFY, so there is nothing to gate — the seed must
+   MAKE the reading, not select among readings that never come."
+  []
+  (let [deg (let [d (js/parseFloat (aget (.-env js/process) "CAGE_AUTO_EYESEED"))]
+              (if (js/isNaN d) 12.0 d))
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse) (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
+        targets (cage-targets proxy)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)]
+    (println (str "\n=== seme dell'occhio DIRETTO: verità deviata di " deg
+                  "° + 12% · focale " (fmt focal 2) "mm · gabbia "
+                  (pr-str {:phases phases :flips (vec (sort (declared-flips state)))})
+                  " ==="))
+    (letfn [(one [i]
+              (if (>= i (count files))
+                nil
+                (let [truth (solver-camera state i)]
+                  (if-not truth
+                    (do (println (str "  foto " (inc i) ": senza posa salvata")) (one (inc i)))
+                    (-> (decode (.join path dir (nth files i)))
+                        (.then
+                         (fn [res]
+                           (let [{:keys [data lum-at w h]} (sampler res)
+                                 intr (cam/intrinsics-from-fov
+                                       (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                                 cands (mapv :center (bd/detect-blobs
+                                                      lum-at [w h]
+                                                      (assoc bd/cage-opts :rgba data)))
+                                 ;; 1.05, not the gate runs' 1.12: the hand
+                                 ;; aligns the drawn cage ON THE IMAGE, so its
+                                 ;; residual is tens of px of reprojection —
+                                 ;; small orbit, small range error — not a 12°
+                                 ;; swing of the camera
+                                 eye (perturbed-eye truth deg 1.05)
+                                 ;; how coarse this eye really is, in the
+                                 ;; currency that matters: px of reprojection
+                                 eye-px (let [ds (for [{:keys [obj]} (take-nth 7 targets)
+                                                       :let [a (cam/project intr eye obj)
+                                                             b (cam/project intr truth obj)]
+                                                       :when (and a b)]
+                                                   (Math/hypot (- (nth a 0) (nth b 0))
+                                                               (- (nth a 1) (nth b 1))))]
+                                          (when (seq ds) (/ (reduce + ds) (count ds))))
+                                 round (fn [pose tol]
+                                         (let [corr (mc/assign targets cands intr pose tol)]
+                                           {:corr corr
+                                            :sol (when (>= (count corr) 6)
+                                                   (pnp/solve-pnp corr intr {}))}))
+                                 ;; 60 → 26 → 26: the improved pose of each
+                                 ;; round brings more marks inside tolerance;
+                                 ;; a final shrink to 13 measured STRANGLING
+                                 ;; fits whose rms sat at 11-12 (half the corr
+                                 ;; fall outside 13 and the count dies)
+                                 steps (reductions
+                                        (fn [{:keys [sol]} tol]
+                                          (if sol (round (:pose sol) tol) {:corr [] :sol nil}))
+                                        (round eye 60.0)
+                                        [26.0 26.0])
+                                 lines (map-indexed
+                                        (fn [j {:keys [corr sol]}]
+                                          (str "giro " (inc j) ": " (count corr) " corr"
+                                               (when sol (str ", rms " (fmt (:rms-px sol) 1)
+                                                              "px, scartati "
+                                                              (count (:outliers sol))))))
+                                        steps)
+                                 fin (:sol (last steps))
+                                 d-true (when fin
+                                          (la/v-norm (la/v-sub (cam/camera-center (:pose fin))
+                                                               (cam/camera-center truth))))]
+                             (println (str "  foto " (inc i) " (" (nth files i) "): "
+                                           (count cands) " candidati · occhio a "
+                                           (some-> eye-px (fmt 0)) "px di riproiezione · "
+                                           (apply str (interpose " · " lines))
+                                           (if fin
+                                             (str " · camera a " (fmt d-true 1)
+                                                  "mm dalla verità"
+                                                  (when (> d-true 15.0) "   ← LONTANA"))
+                                             " · NESSUN SOLVE")))
+                             (one (inc i)))))
+                        (.catch (fn [e]
+                                  (println (str "  foto " (inc i) " ERRORE: " (str e)))
+                                  (one (inc i)))))))))]
+      (one 0))))
+
 (defn ^:export main [& _]
   (cond
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
     (aget (.-env js/process) "CAGE_AUTO_SEED") (seed-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_EYESEED") (eyeseed-probe!)
     (aget (.-env js/process) "CAGE_AUTO_WITNESS") (witness-probe!)
     (aget (.-env js/process) "CAGE_AUTO_FIT") (fit-probe!)
     (aget (.-env js/process) "CAGE_AUTO_FACE") (face-probe!)

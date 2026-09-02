@@ -415,6 +415,51 @@
     (is (= 2 (count (:hits x-face)))
         "il rapporto completo resta in :faces, per il banco")))
 
+;; ── the EYE seed (gizmo pose as hypothesis gate) ─────────────────────────────
+
+(deftest eye-compatible-splits-hand-error-from-twins
+  ;; The gate's whole claim in two numbers: a hand alignment is off by tens of
+  ;; mm, a twin is off by hundreds (325-764mm measured on the bench). The
+  ;; through-plastic twin of an oblique view puts the camera mirrored through
+  ;; the ring's plane — for the Y ring under `eye`, at [150 210 190] — which
+  ;; is 420mm from the truth at a 320mm working range: no hand is that sloppy.
+  (println "\n=== gabbia: l'occhio distingue la mano dal gemello ===")
+  (let [truth (cam/look-at-pose eye [0.0 0.0 0.0] [0.0 0.0 1.0])
+        hand (cam/look-at-pose [190.0 -180.0 230.0] [0.0 0.0 0.0] [0.0 0.0 1.0])
+        twin (cam/look-at-pose [150.0 210.0 190.0] [0.0 0.0 0.0] [0.0 0.0 1.0])]
+    (is (mc/eye-compatible? hand truth)
+        "una posa a mano grossolana (≈65mm) non uccide la verità")
+    (is (not (mc/eye-compatible? hand twin))
+        "il gemello specchiato attraverso il piano dell'anello muore")))
+
+(deftest the-eye-gates-the-hypotheses-without-killing-the-truth
+  ;; auto-read with the user's coarse alignment: the three faces the eye
+  ;; plainly sees the back of are never attempted (the through-plastic twin
+  ;; dies before the solve, and the identity budget stops paying for it), and
+  ;; the reading that survives is the true one — the gate must never eat the
+  ;; truth it exists to protect.
+  (println "\n=== gabbia: il seme dell'occhio — gate, non giudice ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        cands (scene nil targets intr pose)
+        judge (fn [px _r] (boolean (some (fn [[u v]]
+                                           (< (Math/hypot (- u (first px))
+                                                          (- v (second px))) 4.0))
+                                         cands)))
+        hand (cam/look-at-pose [190.0 -180.0 230.0] [0.0 0.0 0.0] [0.0 0.0 1.0])
+        tr (atom [])
+        rr (mc/auto-read cands targets intr judge marks
+                         {:disc-r 1.25 :trace tr :eye-pose hand})
+        hidden (some :eye-hidden-faces @tr)]
+    (println (str "  facce nascoste dall'occhio: " (pr-str hidden)
+                  " · " (if rr (str "registra, rms " (.toFixed (:rms-px rr) 2)) "RIFIUTATA")))
+    (is (= #{[:x -1] [:y 1] [:z -1]} (set hidden))
+        "le tre facce di spalle all'occhio non si tentano nemmeno")
+    (is (some? rr) "e la lettura vera passa il gate")
+    (when rr
+      (let [d (la/v-norm (la/v-sub (cam/camera-center (:pose rr))
+                                   (cam/camera-center pose)))]
+        (is (< d 5.0) (str "camera a " (.toFixed d 1) "mm dalla verità"))))))
+
 (deftest a-covered-index-still-testifies-but-confesses-the-empty-nominal
   ;; The Z of that same photo: its true index was NOT among the detected discs
   ;; (stick, glare) and the only thing near its slot grid was junk. The lone

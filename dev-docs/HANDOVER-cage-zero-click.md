@@ -68,9 +68,25 @@ flip-aware (`declared-flips`), impronta del voto con `:flips`
    messaggio lo dice coi numeri («l'indice vero è coperto o non rilevato,
    pesa il terzo sospetto»). Migliora gratis anche m-check e auto-read: uno
    stray non può più uccidere una posa onesta.
-4. **Il seme del gizmo al ramo 'a'** (punto 5 della fetta, «il colpo
-   grosso»): `pnp/solve-pnp` accetta già `:seed`; la posa a occhio come gate
-   delle ipotesi → cold start chiuso anche per gabbie non dichiarate.
+4. **Il seme del gizmo al ramo 'a'** — FATTO 2/9 (chat successiva), e il
+   banco ha corretto il piano: come solo GATE l'occhio misurava ZERO su
+   battiscopa3 (0/5 con e senza pettine — quei frame muoiono a IDENTIFY,
+   non c'è niente da filtrare). Il colpo grosso vero è l'occhio come SEME
+   DIRETTO: assign mutuo sotto la posa a occhio → solve → ICP (60→26px),
+   niente ellissi. Misurato (occhio simulato a 17-30px di riproiezione,
+   com'è un allineamento a mano sull'immagine): **4/5 registrate in
+   ~200-280ms** (camera 0.7-4.2mm dalla verità, rms 1.7-4.1) contro lo 0/5
+   in 17-36 SECONDI; zero falsi positivi a ogni deviazione provata (3/6/10°).
+   Barre dedicate: `eye-accept-rms-px` 8 (il seme non porta prove d'identità,
+   paga in qualità del fit — il degenerato a rms 11.8 con camera a 32mm
+   muore lì), ≥8 corr, ≥2 anelli, guardia fisica, testimone, gate camera
+   (`eye-gate-frac` 0.4). In più: filtro-facce dall'occhio (il gemello
+   attraverso-plastica non si tenta nemmeno) e pettine acceso anche a cold
+   start quando c'è l'occhio. Editor: i commit del gizmo stampano
+   `:eye-posed` (persistito), 'a' lo passa; foto 3 rifiuta onesta (un solo
+   anello rilevato — i suoi pick sono la spazzatura nota). Sonde nuove:
+   `CAGE_AUTO_EYE=<deg>` (auto-read con occhio simulato),
+   `CAGE_AUTO_EYESEED=<deg>` (l'ICP spogliato, per round).
 5. I difetti aperti storici: `max-outliers` fisso a 2 (oggi era la focale, ma
    il difetto resta), accettazione senza asticella, rinomina prima del solve,
    riconciliazione di sessione, derivazione live durante il drag (probabilmente
