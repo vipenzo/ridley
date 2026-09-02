@@ -3720,18 +3720,28 @@
 
 (defn- declared-cage-mounting
   "The mounting the proxy DECLARATION asserts — {axis entry} for cages with
-   explicit `:phases`, nil otherwise. The rings are GLUED (Vincenzo, 30/8:
-   «incollati con l'attack, l'unico modo di cambiarli è ristampare»), so the
-   mounting is a property of the CAGE, not of the session: declaring the
-   phases asserts that every index sits on its nominal slot, and that
-   assertion arms the twin arbiter from the FIRST photo — no cold start on a
-   declared cage. Votes 2: enough to demand and veto, beatable by a session
-   that reads otherwise three times over (the honest escape for a cage that
-   was glued wrong — flips cannot be declared, only measured and reprinted)."
+   explicit `:phases` OR `:flips`, nil otherwise. The rings are GLUED
+   (Vincenzo, 30/8: «incollati con l'attack, l'unico modo di cambiarli è
+   ristampare»), so the mounting is a property of the CAGE, not of the
+   session: a declaration asserts that every index sits on the MODEL's own
+   slot, and that assertion arms the twin arbiter from the FIRST photo — no
+   cold start on a declared cage.
+
+   `:fwd k0` for every ring, flipped or not, and that is not an oversight:
+   the observations' housings are computed from the TARGETS' own geometry
+   (match-cage/index-witness reads the index offset off the anchors, never
+   assuming ⅓ step), and the anchors carry the declared flip. A correctly
+   declared cage therefore reads as its own nominal — the flip lives in the
+   model, not in the expected reading. Until 2026-09-02 this armed only on
+   `:phases` (flips didn't exist to declare when it was written), so
+   battiscopa3's true form — `:flips #{:y :z}`, no phases — would have left
+   the arbiter in cold start. Votes 2: enough to demand and veto, beatable by
+   a session that reads otherwise three times over."
   []
-  (when (seq (:cage-phases (:proxy-mesh @session)))
-    (into {} (for [a [:x :y :z]]
-               [a {:sense :fwd :k 0 :votes 2 :d 0.0 :declared? true}]))))
+  (let [pm (:proxy-mesh @session)]
+    (when (or (seq (:cage-phases pm)) (seq (:cage-flips pm)))
+      (into {} (for [a [:x :y :z]]
+                 [a {:sense :fwd :k 0 :votes 2 :d 0.0 :declared? true}])))))
 
 (defn- session-cage-mounting
   "The session's mounting: the declaration's assertion, refined by the vote of
@@ -3746,20 +3756,69 @@
                 (or (declared-cage-mounting) {})
                 measured)))
 
+(defn- cage-flips-tag
+  "A cage's declared flips as sorted NAMES, nil when there are none — the form
+   that survives the round trip through acquire-state.json's JSON, where
+   keywords come back as strings, and that lets a file written before :flips
+   existed still match a cage without them."
+  [proxy-mesh]
+  (some->> (seq (:cage-flips proxy-mesh)) (map name) sort vec))
+
+(defn- flips-suggestion
+  "The `(registration-cage …)` form to reopen with, adding `axes` (names like
+   \"Z\") to whatever the session's proxy already declares — diameter, phases
+   and the flips already there.
+
+   Written whole, not as a diff, for the rule this project learned the hard
+   way: a message must name the GESTURE, never ask the user to reconstruct a
+   form from memory. And additive, because a cage with one flipped ring can
+   have two — dropping the flip already declared would trade one wrong
+   declaration for another."
+  [axes]
+  (let [mesh (:proxy-mesh @session)
+        add (set (map (comp keyword str/lower-case) axes))
+        flips (sort (map name (into add (or (:cage-flips mesh) #{}))))
+        phases (:cage-phases mesh)]
+    (str "(registration-cage :d " (or (:cage-d mesh) "…")
+         " :flips #{" (str/join " " (map #(str ":" %) flips)) "}"
+         (when (seq phases)
+           (str " :phases {"
+                (str/join " " (for [[a d] (sort-by (comp str key) phases)]
+                                (str ":" (name a) " " d)))
+                "}"))
+         ")")))
+
 (defn- cage-mounting-suffix
   "The diagnosis lines the index observations earn — and only when they earn
    them (a caveat that always prints stops being read). A `:rev` ring is
    mounted FLIPPED: the reading stays good (crowns are flip-blind), but the
-   assembly is not what the model says and the printed key does not yet
-   forbid it. An observation that reads a ring AGAINST the session's own vote
-   means a twin sits among the session's registrations — this one or the
-   others."
+   assembly is not what the model says. Since 2026-09-01 that is a DECLARATION
+   the user can make (`:flips`), so these lines name it instead of sending him
+   back to the printer. An observation that reads a ring AGAINST the session's
+   own vote means a twin sits among the session's registrations — this one or
+   the others — or that the declaration itself is wrong, which the same day
+   proved is not hypothetical."
   [mounting obs]
-  (let [dis (set (for [{:keys [axis sense k]} obs
-                       :let [m (get mounting axis)]
-                       :when (and m (or (not= sense (:sense m))
-                                        (not= k (:k m))))]
-                   (str/upper-case (name axis))))
+  (let [;; the EVIDENCE, not just the accusation: which housing the index was
+        ;; actually seen in, against which expectation, at what pixel distance.
+        ;; Added 2026-09-02, when Z kept contradicting on photos whose double
+        ;; pallini looked right — a verdict without its measurement cannot be
+        ;; argued with, in either direction (the project's own rule: una
+        ;; diagnosi non può essere più forte delle prove che la reggono).
+        dis-ev (for [{:keys [axis sense k d]} obs
+                     :let [m (get mounting axis)]
+                     :when (and m (or (not= sense (:sense m))
+                                      (not= k (:k m))))]
+                 {:axis (str/upper-case (name axis))
+                  :seen (str (name sense) " k" k
+                             (when d (str " a " (.toFixed d 1) "px")))
+                  :expected (str (name (:sense m)) " k" (:k m))})
+        dis (set (map :axis dis-ev))
+        dis-detail (fn [axes]
+                     (str/join "; "
+                               (for [{:keys [axis seen expected]} dis-ev
+                                     :when (contains? (set axes) axis)]
+                                 (str axis " visto " seen " invece di " expected))))
         ;; a ring the session reads TURNED by whole steps, unanimously and
         ;; twice over, has earned the `:phases` suggestion — the diagnosis
         ;; Vincenzo asked for by direttiva (28/8: riconoscere e suggerire,
@@ -3799,16 +3858,23 @@
         dis-decl (seq (sort (filter declared? dis)))
         dis-meas (seq (sort (remove declared? dis)))]
     (str
+     ;; Until 2026-09-01 these three lines ended in 'reprint it': a flip could
+     ;; be SEEN and not said, so the only cure on offer was new plastic. It is
+     ;; declarable now (registration-cage's :flips), so they name the
+     ;; declaration instead — and the same day proved the sharper half of the
+     ;; point, that a DECLARATION can be the wrong thing: Vincenzo's :phases
+     ;; {:x 180} was, and nothing he could align by would ever have said so.
      (when revs-sure
        (str " · l'indice dell'anello " (str/join "/" revs-sure)
             " si vede SPECCHIATO su più foto concordi: quell'anello è INCOLLATO "
-            "ribaltato (le fasi non possono dirlo: i flip non si dichiarano). "
-            "Le letture restano arbitrabili così — la cura vera è la ristampa "
-            "con la chiave anti-ribaltamento"))
+            "ribaltato. Dichiaralo — non si ristampa niente: riapri con "
+            (flips-suggestion revs-sure)
+            " e RIMISURA la fase di quell'anello (il flip cambia cosa misura)"))
      (when revs-hint
        (str " · in QUESTA foto l'indice dell'anello " (str/join "/" revs-hint)
             " si legge specchiato — da solo non fa verdetto: se lo confermano "
-            "le prossime foto, l'anello fu incollato ribaltato"))
+            "le prossime foto, l'anello fu incollato ribaltato e si dichiara con "
+            (flips-suggestion revs-hint)))
      (when turned
        (str " · anelli montati GIRATI (confermato da più foto): "
             (str/join ", " (for [[a deg] turned]
@@ -3820,12 +3886,22 @@
             "}) — i click fatti restano validi"))
      (when dis-decl
        (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" dis-decl)
-            " contraddice la DICHIARAZIONE della gabbia — che è incollata, "
-            "quindi non può essere cambiata: è QUESTA registrazione a essere "
-            "sospetta (gemello). Rifalle i click, o verificala sulle altre foto"))
+            " contraddice la DICHIARAZIONE della gabbia (" (dis-detail dis-decl)
+            "). Due sospetti, in "
+            "quest'ordine: (1) QUESTA registrazione è il gemello — rifalle i "
+            "click, o verificala sulle altre foto; (2) è la DICHIARAZIONE a "
+            "essere sbagliata — se l'anello è montato ribaltato si dichiara con "
+            (flips-suggestion dis-decl)
+            ", e se è girato di passi interi è la sua fase. Il montaggio è una "
+            "costante fisica, ma quello che ne hai DETTO al modello no. "
+            "Terzo sospetto, se il doppio pallino disegnato cade su quello vero: "
+            "il testimone ha preso per indice un dischetto che non lo è "
+            "(riflesso, stick) — guarda la distanza qui sopra"))
      (when dis-meas
        (str " · ATTENZIONE: qui l'indice dell'anello " (str/join "/" dis-meas)
-            " si legge DIVERSAMENTE dalle altre foto della sessione — una delle "
+            " si legge DIVERSAMENTE dalle altre foto della sessione ("
+            (dis-detail dis-meas)
+            ") — una delle "
             "due registrazioni è il GEMELLO. Un click sul doppio pallino di "
             "quell'anello in una TERZA foto fa da spareggio")))))
 
@@ -7668,6 +7744,21 @@
                                             {:cage {:d (:cage-d pm)
                                                     :marks (:cage-marks pm)
                                                     :phases (:cage-phases pm)
+                                                    ;; a flip is the sharpest
+                                                    ;; possible change to what
+                                                    ;; these observations MEAN —
+                                                    ;; they are readings of the
+                                                    ;; index's housing, and a
+                                                    ;; flip mirrors it. Missing
+                                                    ;; here for the first hours
+                                                    ;; :flips existed (1/9).
+                                                    ;; NAMES, and nil when
+                                                    ;; empty: keywords come back
+                                                    ;; from JSON as strings, and
+                                                    ;; a file written before this
+                                                    ;; key existed must still
+                                                    ;; match a flip-less cage
+                                                    :flips (cage-flips-tag pm)
                                                     :index-phase (:cage-index-phase pm)
                                                     ;; slot geometry moves with
                                                     ;; the lens: obs saved at one
@@ -7773,7 +7864,9 @@
       (when-let [by-photo (:by-photo cage-mounting-obs)]
         (let [pm (:proxy-mesh @session)
               now {:d (:cage-d pm) :marks (:cage-marks pm)
-                   :phases (:cage-phases pm) :index-phase (:cage-index-phase pm)
+                   :phases (:cage-phases pm)
+                   :flips (cage-flips-tag pm)
+                   :index-phase (:cage-index-phase pm)
                    ;; the focal this state file is about to restore — obs from
                    ;; a file saved at another lens (or before the lens was in
                    ;; the fingerprint at all) are dropped

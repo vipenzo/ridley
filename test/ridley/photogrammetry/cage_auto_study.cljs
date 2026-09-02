@@ -25,6 +25,24 @@
    session, a new shoot) without touching the committed truth run."
   (or (aget (.-env js/process) "CAGE_AUTO_DIR") "test-assets/cage-battiscopa"))
 
+(defn- declared-flips
+  "The rings the session declares glued TURNED OVER, same preference order the
+   phases use: CAGE_AUTO_FLIPS ('yz', or JSON '[\"y\",\"z\"]') → the fingerprint
+   persisted with the mounting vote → none. Absent for the first day `:flips`
+   existed (2026-09-02): every probe built its proxy from phases alone, so a
+   bench pointed at battiscopa3 — whose true cage is :flips #{:y :z} — measured
+   everything against a cage with both rings mounted the other way, exactly the
+   cross-talk the phases comment above describes, one mounting freedom later."
+  [state]
+  (or (some-> (aget (.-env js/process) "CAGE_AUTO_FLIPS")
+              (as-> s (if (str/starts-with? s "[")
+                        (js->clj (js/JSON.parse s))
+                        (map str (seq s))))
+              (->> (map keyword) set))
+      (some->> (get-in state [:cage-mounting-obs :cage :flips])
+               (map keyword)
+               set)))
+
 (defn- fmt [x n] (.toFixed (js/Number. x) n))
 
 (defn- decode [file]
@@ -239,7 +257,8 @@
                            (js/JSON.parse)
                            (js->clj :keywordize-keys true))
                    (get-in state [:cage-mounting-obs :cage :phases]))
-        proxy (cage/registration-cage :d 176 :phases phases)
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
         targets (cage-targets proxy)
         disc-r (:mark-disc-r proxy)
         files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
@@ -423,7 +442,8 @@
         phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
                            (js/JSON.parse) (js->clj :keywordize-keys true))
                    (get-in state [:cage-mounting-obs :cage :phases]))
-        proxy (cage/registration-cage :d 176 :phases phases)
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
         targets (cage-targets proxy)
         by-id (into {} (map (juxt :id identity) targets))
         picks (get-in state [:pnp (keyword (str idx)) :picks])
@@ -525,7 +545,8 @@
         phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
                            (js/JSON.parse) (js->clj :keywordize-keys true))
                    (get-in state [:cage-mounting-obs :cage :phases]))
-        proxy (cage/registration-cage :d 176 :phases phases)
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
         targets (cage-targets proxy)
         picks (get-in state [:pnp (keyword (str idx)) :picks])
         entry (fn [[k v]] (let [t (nth targets (js/parseInt (name k) 10))]
@@ -578,7 +599,7 @@
                         (println (str "  " tag " (" (count cs) " punti):"))
                         (doseq [[nn rms dropped] (trace cs)]
                           (println (str "    n=" nn " rms " (fmt rms 1) "px"
-                                        (when dropped (str "   ← tolto " dropped)))))) ]
+                                        (when dropped (str "   ← tolto " dropped))))))]
              (println (str "\n=== sonda del fit: foto " n " (" file ") · " (count all)
                            " punti (" (count hand) " a mano, " (- (count all) (count hand))
                            " proposte) · focale " (fmt focal 1) "mm ==="))
@@ -615,7 +636,8 @@
         phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
                            (js/JSON.parse) (js->clj :keywordize-keys true))
                    (get-in state [:cage-mounting-obs :cage :phases]))
-        proxy (cage/registration-cage :d 176 :phases phases)
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
         targets (cage-targets proxy)
         by-id (into {} (map (juxt :id identity) targets))
         picks (get-in state [:pnp (keyword (str idx)) :picks])
@@ -719,7 +741,8 @@
         phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
                            (js/JSON.parse) (js->clj :keywordize-keys true))
                    (get-in state [:cage-mounting-obs :cage :phases]))
-        proxy (cage/registration-cage :d 176 :phases phases)
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
         targets (cage-targets proxy)
         by-id (into {} (map (juxt :id identity) targets))
         picks (get-in state [:pnp (keyword (str idx)) :picks])
@@ -836,9 +859,9 @@
    il ring Z è p (i mark girano in senso antiorario)» against the bench."
   []
   (let [proxy (cage/registration-cage
-               :d 176
-               :phases (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
-                               (js/JSON.parse) (js->clj :keywordize-keys true)))
+                :d 176
+                :phases (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                                (js/JSON.parse) (js->clj :keywordize-keys true)))
         targets (cage-targets proxy)
         by-id (into {} (map (juxt :id identity) targets))
         w 1920 h 1440
@@ -889,7 +912,8 @@
         phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
                            (js/JSON.parse) (js->clj :keywordize-keys true))
                    (get-in state [:cage-mounting-obs :cage :phases]))
-        proxy (cage/registration-cage :d 176 :phases phases)
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
         targets (cage-targets proxy)
         by-id (into {} (map (juxt :id identity) targets))
         trust (into {} (map (fn [[id px]] [(keyword id) (vec px)])
