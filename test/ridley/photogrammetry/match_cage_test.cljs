@@ -386,6 +386,59 @@
         "l'anello nominale si legge dritto")
     (is (< (:d (by-axis :y)) 2.0) "e l'osservazione è nitida, non un caso")))
 
+(deftest the-index-witness-folds-to-one-reading-per-ring
+  ;; Photo 2 of battiscopa3 (2026-09-02), reproduced: a HEALTHY pose whose X
+  ;; ring read its own nominal at 1.4px — zero-xp itself — while a stray
+  ;; candidate (no mark within 30px: reflection, stick) sat 7.9px from the
+  ;; rev-k2 slot of the same grid. The stray became a second ballot for the
+  ;; ring: the session's vote counted junk against an honest reading and the
+  ;; ATTENZIONE fired against a ring that had just read correctly. One face
+  ;; has ONE index disc — the witness reports the ring's sharpest hit and
+  ;; leaves the rest to :faces, which is the bench's business, not the vote's.
+  (println "\n=== gabbia: un anello, una lettura — la spazzatura non vota ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        zero-x (:obj (first (filter #(= :zero-xp (:id %)) targets)))
+        ;; a junk candidate 4px from X's rev-k2 slot, projected exactly the
+        ;; way the witness projects it (delta = +10° → rev slots at −20°+k·30°)
+        junk-px (mapv + (cam/project intr pose (cage/turn-about-axis :x zero-x 40.0))
+                      [4.0 0.0])
+        cands (conj (scene nil targets intr pose) junk-px)
+        {:keys [obs faces]} (mc/index-witness targets cands intr pose marks {})
+        xs (filterv #(= :x (:axis %)) obs)
+        x-face (first (filter #(= :x (:axis %)) faces))]
+    (println (str "  osservazioni X: " (pr-str (mapv (juxt :sense :k :d) xs))))
+    (is (= 1 (count xs)) "una lettura sola per l'anello")
+    (is (= [:fwd 0] ((juxt :sense :k) (first xs)))
+        "ed è quella nitida dell'indice vero, non lo slot sfiorato dalla spazzatura")
+    (is (number? (:zero-d (first xs))) "porta la distanza del posto nominale")
+    (is (< (:zero-d (first xs)) 2.0) "che qui è occupato dall'indice stesso")
+    (is (= 2 (count (:hits x-face)))
+        "il rapporto completo resta in :faces, per il banco")))
+
+(deftest a-covered-index-still-testifies-but-confesses-the-empty-nominal
+  ;; The Z of that same photo: its true index was NOT among the detected discs
+  ;; (stick, glare) and the only thing near its slot grid was junk. The lone
+  ;; reading STANDS — the vote across photos is the judge, and silencing it
+  ;; would blind the twin arbiter — but it carries :zero-d, so the message can
+  ;; say 'and the nominal slot is EMPTY: weigh the covered-index suspect'
+  ;; instead of asserting a twin on a stray's word alone.
+  (println "\n=== gabbia: indice coperto — la lettura resta ma confessa ===")
+  (let [{:keys [targets intr pose]} (setup eye)
+        zero-x (:obj (first (filter #(= :zero-xp (:id %)) targets)))
+        junk-px (mapv + (cam/project intr pose (cage/turn-about-axis :x zero-x 40.0))
+                      [4.0 0.0])
+        ;; the same scene with X's index gone from the detections
+        cands (conj (scene nil (vec (remove #(= :zero-xp (:id %)) targets)) intr pose)
+                    junk-px)
+        {:keys [obs]} (mc/index-witness targets cands intr pose marks {})
+        x-obs (first (filter #(= :x (:axis %)) obs))]
+    (println (str "  lettura X: " (pr-str ((juxt :sense :k) x-obs))
+                  " · posto nominale a " (some-> (:zero-d x-obs) (.toFixed 0)) "px"))
+    (is (some? x-obs) "la spazzatura testimonia — arbitrarla è compito del voto")
+    (is (= [:rev 2] ((juxt :sense :k) x-obs)))
+    (is (> (:zero-d x-obs) mc/index-obs-px)
+        "ma confessa che al posto nominale non c'è nessun dischetto")))
+
 (deftest vote-mounting-majority-beats-sharpness
   ;; foto 1's poisoned hand pose was sharper by 0.05px than four honest ones —
   ;; keep-the-sharpest inverted the whole session. The vote must not.

@@ -955,10 +955,140 @@
                  (println (str "  " id " → nessun mark con questo nome")))))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
+(defn- witness-probe!
+  "CAGE_AUTO_WITNESS=<n>: photo n (1-based) under its SAVED registered pose,
+   the index witness taken apart — per visible face: every slot of both
+   families with its nearest FREE candidate, and for each testifying hit WHO
+   that candidate is (the nearest proxy anchor of ANY face within 30px, or
+   nothing → reflection/stick/junk). Built for battiscopa3's photo-2 anomaly
+   (2026-09-02): a HEALTHY registration (5.9px, double pallini right) whose
+   witness reported «X rev k2 a 7.2px, Z rev k3 a 10.8px» against the drawn
+   pallini's own evidence — X having ALSO read its nominal fwd k0 at 2.0px in
+   the same breath."
+  []
+  (let [n (js/parseInt (aget (.-env js/process) "CAGE_AUTO_WITNESS") 10)
+        idx (dec n)
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (or (some-> (aget (.-env js/process) "CAGE_AUTO_PHASES")
+                           (js/JSON.parse) (js->clj :keywordize-keys true))
+                   (get-in state [:cage-mounting-obs :cage :phases]))
+        flips (declared-flips state)
+        proxy (cage/registration-cage :d 176 :phases phases :flips flips)
+        targets (cage-targets proxy)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        file (nth files idx)
+        truth (solver-camera state idx)
+        step 30.0]
+    (println (str "\n=== testimone a fondo: foto " n " (" file ") · gabbia "
+                  (pr-str {:phases phases :flips (vec (sort flips))})
+                  " · focale " (fmt focal 2) "mm ==="))
+    (if-not truth
+      (println "  nessuna posa salvata per questa foto")
+      (-> (decode (.join path dir file))
+          (.then
+           (fn [res]
+             (let [{:keys [data lum-at w h]} (sampler res)
+                   intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                   cands (mapv :center (bd/detect-blobs lum-at [w h]
+                                                        (assoc bd/cage-opts :rgba data)))
+                   ;; the SAME claimed set index-witness builds internally when
+                   ;; the editor passes {} — assign under the final pose
+                   claimed (mc/assign targets cands intr truth (:tol-px mc/default-opts))
+                   claimed-px (set (keep (fn [{:keys [ci px]}]
+                                           (when (cage/mark-parts ci) (vec px)))
+                                         claimed))
+                   free (vec (remove (comp claimed-px vec) cands))
+                   cam-c (cam/camera-center truth)
+                   azim (fn [axis obj] (let [[u v _] (cage/unplace axis obj)]
+                                         (Math/atan2 v u)))
+                   nearest-free (fn [px]
+                                  (when (and px (seq free))
+                                    (reduce (fn [[bd bc] [u v]]
+                                              (let [d (Math/hypot (- u (nth px 0))
+                                                                  (- v (nth px 1)))]
+                                                (if (< d bd) [d [u v]] [bd bc])))
+                                            [js/Infinity nil] free)))
+                   explain (fn [[u v]]
+                             (let [[d t] (reduce (fn [[bd bt] t]
+                                                   (if-let [p (cam/project intr truth (:obj t))]
+                                                     (let [dd (Math/hypot (- (nth p 0) u)
+                                                                          (- (nth p 1) v))]
+                                                       (if (< dd bd) [dd t] [bd bt]))
+                                                     [bd bt]))
+                                                 [js/Infinity nil] targets)]
+                               (if (and t (< d 30.0))
+                                 (str (name (:id t))
+                                      (when-let [nrm (:normal t)]
+                                        (when (neg? (la/v-dot nrm (la/v-sub cam-c (:obj t))))
+                                          " (faccia girata VIA)"))
+                                      " a " (fmt d 1) "px")
+                                 "NESSUN mark entro 30px → riflesso/stick/spazzatura")))
+                   faces (filterv (fn [{:keys [face-normal zero-obj]}]
+                                    (or (nil? face-normal)
+                                        (pos? (la/v-dot face-normal (la/v-sub cam-c zero-obj)))))
+                                  (mc/ring-faces targets))
+                   all-hits (atom [])]
+               (println (str "  candidati rilevati: " (count cands)
+                             " · reclamati dalle corone (assign): " (count claimed-px)
+                             " · liberi (possono testimoniare): " (count free)))
+               (doseq [{:keys [axis sign zero-obj] :as face} faces]
+                 (let [a0 (azim axis (:obj (first (:marks face))))
+                       az (azim axis zero-obj)
+                       delta (let [d (- az a0)]
+                               (* (Math/atan2 (Math/sin d) (Math/cos d)) (/ 180.0 Math/PI)))
+                       slots (vec (for [i (range 12)
+                                        [sense deg] [[:fwd (* i step)]
+                                                     [:rev (+ (* -2.0 delta) (* i step))]]
+                                        :let [nrm (let [m (mod deg 360.0)]
+                                                    (min m (- 360.0 m)))]
+                                        :when (or (= [sense i] [:fwd 0])
+                                                  (> nrm (/ step 6.0)))
+                                        :let [spx (cam/project intr truth
+                                                               (cage/turn-about-axis
+                                                                axis zero-obj deg))]
+                                        :when spx
+                                        :let [[d c] (nearest-free spx)]
+                                        :when c]
+                                    {:sense sense :k i :d d :slot-px spx :cand c}))
+                       hits (filterv #(<= (:d %) mc/index-obs-px) slots)
+                       near (take 3 (sort-by :d (remove #(<= (:d %) mc/index-obs-px) slots)))]
+                   (swap! all-hits into (map #(assoc % :axis axis) hits))
+                   (println (str "  faccia " (name axis) (if (pos? sign) "p" "m")
+                                 " (indice a " (fmt delta 1) "° da mark 0):"))
+                   (doseq [{:keys [sense k d slot-px cand]} hits]
+                     (println (str "    TESTIMONIA " (name sense) " k" k " a " (fmt d 1) "px"
+                                   " · slot [" (js/Math.round (nth slot-px 0)) " "
+                                   (js/Math.round (nth slot-px 1)) "]"
+                                   " · candidato [" (js/Math.round (nth cand 0)) " "
+                                   (js/Math.round (nth cand 1)) "] ← " (explain cand))))
+                   (doseq [{:keys [sense k d cand]} near]
+                     (println (str "      (mancato: " (name sense) " k" k " a " (fmt d 1)
+                                   "px · quel candidato è " (explain cand) ")")))))
+               ;; one candidate, many slots? A physical disc is ONE thing and
+               ;; should testify once — multiple hits on one candidate mean the
+               ;; slot grid is denser than the witness's own tolerance
+               (let [multi (filter (fn [[_ hs]] (> (count hs) 1))
+                                   (group-by :cand @all-hits))]
+                 (doseq [[c hs] multi]
+                   (println (str "  ATTENZIONE: il candidato ["
+                                 (js/Math.round (nth c 0)) " " (js/Math.round (nth c 1))
+                                 "] testimonia " (count hs) " volte: "
+                                 (pr-str (mapv (fn [{:keys [axis sense k d]}]
+                                                 [axis sense k (js/Math.round d)])
+                                               hs))))))
+               ;; and the instrument's own verdict, to prove the probe mirrors it
+               (let [{:keys [obs]} (mc/index-witness targets cands intr truth 12 {})]
+                 (println (str "  index-witness (lo strumento vero) dice: " (pr-str obs)))))))
+          (.catch (fn [e] (println (str "  ERRORE: " (str e)))))))))
+
 (defn ^:export main [& _]
   (cond
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
     (aget (.-env js/process) "CAGE_AUTO_SEED") (seed-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_WITNESS") (witness-probe!)
     (aget (.-env js/process) "CAGE_AUTO_FIT") (fit-probe!)
     (aget (.-env js/process) "CAGE_AUTO_FACE") (face-probe!)
     (aget (.-env js/process) "CAGE_AUTO_JOINT") (joint-probe!)

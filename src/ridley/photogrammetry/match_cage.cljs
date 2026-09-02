@@ -612,7 +612,23 @@
              solution's own corr so witness and solution read one assignment;
              computed via `assign` when absent.
 
-   Returns {:obs [{:axis :sense :k :d} …]     hits within `index-obs-px`
+   ONE READING PER RING — the sharpest hit, because one face has one index
+   disc and a reading of it is a reading, not a poll of every slot a stray
+   candidate wandered near. Until 2026-09-02 `:obs` carried EVERY hit within
+   `index-obs-px`, and the extra ones were junk with a vote: on battiscopa3's
+   photo 2 (5.9px, double pallini right) the X ring read its own nominal at
+   1.4px — `zero-xp` itself — and a candidate with NO mark within 30px of it
+   sat 7.9px from the rev-k2 slot, so the session's vote counted one honest
+   ballot and one junk ballot for the same ring, the ATTENZIONE fired against
+   a ring that had just read correctly, and (worse, upstream) a rereading
+   whose pose was true could be vetoed by the same stray in `m-check` and
+   auto-read's `contradiction`. The full per-slot report survives in
+   `:faces` — it is the bench's business, not the vote's.
+
+   Returns {:obs [{:axis :sense :k :d :zero-d} …]  ≤1 per visible face — its
+                  sharpest hit; :zero-d is that face's nominal-slot distance
+                  (nil when no free candidate exists), so a consumer can say
+                  'and the nominal slot is EMPTY' instead of guessing
             :faces [{:axis :sign :zero-d :hits [{:sense :k :d} …]} …]}
    — `:obs` is what arbitration and mounting bookkeeping consume, `:faces`
    the full per-face report the bench prints."
@@ -665,9 +681,11 @@
                    {:axis axis :sign (:sign face)
                     :zero-d zero-d
                     :hits (filterv #(<= (:d %) index-obs-px) slots)}))]
-    {:obs (vec (for [{:keys [axis hits]} rep
-                     h hits]
-                 (assoc h :axis axis)))
+    {:obs (vec (keep (fn [{:keys [axis zero-d hits]}]
+                       (when (seq hits)
+                         (assoc (apply min-key :d hits)
+                                :axis axis :zero-d zero-d)))
+                     rep))
      :faces rep}))
 
 (defn mounting-of

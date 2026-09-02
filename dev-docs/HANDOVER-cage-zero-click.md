@@ -52,11 +52,22 @@ flip-aware (`declared-flips`), impronta del voto con `:flips`
    la scavalca, riporta solo la divergenza — che è il sintomo di Center
    Stage). NOTA: battiscopa3 è precedente alla chiave — il 28.08 entra in
    memoria alla prossima sessione live che rifà 'R', o a mano nel JSON.
-3. **Anomalia del testimone su foto 2** (aperta, ora coi numeri): a
-   registrazione SANA (5.9px, pallini giusti) osserva «X rev k2 a 7.2px, Z
-   rev k3 a 10.8px» e suggerisce flip che i pallini smentiscono. Terzo
-   sospetto probabile (candidato del detector scambiato per indice) — da
-   spiegare al banco prima che eroda la fiducia nel voto di sessione.
+3. **Anomalia del testimone su foto 2** — SPIEGATA AL BANCO E CURATA 2/9
+   (chat successiva). La sonda nuova `CAGE_AUTO_WITNESS=<n>` (posa salvata,
+   per faccia: ogni slot col suo candidato libero e CHI è quel candidato) ha
+   nominato i colpevoli: l'indice vero di X stava ESATTAMENTE al suo posto
+   (`fwd k0 a 1.4px` = zero-xp), il «rev k2» era un candidato a [673 495]
+   SENZA NESSUN mark entro 30px (riflesso/stick — terzo sospetto confermato);
+   idem lo «Z rev k3» ([897 562]), e l'indice vero di Z non era proprio tra i
+   dischetti rilevati. La malattia era a valle: il testimone riportava TUTTI
+   gli slot vicini a un candidato libero, e voto + ATTENZIONE contavano ogni
+   hit — la spazzatura votava contro una lettura onesta. Cura: un anello = UN
+   indice = UNA lettura (index-witness piega `:obs` al hit più nitido per
+   faccia, il rapporto completo resta in `:faces` per il banco), e ogni
+   lettura porta `:zero-d` così quando contraddice A POSTO NOMINALE VUOTO il
+   messaggio lo dice coi numeri («l'indice vero è coperto o non rilevato,
+   pesa il terzo sospetto»). Migliora gratis anche m-check e auto-read: uno
+   stray non può più uccidere una posa onesta.
 4. **Il seme del gizmo al ramo 'a'** (punto 5 della fetta, «il colpo
    grosso»): `pnp/solve-pnp` accetta già `:seed`; la posa a occhio come gate
    delle ipotesi → cold start chiuso anche per gabbie non dichiarate.

@@ -3825,13 +3825,28 @@
         ;; pallini looked right — a verdict without its measurement cannot be
         ;; argued with, in either direction (the project's own rule: una
         ;; diagnosi non può essere più forte delle prove che la reggono).
-        dis-ev (for [{:keys [axis sense k d]} obs
+        ;; Since the same day each obs is the ring's ONE reading (the sharpest
+        ;; hit — index-witness folds), so a contradiction here means the
+        ;; ring's best evidence disagrees, not that a stray candidate grazed
+        ;; some slot while the true index sat on its nominal (photo 2 of
+        ;; battiscopa3: X read fwd k0 at 1.4px AND junk at rev k2 — the junk
+        ;; fired this warning). And when the NOMINAL slot is empty (:zero-d
+        ;; beyond the witness's own threshold), the accusation carries that
+        ;; too: an index nobody detected cannot testify, so the stray that
+        ;; did is the prime suspect, and the message should weigh it so.
+        dis-ev (for [{:keys [axis sense k d zero-d]} obs
                      :let [m (get mounting axis)]
                      :when (and m (or (not= sense (:sense m))
                                       (not= k (:k m))))]
                  {:axis (str/upper-case (name axis))
                   :seen (str (name sense) " k" k
-                             (when d (str " a " (.toFixed d 1) "px")))
+                             (when d (str " a " (.toFixed d 1) "px"))
+                             (when (and (number? zero-d)
+                                        (> zero-d match-cage/index-obs-px))
+                               (str ", e al posto NOMINALE nessun dischetto — "
+                                    "il più vicino a " (.toFixed zero-d 0)
+                                    "px: l'indice vero è coperto o non rilevato, "
+                                    "pesa il terzo sospetto")))
                   :expected (str (name (:sense m)) " k" (:k m))})
         dis (set (map :axis dis-ev))
         dis-detail (fn [axes]
