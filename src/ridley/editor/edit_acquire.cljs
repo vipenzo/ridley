@@ -422,6 +422,7 @@
        (reduce (fn [acc [g pick]] (update acc g (fnil conj []) pick)) {})))
 
 (declare save-acquire-state!)
+(declare derive-faces-from-pose!)
 
 ;; ============================================================
 ;; Blindato branch lock ('m'): the Klein-twin fix (fix (1) of
@@ -918,6 +919,10 @@
     (transport-registered-cameras! old-pose (get-in @session [:proxy-mesh :creation-pose])))
   (viewport/show-preview! (proxy-preview-items))
   (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))
+  ;; The proxy just moved under photo 0's frozen camera: the relative pose
+  ;; changed, so this photo's faces are re-read from it. The other photos'
+  ;; cameras were transported RIGIDLY above, so their readings still hold.
+  (derive-faces-from-pose! (:current-idx @session))
   ;; Persist the hand-aligned proxy pose. Only the solver paths ('s'/'r'/'f')
   ;; used to save, so a manual gizmo alignment was lost on re-entry — the root of
   ;; "realign the proxy every test" (Vincenzo 2026-07-25). The proxy pose is the
@@ -1026,6 +1031,8 @@
     ;; The widget's own live rotation/translation (also just a preview effect)
     ;; needs the same reset, back onto the frozen proxy pose.
     (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))
+    ;; This photo's camera just moved: re-read its faces from the new pose.
+    (derive-faces-from-pose! idx)
     (save-acquire-state!)))
 
 ;; ============================================================
@@ -1703,6 +1710,77 @@
              #(when % (into #{} (keep (fn [ci] (if (contains? (set wrong) ci) (moves ci) ci))) %))))
     [(count moves) (count drops)]))
 
+(defn- derive-faces-from-pose!
+  "Read photo `idx`'s ring faces off the pose the user just made BY EYE with the
+   gizmo, and make them this photo's face declaration — the decision of
+   2026-08-31, after thirteen live rounds in which hand-declared faces were
+   wrong on three photos in a row and every face error poisoned the solve and
+   every diagnosis downstream. The physical gesture «prendo in mano la gabbia e
+   la appaio alla foto» is now the virtual one: orient the cage until it
+   matches, and the faces are READ from the pose, no longer declared.
+
+   Runs on every gizmo commit (both handlers — photo 0 moves the proxy, later
+   photos invert onto the camera; either way the RELATIVE pose just changed,
+   and it is the relative pose the faces live on). The derived choice REPLACES
+   whatever was in :cage-face-choice for this photo, manual overrides included:
+   the last human act wins, and a commit IS a human act — the pose is his. The
+   three buttons stay, as display of the derived value and as override for «mi
+   fido dei tuoi occhi, non della posa»; a ring below the profile guard
+   (bridge/cage-face-margin-deg) declares NOTHING — the pose's own per-mark
+   culling stays in charge and the message says why, with the degrees, so the
+   verdict is never stronger than its evidence.
+
+   Each derived face is carried BACKWARDS over the picks already made
+   (reface-picks-to-declaration!) — same medicine as the manual toggle, same
+   grab-04 disease behind it."
+  [idx]
+  (when (cage-proxy?)
+    (when-let [cam (get-in @session [:camera-poses idx])]
+      (let [faces (bridge/cage-faces-from-pose (:proxy-mesh @session) cam)
+            derived (into {} (keep (fn [[a {:keys [sign]}]] (when sign [a sign])) faces))
+            profile (sort-by (comp str first)
+                             (keep (fn [[a {:keys [sign geo-sign elev-deg]}]]
+                                     (when-not sign [a elev-deg geo-sign]))
+                                   faces))
+            [moved dropped]
+            (reduce (fn [[mv dv] [a s]]
+                      (let [[m d] (reface-picks-to-declaration! idx a s)]
+                        [(+ mv m) (+ dv d)]))
+                    [0 0]
+                    (sort-by (comp str key) derived))]
+        (swap! session assoc-in [:cage-face-choice idx] derived)
+        ;; an armed mark on a face just hidden would keep the old name in hand —
+        ;; only meaningful while the picking UI is live
+        (when (= :pnp (:mode @session))
+          (when-let [a (:pnp-armed @session)]
+            (when-not (contains? (visible-corner-set) a)
+              (swap! session assoc :pnp-armed nil)))
+          (redraw-pnp-preview!)
+          (redraw-overlay-dots!))
+        (update-panel!)
+        (set-status-message!
+         (str "facce lette dalla posa: "
+              (if (seq derived)
+                (str/join " " (for [[a s] (sort-by (comp str key) derived)]
+                                (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+                "nessuna")
+              (when (seq profile)
+                (str " · " (str/join " · "
+                                     (for [[a e s] profile
+                                           :let [nm (str/upper-case (name a))]]
+                                       (str nm " quasi di taglio (" (.toFixed e 0)
+                                            "°): non la dichiaro io — direbbe "
+                                            nm (if (pos? s) "p" "m")
+                                            ", premilo tu se lo confermi")))))
+              (when (pos? moved)
+                (str " · " moved " click che avevi sull'altra faccia "
+                     (if (> moved 1) "sono passati" "è passato")
+                     " su questa: stesso dischetto attraverso la plastica, solo il nome cambia"))
+              (when (pos? dropped)
+                (str " · " dropped " " (if (> dropped 1) "click erano" "click era")
+                     " sull'altra faccia e il nome nuovo era già occupato: "
+                     (if (> dropped 1) "tolti" "tolto")))))))))
+
 (defn- toggle-cage-face!
   "Declare (or un-declare) which FACE of ring `axis` this photo shows — the
    judgement Vincenzo makes by holding the cage up to the picture, which the
@@ -2068,6 +2146,29 @@
     (gizmo/close!)
     (swap! session assoc :mode :pnp)
     (swap! session dissoc :pnp-batch-mode?)   ; always open in the armed flow
+    ;; On a CAGE with no face declaration yet for this photo, read one off the
+    ;; photo's current pose on the way in, so the panel opens with the toggles
+    ;; already lit and offers the faces actually in the picture — Vincenzo asked
+    ;; whether the six buttons set themselves (2026-09-01), and before this they
+    ;; only did after a gizmo COMMIT on this same photo, which a photo you never
+    ;; drag (the turntable seed is close) never gets. Entry-only, never
+    ;; overwrites an existing choice, and never touches picks: refacing stays
+    ;; tied to the gizmo commits, where the pose is explicitly the user's own
+    ;; (derive-faces-from-pose!). BEFORE arm-corner!, so the first armed target
+    ;; already respects the derived offer.
+    (let [idx (:current-idx @session)]
+      (when (and (cage-proxy?)
+                 (nil? (get-in @session [:cage-face-choice idx])))
+        (when-let [cam (get-in @session [:camera-poses idx])]
+          (let [faces (bridge/cage-faces-from-pose (:proxy-mesh @session) cam)
+                derived (into {} (keep (fn [[a {:keys [sign]}]] (when sign [a sign]))) faces)]
+            (when (seq derived)
+              (swap! session assoc-in [:cage-face-choice idx] derived)
+              (set-status-message!
+               (str "facce lette dalla posa: "
+                    (str/join " " (for [[a s] (sort-by (comp str key) derived)]
+                                    (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+                    " — se i tuoi occhi dicono altro, correggile coi bottoni")))))))
     (arm-corner! (next-unplaced-corner 0))
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" pnp-on-pointerdown true)
@@ -2333,7 +2434,7 @@
            (when-let [ok (seq (remove (fn [[a _]] (contains? (set (map key changed)) a))
                                       by-axis))]
              (str " (" (str/join " " (map (fn [[a s]] (btn a s)) ok)) " "
-                  (if (> (count ok) 1) "restano" "resta") " come " 
+                  (if (> (count ok) 1) "restano" "resta") " come "
                   (if (> (count ok) 1) "sono" "è") ")"))))))
 
 (defn- cage-relabel-rescue
@@ -2844,23 +2945,23 @@
                                                "giudicare le facce. Controlla PRIMA quel click "
                                                "(nome sbagliato? dischetto di un altro anello?), "
                                                "toglilo con la gomma o con 'o', e ripremi 'r'. ")
-                                        (let [biggest (->> (mapv :ci correspondences)
-                                                           (keep #(cage/anchor-axis
-                                                                   (:id (nth targets %))))
-                                                           frequencies vals (reduce max 0))]
-                                          (if (< biggest 4)
-                                            (str "E la rinomina per anello NON HO POTUTO provarla: "
-                                                 "per ricostruire una posa le serve un anello con "
-                                                 "almeno 4 click, e il tuo più fornito ne ha "
-                                                 biggest ". Clicca altri mark sullo STESSO anello "
-                                                 "(4 o più) e ripremi 'r'. ")
-                                            (str "Ho provato a rinominarli anello per anello, anche "
-                                                 "sui tuoi soli click, e non basta. Due cause "
-                                                 "possibili: i punti stanno tutti su UN anello "
-                                                 "(clicca qualche mark su un secondo anello), "
-                                                 "oppure qualche click è finito su un dischetto di "
-                                                 "un anello diverso da quello che dice "
-                                                 "l'etichetta. ")))))
+                                          (let [biggest (->> (mapv :ci correspondences)
+                                                             (keep #(cage/anchor-axis
+                                                                     (:id (nth targets %))))
+                                                             frequencies vals (reduce max 0))]
+                                            (if (< biggest 4)
+                                              (str "E la rinomina per anello NON HO POTUTO provarla: "
+                                                   "per ricostruire una posa le serve un anello con "
+                                                   "almeno 4 click, e il tuo più fornito ne ha "
+                                                   biggest ". Clicca altri mark sullo STESSO anello "
+                                                   "(4 o più) e ripremi 'r'. ")
+                                              (str "Ho provato a rinominarli anello per anello, anche "
+                                                   "sui tuoi soli click, e non basta. Due cause "
+                                                   "possibili: i punti stanno tutti su UN anello "
+                                                   "(clicca qualche mark su un secondo anello), "
+                                                   "oppure qualche click è finito su un dischetto di "
+                                                   "un anello diverso da quello che dice "
+                                                   "l'etichetta. ")))))
                                       "Intanto lascio la posa che hai adesso."))
                                 (swap! session assoc :last-solve ::refused)
                                 ::refused)))))))
@@ -6314,6 +6415,12 @@
         ;; three evenings of camera-behind refusals downstream. He proposed the
         ;; cure and it is the right one: three toggles, one per ring, for the
         ;; judgement he actually makes by holding the cage up to the photo.
+        ;;
+        ;; Since 2026-08-31 the toggles are lit BY THE POSE: every gizmo commit
+        ;; re-reads the faces from the aligned cage (derive-faces-from-pose!).
+        ;; They stay pressable as the override — «mi fido dei tuoi occhi, non
+        ;; della posa» — and a ring too edge-on to read gets a note here
+        ;; instead of a lit button.
         (when (cage-proxy?)
           (let [row (.createElement js/document "div")
                 choice (get-in @session [:cage-face-choice (:current-idx @session)])]
@@ -6340,7 +6447,38 @@
                              "Ripremi per tornare alla scelta automatica."))
                   (.addEventListener b "click" (fn [_] (toggle-cage-face! axis sign)))
                   (.appendChild row b))))
-            (.appendChild box row)))
+            (.appendChild box row)
+            ;; the profile guard, said out loud: a ring the pose sees nearly
+            ;; edge-on declares nothing (bridge/cage-face-margin-deg), and the
+            ;; panel owes the user the reason WITH the degrees — on grab-05 a
+            ;; face decided by 13–17° of margin held half a day of wrong
+            ;; diagnoses (2026-08-31)
+            (let [faces (bridge/cage-faces-from-pose (:proxy-mesh @session)
+                                                     (current-camera-pose))
+                  edge-on (sort-by (comp str first)
+                                   (keep (fn [[a {:keys [sign geo-sign elev-deg]}]]
+                                           (when (and (nil? sign) (not (contains? choice a)))
+                                             [a elev-deg geo-sign]))
+                                         faces))]
+              (when (seq edge-on)
+                (let [note (.createElement js/document "div")]
+                  ;; the guard withholds the DECLARATION, not the reading: say
+                  ;; which button the pose would press and leave the pressing to
+                  ;; him. Two dead buttons and no explanation is what he got
+                  ;; first (2026-09-01, photo 4: «non viene aggiornato quello di
+                  ;; Ym/Yp, restano deselezionati entrambi»).
+                  (set! (.-textContent note)
+                        (str/join " · "
+                                  (for [[a e s] edge-on
+                                        :let [nm (str/upper-case (name a))
+                                              face (str nm (if (pos? s) "p" "m"))]]
+                                    (str nm " è quasi di taglio (" (.toFixed e 0)
+                                         "°): troppo poco per dichiararla io — la posa"
+                                         " direbbe " face ", ma guarda la foto e premilo"
+                                         " tu (o l'altro)"))))
+                  (set! (.-color (.-style note)) "#c9a94a")
+                  (set! (.-fontSize (.-style note)) "11px")
+                  (.appendChild box note))))))
         (set! (.-className corners) "eaq-pnp-corners")
         (doseq [i shown]
           (let [b (.createElement js/document "button")

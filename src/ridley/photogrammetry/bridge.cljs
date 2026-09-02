@@ -237,6 +237,68 @@
                  :visible? (contains? visible i)})
               (range) objs)))))
 
+(def cage-face-margin-deg
+  "Below this ELEVATION of the sight line over a ring's plane (degrees), the
+   ring does not declare a face at all: an edge-on ring is ambiguous, and a
+   declaration made from ambiguity poisons everything downstream. The number
+   is bought experience, not taste: on battiscopa3 grab-05 the Y face was
+   decided by 13–17° of margin and that verdict held half a day of wrong
+   diagnoses (2026-08-31). Twenty degrees keeps that case silent."
+  20.0)
+
+(defn cage-faces-from-pose
+  "Which FACE of each ring the camera at `camera-pose` sees, read off the poses
+   themselves — the virtual twin of Vincenzo's physical gesture «prendo in mano
+   la gabbia e la appaio alla foto» (decision of 2026-08-31: after the aligned-
+   by-eye pose, faces are READ, no longer declared photo by photo — three
+   photos in a row had hand-declared faces wrong, and every face error poisons
+   the solve and every diagnosis after it).
+
+   For ring `axis`, the face the camera sees is the sign of the component of
+   (camera − cage-centre) along the ring's world axis; the ring axes are the
+   cage's own frame at :creation-pose (box-basis), which rides every rigid
+   transport together with the anchors. The GUARD: below `margin-deg` of
+   elevation (default `cage-face-margin-deg`) the ring is nearly edge-on and
+   :sign is nil — per-mark culling of the pose stays in charge, no declaration.
+
+   A ring declared glued TURNED OVER (:cage-flips on the mesh — see
+   registration-cage's :flips) reads INVERTED: the face is named by the
+   PRINT's label, the same convention the ids and the passetto reading use,
+   and on a flipped ring the camera standing on the +axis side is looking at
+   the printed m face. Without this the derivation would re-declare the very
+   misreading the flip declaration exists to end.
+
+   Returns {:x {:sign 1|-1|nil :geo-sign 1|-1 :elev-deg d} :y … :z …}.
+   :elev-deg is reported even when readable, so the caller can SAY the margin
+   instead of asserting a verdict stronger than its evidence; :geo-sign is the
+   face the geometry alone gives, guard or no guard. The two differ exactly on
+   an edge-on ring, and the difference is the point: :sign is what may be
+   DECLARED (it moves picks, so it must be safe), :geo-sign is what may be
+   SUGGESTED — 'the pose would say Ym, you decide'. Offering nothing there was
+   worse than offering a guess labelled as one: it left the user with two dead
+   buttons and no hint of what the model saw (Vincenzo 2026-09-01, photo 4 of
+   battiscopa3, whose Y ring is the 13–17° case the guard was built for). Pure."
+  ([proxy-mesh camera-pose]
+   (cage-faces-from-pose proxy-mesh camera-pose nil))
+  ([proxy-mesh camera-pose {:keys [margin-deg]}]
+   (let [pose (:creation-pose proxy-mesh)
+         {:keys [ex ey ez]} (box-basis pose)
+         margin (or margin-deg cage-face-margin-deg)
+         flips (or (:cage-flips proxy-mesh) #{})
+         v (m/normalize (m/v- (:position camera-pose) (:position pose)))]
+     (into {}
+           (map (fn [[axis a]]
+                  (let [d (m/dot v a)
+                        elev (* (js/Math.asin (min 1.0 (js/Math.abs d)))
+                                (/ 180.0 js/Math.PI))
+                        geo (if (contains? flips axis)
+                              (if (pos? d) -1 1)
+                              (if (pos? d) 1 -1))]
+                    [axis {:sign (when (>= elev margin) geo)
+                           :geo-sign geo
+                           :elev-deg elev}])))
+           {:x ex :y ey :z ez}))))
+
 (defn plate-detect
   "The extras a registration PLATE carries for identity-free registration (fetta
    B) beyond its 12 crown marks: the asymmetric ZERO-INDEX mark — a 13th disc
