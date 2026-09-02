@@ -75,12 +75,16 @@ giorni tre dichiarazioni false che sette giorni di residui "buoni" non avevano
 mai smentito: le `:phases {:y 180 :x 180}` (entrambe false), i ribaltamenti
 non dichiarabili (nato `:flips` — battiscopa3 è `#{:y :z}`), la focale 44 (la
 vera è 28.08, misurata dalla rifinitura congiunta a valle). **battiscopa3
-registra 5/5 a 2.9-8.5px.** Committato 2/9 in 8 commit tematici
-(`a454732..ad69b03`); fatta anche la memoria per-camera della focale
-(`~/.ridley/cameras.json`, chiave «label @ w×h», sorgente `:remembered`).
-Coda e trappole in `dev-docs/HANDOVER-cage-zero-click.md`, blocco
-ATTERRAGGIO 2/9 (restano: anomalia testimone foto 2, seme del gizmo al
-ramo 'a', difetti storici).
+registra 5/5 a 2.9-8.5px.** Coda ATTERRAGGIO 2/9 tutta chiusa
+(`a454732..e7c7c5d`): commit in 8 pezzi tematici; memoria per-camera della
+focale (`~/.ridley/cameras.json`, «label @ w×h», sorgente `:remembered`);
+testimone curato (un anello = UNA lettura — l'anomalia di foto 2 era un
+candidato spazzatura, spiegato al banco con la sonda `CAGE_AUTO_WITNESS`);
+e **il seme dell'occhio**: la posa appaiata a mano come seme diretto di 'a'
+(assign+ICP, niente ellissi) — 4/5 in ~0.2s contro 0/5 in 17-36s, zero
+falsi, cold start chiuso anche per gabbie non dichiarate. Restano i difetti
+storici (max-outliers fisso, accettazione senza asticella, rinomina prima
+del solve); trappole e dettagli in `dev-docs/HANDOVER-cage-zero-click.md`.
 
 *Gate manuale PASSATO e riconoscitore automatico avviato (2026-08-23/24)*: il
 gesto a mano si è dimostrato chiuso — una corona da sola è invariante per
