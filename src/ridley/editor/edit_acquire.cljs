@@ -2140,7 +2140,9 @@
       raw))
 
 (defn- click-pixel
-  "The pixel a click means: snapped to the disc under it, unless ALT is held.
+  "The pixel a click means: snapped to the disc under it, unless ALT is held —
+   and on a cage, ALT only reaches here while the proxy is HIDDEN, since with
+   it on screen ALT rolls the cage instead (pnp-on-pointerdown).
 
    The snap is right almost always and wrong in a way the user cannot argue
    with: when the mark touches something of a similar grey — the dark object
@@ -2182,7 +2184,11 @@
           (do (set-status-message!
                (str "l'aggancio automatico ha spostato il click" named " di "
                     (modal/fmt-number d) "px — se ha preso la cosa sbagliata (un bordo scuro "
-                    "lì vicino), riclicca tenendo ALT per prenderlo alla lettera"))
+                    "lì vicino), riclicca tenendo ALT per prenderlo alla lettera"
+                    ;; with the cage on screen ALT rolls it instead (see
+                    ;; pnp-on-pointerdown), so the advice needs its first step
+                    (when-not (:hide-proxy? @session)
+                      ": prima premi 'v' per togliere la gabbia, sennò ALT la fa rotolare")))
               px)
 
           :else px)))))
@@ -2190,65 +2196,80 @@
 (defn- screen-for [px client-fallback]
   (or (backdrop/screen-of-pixel (viewport/get-canvas) (viewport/get-camera) px) client-fallback))
 
+(declare pnp-start-peek!)
+
 (defn- pnp-on-pointerdown [^js e]
   (when (and @session (= :pnp (:mode @session)) (zero? (.-button e)))
-    (when-let [raw (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
-      (let [idx (:current-idx @session)]
-        (cond
-          ;; fetta B: identity-free batch — every click is just another disc
-          ;; centroid appended to the batch (no armed target); 'r' assigns them.
-          (batch-mode?)
-          (do
-            (.preventDefault e) (.stopPropagation e)
-            (let [px (click-pixel raw e nil)]
-              (swap! session update-in [:pnp-batch idx] (fnil conj [])
-                     {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
-              (redraw-overlay-dots!)
-              (update-panel!)))
+    (if (and (.-altKey e) (not (:hide-proxy? @session)))
+      ;; Alt+drag = sbirciatina, but ONLY while the cage is on screen. Alt was
+      ;; taken: it has meant "this click, literally, no snap" since the plate
+      ;; (click-pixel), and the peek stole it — reported the same evening it
+      ;; shipped. Vincenzo's rule, adopted verbatim: cage visible → Alt rolls
+      ;; the cage; cage hidden ('v') → Alt is the literal click again, and the
+      ;; peek must NOT bring the cage back by itself. It divides cleanly
+      ;; because each gesture is useless in the other's state — there is
+      ;; nothing to roll when the cage is hidden, and a literal click is what
+      ;; you want on the naked photo.
+      (do (.preventDefault e)
+          (.stopPropagation e)
+          (pnp-start-peek! e))
+      (when-let [raw (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+        (let [idx (:current-idx @session)]
+          (cond
+            ;; fetta B: identity-free batch — every click is just another disc
+            ;; centroid appended to the batch (no armed target); 'r' assigns them.
+            (batch-mode?)
+            (do
+              (.preventDefault e) (.stopPropagation e)
+              (let [px (click-pixel raw e nil)]
+                (swap! session update-in [:pnp-batch idx] (fnil conj [])
+                       {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
+                (redraw-overlay-dots!)
+                (update-panel!)))
 
-          ;; fetta A / box: place the armed target; ignore clicks when unarmed
-          (:pnp-armed @session)
-          (let [ci (:pnp-armed @session)
-                px (click-pixel raw e (:label (nth (pnp-targets) ci nil)))
-                ;; A disc belongs to ONE mark. If this click lands on a disc some
-                ;; other mark already holds, the two cannot both be right, and
-                ;; keeping both hands the solver a contradiction that wrecks the
-                ;; pose rather than showing up as one bad point (2026-08-19: three
-                ;; marks on one disc, rms 453px; later a fourth pair, 795px).
-                ;; The click just said what this disc IS, so the newer claim wins
-                ;; and the older one is released — never silently, since the
-                ;; released mark now needs placing again.
-                same-disc (vec (keep (fn [[other v]]
-                                       (let [q (:px v)]
-                                         (when (and (not= other ci)
-                                                    (< (Math/hypot (- (nth px 0) (nth q 0))
-                                                                   (- (nth px 1) (nth q 1)))
-                                                       duplicate-pick-px))
-                                           other)))
-                                     (pnp-picks)))]
-            (.preventDefault e) (.stopPropagation e)
-            (doseq [other same-disc]
-              (swap! session update-in [:pnp-picks idx] dissoc other))
-            (when (seq same-disc)
-              (set-status-message!
-               (str "quel dischetto era già assegnato a " (corner-labels same-disc)
-                    ": ora è " (corner-labels [ci]) ", e "
-                    (if (> (count same-disc) 1) "quelli restano" "quello resta")
-                    " da ripiazzare — due mark sullo stesso dischetto mandano"
-                    " a gambe all'aria tutta la posa, non solo quel punto")))
-            (swap! session assoc-in [:pnp-picks idx ci]
-                   {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
-            ;; a new click makes the last solve's residuals/outliers stale — drop
-            ;; them so the red flags clear until the user re-solves
-            (swap! session update :pnp-residuals dissoc idx)
-            (swap! session update :pnp-outliers dissoc idx)
-            (redraw-overlay-dots!)
-            ;; arm the next SPREAD marker (farthest from those placed) so a few seed
-            ;; clicks fan out around the ring instead of clustering; nil once every
-            ;; non-occluded marker is placed (panel then says "premi 'r'")
-            (if-let [nxt (next-seed-corner)]
-              (arm-corner! nxt)
-              (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!)))))))))
+            ;; fetta A / box: place the armed target; ignore clicks when unarmed
+            (:pnp-armed @session)
+            (let [ci (:pnp-armed @session)
+                  px (click-pixel raw e (:label (nth (pnp-targets) ci nil)))
+                  ;; A disc belongs to ONE mark. If this click lands on a disc some
+                  ;; other mark already holds, the two cannot both be right, and
+                  ;; keeping both hands the solver a contradiction that wrecks the
+                  ;; pose rather than showing up as one bad point (2026-08-19: three
+                  ;; marks on one disc, rms 453px; later a fourth pair, 795px).
+                  ;; The click just said what this disc IS, so the newer claim wins
+                  ;; and the older one is released — never silently, since the
+                  ;; released mark now needs placing again.
+                  same-disc (vec (keep (fn [[other v]]
+                                         (let [q (:px v)]
+                                           (when (and (not= other ci)
+                                                      (< (Math/hypot (- (nth px 0) (nth q 0))
+                                                                     (- (nth px 1) (nth q 1)))
+                                                         duplicate-pick-px))
+                                             other)))
+                                       (pnp-picks)))]
+              (.preventDefault e) (.stopPropagation e)
+              (doseq [other same-disc]
+                (swap! session update-in [:pnp-picks idx] dissoc other))
+              (when (seq same-disc)
+                (set-status-message!
+                 (str "quel dischetto era già assegnato a " (corner-labels same-disc)
+                      ": ora è " (corner-labels [ci]) ", e "
+                      (if (> (count same-disc) 1) "quelli restano" "quello resta")
+                      " da ripiazzare — due mark sullo stesso dischetto mandano"
+                      " a gambe all'aria tutta la posa, non solo quel punto")))
+              (swap! session assoc-in [:pnp-picks idx ci]
+                     {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
+              ;; a new click makes the last solve's residuals/outliers stale — drop
+              ;; them so the red flags clear until the user re-solves
+              (swap! session update :pnp-residuals dissoc idx)
+              (swap! session update :pnp-outliers dissoc idx)
+              (redraw-overlay-dots!)
+              ;; arm the next SPREAD marker (farthest from those placed) so a few seed
+              ;; clicks fan out around the ring instead of clustering; nil once every
+              ;; non-occluded marker is placed (panel then says "premi 'r'")
+              (if-let [nxt (next-seed-corner)]
+                (arm-corner! nxt)
+                (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!))))))))))
 
 ;; --- loupe: a magnifier that expands the pixels under the cursor so a corner
 ;; can be placed on the exact edge despite the translucent proxy over it
@@ -2309,9 +2330,106 @@
           (set! (.-display st) "block")))
       (set! (.-display st) "none"))))
 
+;; --- Alt+trascina: sbircia la gabbia virtuale, poi torna da sola ------------
+;;
+;; In the picking the photo often hides a mark — a stick, the part, glare — and
+;; counting discs on the photograph is where crowns are misread. The virtual
+;; cage knows where every mark is, but it sits locked in the registered pose.
+;; Vincenzo's proposal (2026-09-01), his own variant: no gizmo handles — hold
+;; Alt and drag anywhere to roll the virtual cage like a ball in hand, look at
+;; where the marks are, release, and after a moment it springs back to the
+;; registered pose. He chose Alt+drag over a pnp gizmo deliberately («molto
+;; più chiaro»): no handles sitting over the discs being clicked.
+;;
+;; NOTHING is ever committed: the rolled cage is a preview built from a
+;; rotated COPY of the proxy — the session pose is untouched by construction,
+;; so the snap-back is a delayed redraw, not a restore.
+
+(def ^:private peek-deg-per-px
+  "Trackball gain: degrees of cage roll per pixel of drag. 0.4 turns a
+   250px swipe into a quarter turn."
+  0.4)
+
+(def ^:private peek-return-ms
+  "How long the peeked cage lingers after release before springing back —
+   Vincenzo's «dopo un secondo o due»."
+  1200)
+
+(defn- pnp-peek-active? [] (some? (:pnp-peek-drag @session)))
+
+(defn- pnp-peek-items
+  "Preview of the peeked cage: the SOLID cage + printed features + every
+   front-face mark. The marks show here even though the normal picking preview
+   leaves them to the overlay — seeing where they are is the whole point of the
+   gesture — and their culling follows the rotated copy, so faces rolling
+   toward the camera reveal their crowns like the print would in hand.
+
+   Solid, not the picking mode's see-through wireframe (Vincenzo 2026-09-01:
+   «il proxy è disegnato in wireframe, non pieno»): the wireframe is see-through
+   so that discs can be clicked underneath it, and here nothing is being clicked
+   — it is the object being looked at. Solid also OCCLUDES, which is the reading
+   itself: a mark hidden behind a ring of the rolled cage is hidden on the print
+   too, from that side."
+  []
+  (let [{:keys [ax ay]} (:pnp-peek @session)
+        {:keys [r u]} (pose-basis (current-camera-pose))
+        mesh (-> (:proxy-mesh @session)
+                 (attachment/rotate-mesh u (deg->rad (or ax 0.0)))
+                 (attachment/rotate-mesh r (deg->rad (or ay 0.0))))]
+    (into [{:type :mesh :data mesh}]
+          (concat (cage-feature-items* mesh)
+                  (some-> (cage-marks-item* mesh) vector)))))
+
+(defn- pnp-start-peek! [^js e]
+  (when-let [t (:pnp-peek-timer @session)] (js/clearTimeout t))
+  ;; capture the pointer so the release is heard even off-canvas — without it
+  ;; a drag ending outside the photo would leave the cage rolled forever
+  (try (.setPointerCapture (viewport/get-canvas) (.-pointerId e)) (catch :default _))
+  (swap! session assoc
+         :pnp-peek-drag {:x (.-clientX e) :y (.-clientY e)}
+         :pnp-peek (or (:pnp-peek @session) {:ax 0.0 :ay 0.0})
+         :pnp-peek-timer nil)
+  (hide-pnp-loupe!)
+  (viewport/show-preview! (pnp-peek-items)))
+
+(defn- pnp-move-peek! [^js e]
+  (let [{:keys [x y]} (:pnp-peek-drag @session)]
+    (swap! session
+           (fn [s]
+             (-> s
+                 (update-in [:pnp-peek :ax] (fnil + 0.0)
+                            (* peek-deg-per-px (- (.-clientX e) x)))
+                 (update-in [:pnp-peek :ay] (fnil + 0.0)
+                            (* peek-deg-per-px (- (.-clientY e) y)))
+                 (assoc :pnp-peek-drag {:x (.-clientX e) :y (.-clientY e)}))))
+    (viewport/show-preview! (pnp-peek-items))))
+
+(defn- pnp-end-peek! []
+  (when (pnp-peek-active?)
+    (swap! session dissoc :pnp-peek-drag)
+    ;; a new Alt+drag inside the window clears this timer and rolls on from
+    ;; where the cage is; only a quiet second sends it home
+    (swap! session assoc :pnp-peek-timer
+           (js/setTimeout
+            (fn []
+              (when (and @session (= :pnp (:mode @session)) (not (pnp-peek-active?)))
+                (swap! session dissoc :pnp-peek :pnp-peek-timer)
+                (redraw-pnp-preview!)))
+            peek-return-ms))))
+
+(defn- pnp-on-pointerup [^js e]
+  (when (and @session (= :pnp (:mode @session)) (pnp-peek-active?))
+    (.preventDefault e)
+    (.stopPropagation e)
+    (pnp-end-peek!)))
+
 (defn- pnp-on-pointermove [^js e]
   (when (and @session (= :pnp (:mode @session)))
-    (update-loupe! e)))
+    (if (pnp-peek-active?)
+      (do (.preventDefault e)
+          (.stopPropagation e)
+          (pnp-move-peek! e))
+      (update-loupe! e))))
 
 (defn- pnp-on-wheel
   "Wheel over the photo tunes the LOUPE zoom (the camera is locked, so the wheel
@@ -2426,6 +2544,10 @@
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" pnp-on-pointerdown true)
       (.addEventListener canvas "pointermove" pnp-on-pointermove true)
+      ;; pointerup/cancel end the Alt+drag peek; with the pointer captured at
+      ;; peek start they are heard even when the drag ends off-canvas
+      (.addEventListener canvas "pointerup" pnp-on-pointerup true)
+      (.addEventListener canvas "pointercancel" pnp-on-pointerup true)
       (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
       (.addEventListener canvas "contextmenu" pnp-on-contextmenu true)
       (.addEventListener canvas "wheel" pnp-on-wheel #js {:capture true :passive false}))
@@ -2438,9 +2560,15 @@
     (let [^js canvas (viewport/get-canvas)]
       (.removeEventListener canvas "pointerdown" pnp-on-pointerdown true)
       (.removeEventListener canvas "pointermove" pnp-on-pointermove true)
+      (.removeEventListener canvas "pointerup" pnp-on-pointerup true)
+      (.removeEventListener canvas "pointercancel" pnp-on-pointerup true)
       (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
       (.removeEventListener canvas "contextmenu" pnp-on-contextmenu true)
       (.removeEventListener canvas "wheel" pnp-on-wheel true))
+    ;; a peek must not outlive the mode: kill the timer and drop the angles, or
+    ;; the delayed snap-back would fire into whatever preview came next
+    (when-let [t (:pnp-peek-timer @session)] (js/clearTimeout t))
+    (swap! session dissoc :pnp-peek :pnp-peek-drag :pnp-peek-timer)
     (remove-pnp-overlay!)
     (remove-pnp-loupe!)
     ;; batch (fetta B) state is transient pre-assign scaffolding, not persisted —
