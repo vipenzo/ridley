@@ -162,7 +162,7 @@
     (m/v+ (:position proxy-pose)
           (m/v+ (m/v* ex (* 0.5 w)) (m/v+ (m/v* ey (* 0.5 h)) (m/v* ez (* 0.5 d)))))))
 
-(declare trace-items mark-world-positions cage-proxy?)
+(declare trace-items mark-world-positions cage-proxy? current-camera-pose)
 
 (def ^:private mark-color 0xff33cc)  ; magenta — placed marks, distinct from the retrace yellow
 
@@ -192,22 +192,228 @@
    way round. Drawn even when the solid proxy is hidden ('v'), since hiding it to
    read the photo is exactly when these are wanted.
 
-   On a CAGE the same dots turn hostile: six crowns are ~80 dots blanketing the
-   photo, sitting exactly on the printed discs the user is trying to click
-   (Vincenzo 2026-08-27) — and a cage, unlike the plate, is all wireframe rings,
-   so the eye has plenty to align against without them. So on a cage they follow
-   the names toggle ('n'); on the plate they stay always-on, per the 2026-08-01
-   decision above."
+   A CAGE is handled by cage-marks-item instead (front-face culling, the
+   double pallini told apart, visibility tied to the proxy's own) — this
+   fn's all-anchors dump would draw both faces of every ring through the
+   plastic, which is how crowns get miscounted."
   []
   (when-let [as (seq (:anchors (:proxy-mesh @session)))]
-    (when (or (not (cage-proxy?)) (:show-names? @session))
+    (when-not (cage-proxy?)
       {:type :dots
        :data (mapv (fn [[k a]]
-                     {:pos (:position a)
-                      :radius (if (= k :zero) 1.3 1.0)
-                      :color (if (= k :zero) zero-dot-color crown-dot-color)
-                      :opacity 0.9})
+                     (let [zero? (bridge/index-anchor? k)]
+                       {:pos (:position a)
+                        :radius (if zero? 1.3 1.0)
+                        :color (if zero? zero-dot-color crown-dot-color)
+                        :opacity 0.9}))
                    as)})))
+
+(defn- cage-marks-item*
+  "Every mark of the cage's FRONT faces, riding the virtual proxy in the
+   alignment preview: the full crowns as azzurro dots, each face's DOUBLE
+   PALLINO — mark 0 big, zero-index small — in orange. Takes the mesh as an
+   argument so the Alt+drag peek can draw a ROTATED COPY; cage-marks-item is
+   the session-reading wrapper.
+
+   Two of Vincenzo's decisions, the second refining the first. The double
+   pallini (2026-08-31: «vedere dove finiscono i doppi pallini») are the one
+   printed figure that pins a crown's numbering AND its face, and the gauge of
+   the passetto rule (big disc → small pallino: CCW in the image = face p).
+   Then the whole crowns (2026-09-01): «dalla foto è difficile stabilire che
+   numero è un certo pallino — se sono visibili su quello virtuale si possono
+   contare guardando dietro eventuali ostacoli» — the virtual cage has no
+   sticks, no part and no glare, so counting discs on IT works where counting
+   on the photograph does not. This does not reopen the 2026-08-27 blanket
+   problem: that was the PICKING mode, where predicted dots sat exactly on the
+   discs being clicked; here they ride the proxy in the alignment view, and
+   the picking mode keeps its own sparse dots.
+
+   FRONT faces only (same per-mark test as bridge/pnp-target-points): a disc
+   of a face looking away would show through the plastic, and counting through
+   the plastic is exactly how crowns get misread. With no camera pose yet,
+   nothing is culled. Shown and hidden WITH the proxy ('v'): the dots are part
+   of the virtual cage, not an overlay on the photo — Vincenzo 2026-09-01,
+   reversing the first cut, which kept the pallini always on."
+  [proxy-mesh]
+  (let [mesh proxy-mesh]
+    (when (:cage-d mesh)
+      (let [cam-pos (:position (current-camera-pose))
+            front? (fn [{:keys [position heading]}]
+                     (or (nil? cam-pos)
+                         (pos? (m/dot (m/normalize heading) (m/v- cam-pos position)))))
+            dots (for [[id a] (sort-by key (:anchors mesh))
+                       :when (front? a)]
+                   (cond
+                     (bridge/index-anchor? id)
+                     {:pos (:position a) :radius 1.1 :color zero-dot-color :opacity 0.95}
+
+                     (= 0 (:index (cage/mark-parts id)))
+                     {:pos (:position a) :radius 1.8 :color zero-dot-color :opacity 0.95}
+
+                     :else
+                     {:pos (:position a) :radius 1.0 :color crown-dot-color :opacity 0.9}))]
+        (when (seq dots)
+          {:type :dots :data (vec dots)})))))
+
+(defn- cage-marks-item [] (cage-marks-item* (:proxy-mesh @session)))
+
+(def ^:private cage-tab-color 0x7fd17f)     ; verde: alette d'incollaggio e fermi
+(def ^:private cage-key-pin-color 0xff5533) ; rosso: la spina della chiave di montaggio
+(def ^:private cage-slot-color 0x8899aa)    ; grigio-azzurro: i box porta-stick
+(def ^:private cage-channel-color 0xe8f0ff) ; quasi bianco: la bocca del canale
+
+(defn- box-corners
+  "The 8 corners of a box: `center`, three orthonormal `axes`, and the
+   half-extent along each. Corners are indexed by three bits, one per axis, so
+   the faces and edges below are index arithmetic. Oriented rather than
+   axis-aligned because the stick-slot bodies stand at their own azimuth on
+   their ring, unlike the tabs."
+  [center axes halves]
+  (mapv (fn [i]
+          (reduce (fn [p [b e h]] (m/v+ p (m/v* e (if (bit-test i b) h (- h)))))
+                  center
+                  (map vector [0 1 2] axes halves)))
+        (range 8)))
+
+(defn- aabb-corners
+  "box-corners for a {:center :size} box in cage coordinates (the tabs)."
+  [{:keys [center size]}]
+  (box-corners center
+               [[1.0 0.0 0.0] [0.0 1.0 0.0] [0.0 0.0 1.0]]
+               (mapv #(/ % 2.0) size)))
+
+(defn- box-faces
+  "Triangles over box-corners' indexing, offset into a merged vertex vector.
+   Winding is not curated: the material these feed is double-sided."
+  [offset]
+  (into [] (mapcat (fn [[a b c d]] [[(+ offset a) (+ offset b) (+ offset c)]
+                                    [(+ offset a) (+ offset c) (+ offset d)]]))
+        [[0 1 3 2] [4 6 7 5] [0 4 5 1] [2 3 7 6] [0 2 6 4] [1 5 7 3]]))
+
+(defn- box-edges
+  "The 12 edges of a corner vector as [from to] pairs — an edge wherever two
+   corner indices differ in exactly one bit."
+  [corners]
+  (for [i (range 8)
+        b (range 3)
+        :let [j (bit-or i (bit-shift-left 1 b))]
+        :when (> j i)]
+    [(nth corners i) (nth corners j)]))
+
+(defn- ellipse-loop
+  "Closed polyline of an ellipse centred at `c`, semi-axis `r1` along `e1` and
+   `r2` along `e2`, as [from to] pairs."
+  [c e1 r1 e2 r2]
+  (let [n 20
+        pt (fn [i] (let [a (* 2.0 Math/PI (/ (double i) n))]
+                     (m/v+ c (m/v+ (m/v* e1 (* r1 (Math/cos a)))
+                                   (m/v* e2 (* r2 (Math/sin a)))))))
+        pts (mapv pt (range n))]
+    (map vector pts (conj (subvec pts 1) (first pts)))))
+
+(defn- cage-feature-items*
+  "The cage's PRINTED features drawn over the photo, riding the given mesh's
+   pose (an argument, so the Alt+drag peek can draw a rotated COPY;
+   cage-feature-items is the session-reading wrapper):
+   the glue tabs with their stop lips (alette, green), the assembly key's pin
+   (spina, red), and the stick-slot bodies with the elliptical mouth of their
+   channel at each end (i box forati, grey-blue).
+
+   The bare rings are not enough to align by eye, and Vincenzo said why
+   (2026-08-31): on the print, these features are what tells him the position
+   even when the zero-indices are hidden. And they carry more than recognition —
+   the tabs rise off ONE face of each ring and the key pin is asymmetric on
+   purpose, so they are exactly what distinguishes a pose from its mirror twin:
+   a naked annulus matches its own reflection, an annulus with its tab does not.
+   Without them the align-by-eye gesture would inherit the very twin ambiguity
+   it exists to kill.
+
+   Tabs and pin are SOLID translucent boxes, not just edges — the first cut was
+   edge-only and Vincenzo couldn't use them («si vedono, ma in wireframe...
+   dovrebbero essere un po' più evidenti», 2026-08-31). Translucent rather than
+   opaque on purpose: the drawn aletta gets aligned TO the photographed one, so
+   the photo must stay readable through it. The edge lines stay on top of the
+   fill for a crisp outline.
+
+   The slot bodies joined the tabs on 2026-09-01, at Vincenzo's request: «anche
+   loro sono elementi chirali riconoscibili che facilitano il confronto tra
+   l'immagine virtuale della gabbia e la foto» — and he is right twice over,
+   since a slot body rises from ONE face of its ring, so like the tabs it is a
+   feature the mirror twin cannot reproduce. The first cut drew them as flat
+   lozenges, which read as decoration rather than as the blocks they are.
+
+   The key NOTCH is still not drawn: it is a cut, and a box there would show
+   material the print does not have. The STICKS are not drawn either — the
+   model knows the slots (printed, fixed) but not which sticks were threaded
+   through them this session.
+
+   Geometry comes from the same :tabs/:stick-slots the print rides on
+   (cage/joint-tabs, cage/stick-slots — cage coordinates), lifted to world at
+   :creation-pose, so the drawn cage and the printed cage cannot drift apart.
+   Returns a vector of preview items; nil on anything that is not a cage."
+  [proxy-mesh]
+  (let [mesh proxy-mesh]
+    (when (and (:cage-d mesh) (seq (:tabs mesh)))
+      (let [pose (:creation-pose mesh)
+            w #(bridge/local->world pose %)
+            ;; several boxes merged into ONE translucent mesh per colour: one
+            ;; preview item instead of a dozen, and the vertex offsets are why
+            ;; box-faces takes one
+            solid (fn [corner-sets color opacity]
+                    (when (seq corner-sets)
+                      (let [{:keys [verts faces]}
+                            (reduce (fn [{:keys [verts faces]} cs]
+                                      {:verts (into verts cs)
+                                       :faces (into faces (box-faces (count verts)))})
+                                    {:verts [] :faces []}
+                                    corner-sets)]
+                        {:type :mesh
+                         :data {:vertices (mapv w verts)
+                                :faces faces
+                                :material {:color color :opacity opacity
+                                           :double-sided true
+                                           :metalness 0.0 :roughness 0.9}}})))
+            segs (fn [pairs color]
+                   (map (fn [[a b]] {:from (w a) :to (w b) :color color}) pairs))
+            by-kind (group-by :kind (:tabs mesh))
+            corners-of (fn [ts] (mapv aabb-corners ts))
+            tab-corners (corners-of (into (vec (:lap by-kind)) (:stop by-kind)))
+            pin-corners (corners-of (:key-pin by-kind))
+            ;; a slot body stands at its own azimuth on its ring, so it is an
+            ;; ORIENTED box: across the channel, along the ring's axis (the
+            ;; face it rises from — the chiral half of the cue), along the
+            ;; channel itself
+            slot-boxes (mapv (fn [{:keys [position heading up body-w body-h body-len body-lift]}]
+                               (let [side (m/normalize (m/cross heading up))]
+                                 (box-corners (m/v+ position (m/v* up body-lift))
+                                              [side up heading]
+                                              [(/ body-w 2.0) (/ body-h 2.0) (/ body-len 2.0)])))
+                             (:stick-slots mesh))
+            ;; the HOLE, drawn as its elliptical mouth at both ends of the body:
+            ;; a slot the stick cannot be seen to pass through is just a block,
+            ;; and the print is unmistakable about being pierced
+            channel-segs (mapcat (fn [{:keys [position heading up channel-lift channel-r body-len]}]
+                                   (let [side (m/normalize (m/cross heading up))
+                                         [r-across r-up] channel-r
+                                         c (m/v+ position (m/v* up channel-lift))
+                                         half (/ body-len 2.0)]
+                                     (mapcat (fn [s]
+                                               (ellipse-loop (m/v+ c (m/v* heading (* s half)))
+                                                             side r-across up r-up))
+                                             [1.0 -1.0])))
+                                 (:stick-slots mesh))]
+        (into []
+              (remove nil?)
+              [(solid tab-corners cage-tab-color 0.55)
+               (solid pin-corners cage-key-pin-color 0.85)
+               (solid slot-boxes cage-slot-color 0.5)
+               {:type :lines
+                :data (vec (concat (segs (mapcat box-edges tab-corners) cage-tab-color)
+                                   (segs (mapcat box-edges pin-corners) cage-key-pin-color)
+                                   (segs (mapcat box-edges slot-boxes) cage-slot-color)
+                                   (segs channel-segs cage-channel-color)))}])))))
+
+(defn- cage-feature-items [] (cage-feature-items* (:proxy-mesh @session)))
 
 (defn- proxy-preview-items
   "The proxy mesh, plus the traced bezels and placed named marks (appended so they
@@ -223,9 +429,17 @@
   (let [red-corner (when (= :marker (:mode @session))
                      {:type :dots :data [{:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]})
         crown (plate-crown-item)
+        ;; the printed features hide together with the proxy ('v'): they are an
+        ;; alignment aid, and 'v' means "let me read the photo naked"
+        cage-features (when-not (:hide-proxy? @session) (cage-feature-items))
+        ;; marks come and go WITH the proxy ('v'): they are part of the virtual
+        ;; cage, not an overlay on the photo (Vincenzo 2026-09-01)
+        cage-marks (when-not (:hide-proxy? @session) (cage-marks-item))
         base (cond-> (if (:hide-proxy? @session)
                        []
                        [{:type :mesh :data (:proxy-mesh @session)}])
+               (seq cage-features) (into cage-features)
+               cage-marks (conj cage-marks)
                crown (conj crown)
                red-corner (conj red-corner))]
     (conj (into base (trace-items))
@@ -1410,13 +1624,24 @@
                ts))))
 
 (defn- pnp-preview-items
-  "Proxy as a WIREFRAME (not a solid — the real part must show through so the
-   user can click its actual corners in the photo) plus a translucent coloured
-   dot at each VISIBLE corner (occluded ones are never drawn — pointing at a
-   hidden vertex is a blind guess): the armed one enlarged, placed ones in
-   their colour, unplaced ones dimmed, and any corner the robust fit rejected
-   drawn as a big opaque RED dot so the mislabel is obvious (shown even if the
-   refined pose has since occluded it, so it can still be re-clicked).
+  "The SOLID proxy plus a translucent coloured dot at each VISIBLE corner
+   (occluded ones are never drawn — pointing at a hidden vertex is a blind
+   guess): the armed one enlarged, placed ones in their colour, unplaced ones
+   dimmed, and any corner the robust fit rejected drawn as a big opaque RED dot
+   so the mislabel is obvious (shown even if the refined pose has since
+   occluded it, so it can still be re-clicked).
+
+   Solid since 2026-09-01, wireframe before that. The wireframe was there so the
+   photo showed through and its features stayed clickable — a real constraint
+   while it was the ONLY state. It stopped being one the same day, twice over:
+   'v' now works in the picking (so the proxy comes off whenever it is in the
+   way), and the loupe magnifies the PHOTOGRAPH's own pixels under the cursor,
+   not the render, so a disc stays aimable even with the model drawn over it.
+   What the wireframe cost, meanwhile, was the reading the whole cage exists
+   for: Vincenzo saw solid tabs and slot bodies floating with no rings between
+   them («i ring del proxy si vedono solo nell'alt-drag… devono essere pieni»),
+   and a solid cage OCCLUDES, which is information — a mark behind a ring is
+   behind it on the print too.
 
    The predicted-position dots FOLLOW the names toggle ('n'): where the model
    thinks the marks are is exactly where the real discs sit once the pose is
@@ -1430,29 +1655,53 @@
         outliers (pnp-outliers)
         occluded (pnp-occluded)
         visible (visible-corner-set)
-        names? (:show-names? @session)]
+        names? (:show-names? @session)
+        ;; 'v' works here too since the tabs became solid (see toggle-proxy!):
+        ;; cage, printed features and predicted dots go down together; the
+        ;; PLACED clicks live in the DOM overlay and never hide — they are the
+        ;; user's data, not the model's drawing
+        hide? (:hide-proxy? @session)
+        features (when-not hide? (cage-feature-items))
+        ;; the cage's own marks — azzurro crowns and the ORANGE double pallini —
+        ;; ride the proxy here exactly as in the alignment view. They were
+        ;; missing from the picking, which is where they are needed most: the
+        ;; picking is when you must know WHICH disc you are about to name, and
+        ;; the pair is what says so (Vincenzo 2026-09-01). Distinct from the
+        ;; pick-target dots below: those are the tool in hand (armed, placed,
+        ;; rejected), these are the cage the model believes in.
+        marks (when-not hide? (cage-marks-item))]
     (into
-     [{:type :wireframe :data (:proxy-mesh @session)}
-      {:type :dots
-       :data (vec (keep-indexed
-                   (fn [i pos]
-                     (cond
-                       (contains? outliers i)
-                       {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
-                       (and (= i armed) (contains? visible i))
-                       {:pos pos :radius 4.4 :opacity 0.3 :color (target-color i)}
-                       (not names?) nil
-                       ;; marked hidden-by-the-part: a faint grey dot, so it reads
-                       ;; as "dismissed" and no longer solicits a click
-                       (contains? occluded i)
-                       {:pos pos :radius 1.6 :color 0x555555 :opacity 0.2}
-                       (contains? visible i)
-                       {:pos pos
-                        :radius 2.4
-                        :opacity 0.3
-                        :color (if (contains? placed i)
-                                 (target-color i) 0x808080)}))
-                   (corner-world-positions)))}]
+     (cond-> []
+       (not hide?) (conj {:type :mesh :data (:proxy-mesh @session)})
+       (seq features) (into features)
+       marks (conj marks)
+       ;; the predicted dots are the MODEL's drawing as much as the wireframe:
+       ;; under 'v' they go too, or three crowns of dots keep painting the cage
+       ;; over the naked photo (Vincenzo 2026-09-01: «nasconde solo le tacche
+       ;; verdi, non tutta la gabbia»). The user's PLACED clicks live in the DOM
+       ;; overlay (redraw-overlay-dots!) and stay — they are his data, not the
+       ;; model's guess.
+       (not hide?)
+       (conj {:type :dots
+              :data (vec (keep-indexed
+                          (fn [i pos]
+                            (cond
+                              (contains? outliers i)
+                              {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
+                              (and (= i armed) (contains? visible i))
+                              {:pos pos :radius 4.4 :opacity 0.3 :color (target-color i)}
+                              (not names?) nil
+                              ;; marked hidden-by-the-part: a faint grey dot, so it
+                              ;; reads as "dismissed" and no longer solicits a click
+                              (contains? occluded i)
+                              {:pos pos :radius 1.6 :color 0x555555 :opacity 0.2}
+                              (contains? visible i)
+                              {:pos pos
+                               :radius 2.4
+                               :opacity 0.3
+                               :color (if (contains? placed i)
+                                        (target-color i) 0x808080)}))
+                          (corner-world-positions)))}))
      (trace-items))))
 
 (defn- redraw-pnp-preview! [] (viewport/show-preview! (pnp-preview-items)))
@@ -1601,7 +1850,11 @@
    clicks are enough) they land on the right discs everywhere, including rings
    with no picks at all."
   [ov rect]
-  (when (:show-names? @session)
+  (when (and (:show-names? @session)
+             ;; in the picking, 'v' hides the model's whole drawing — and the
+             ;; names are predictions exactly like the dots they label
+             ;; (2026-09-01). Other modes keep their own rules.
+             (not (and (= :pnp (:mode @session)) (:hide-proxy? @session))))
     (doseq [t (pnp-targets)
             :when (:visible? t)
             :let [pos (viewport/world->screen (:world t))]
@@ -5534,18 +5787,25 @@
 
 (defn- toggle-proxy!
   "Show/hide the SOLID proxy in the main (gizmo) view so the photo underneath is
-   readable while registering. Available in :gizmo and in :retrace — in the
-   latter the proxy is the depth cue for placing a plane, and occasionally the
-   thing standing in front of what you are trying to see. The state persists
-   across modes.
+   readable while registering. Available in :gizmo, in :retrace — where the
+   proxy is the depth cue for placing a plane, and occasionally the thing
+   standing in front of what you are trying to see — and, since the cage's glue
+   tabs became SOLID boxes, in :pnp too: the see-through wireframe never needed
+   hiding, but the tabs cover the very discs being clicked, and they sat there
+   fixed with 'v' dead (Vincenzo 2026-09-01). The state persists across modes.
 
    Mode-aware on purpose: in :retrace the gizmo belongs to the PLANE, so hiding
    the proxy must not close it (you would lose the handles you are working with)
-   and the preview to rebuild is the anchor's, not the proxy's."
+   and the preview to rebuild is the anchor's; in :pnp there is no gizmo at all
+   — installing one here would drop handles over the picking — and the preview
+   to rebuild is its own."
   []
   (swap! session update :hide-proxy? not)
-  (if (= :retrace (:mode @session))
-    (redraw-retrace!)
+  (case (:mode @session)
+    :retrace (redraw-retrace!)
+    ;; the DOM overlay carries the predicted NAMES too — rebuild it, or they
+    ;; linger over the naked photo the toggle just produced
+    :pnp (do (redraw-pnp-preview!) (redraw-overlay-dots!))
     (do
       ;; Hide the gizmo together with the solid proxy (install-gizmo! now no-ops
       ;; while hidden); re-install it when the proxy comes back.
@@ -7054,11 +7314,12 @@
           (and mark? (= key "Backspace"))
           (do (.preventDefault e) (.stopPropagation e) (undo-mark!))
 
-        ;; 'v' hides/shows the solid proxy in the main (gizmo) view so the photo
-        ;; is readable while registering. :pnp draws its own see-through wireframe
-        ;; and doesn't need it; :retrace DOES since 2026-08-21, where the proxy is
-        ;; the depth cue for placing a plane and sometimes the thing in the way.
-          (and (#{:gizmo :retrace} (:mode @session)) (= key "v"))
+        ;; 'v' hides/shows the proxy so the photo is readable while registering.
+        ;; :retrace since 2026-08-21 (the proxy is the depth cue for placing a
+        ;; plane and sometimes the thing in the way); :pnp since 2026-09-01 —
+        ;; its wireframe never needed hiding, but the cage's solid glue tabs
+        ;; cover the very discs being clicked, and sat there with 'v' dead.
+          (and (#{:gizmo :retrace :pnp} (:mode @session)) (= key "v"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-proxy!))
 
         ;; 'm' arms the blindato marker-click (pin the Klein branch by the
