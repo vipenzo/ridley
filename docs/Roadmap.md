@@ -67,6 +67,19 @@ orientata a occhio col gizmo** — le facce non si dichiarano più, si leggono
 dalla posa; la posa a occhio fa anche da seme per l'auto-lettura. Entry point
 `dev-docs/HANDOVER-cage-zero-click.md`, blocco ATTERRAGGIO.
 
+*Gabbia virtuale COSTRUITA e sessione REGISTRATA (2026-09-01/02)*: la gabbia
+si disegna sopra la foto COME STAMPATA (anelli pieni, alette, box porta-stick,
+corone e doppi pallini; sbirciatina Alt+drag) e le facce si leggono dalla posa
+(guardia 20°, suggerimento quando tace). Lo strumento ha smontato in due
+giorni tre dichiarazioni false che sette giorni di residui "buoni" non avevano
+mai smentito: le `:phases {:y 180 :x 180}` (entrambe false), i ribaltamenti
+non dichiarabili (nato `:flips` — battiscopa3 è `#{:y :z}`), la focale 44 (la
+vera è 28.08, misurata dalla rifinitura congiunta a valle). **battiscopa3
+registra 5/5 a 2.9-8.5px.** Lavoro NON committato su `grab-and-register`;
+coda e trappole in `dev-docs/HANDOVER-cage-zero-click.md`, blocco
+ATTERRAGGIO 2/9 (1° commit, 2° memoria focale per-camera, 3° anomalia
+testimone foto 2, 4° seme del gizmo al ramo 'a').
+
 *Gate manuale PASSATO e riconoscitore automatico avviato (2026-08-23/24)*: il
 gesto a mano si è dimostrato chiuso — una corona da sola è invariante per
 rotazione e specchiata dall'altra faccia (48 riletture, stesso rms), e sopra un

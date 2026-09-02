@@ -3,13 +3,17 @@
 ## In una riga
 
 Vincenzo (2026-08-27): «se non riusciamo ad avere la registrazione automatica
-delle foto sarà tutto inutile». La leva 1 (identità coi denti) e la leva 2
-(arbitro del gemello) sono DENTRO e misurate; al banco 2/8 vere con zero falsi
-e una registrazione a 0.2mm sulla sessione dichiarata. Ma la settimana dal vivo
-ha spostato il collo di bottiglia dall'algoritmo alla **FACCIA DICHIARATA**:
-prima imposta dal pannello, poi dichiarata coi toggle e sbagliata su tre foto
-di fila. Decisione del 31/8: le facce si LEGGONO dalla posa della gabbia
-virtuale orientata a occhio col gizmo — è la fetta da costruire.
+delle foto sarà tutto inutile». **2/9 sera: battiscopa3 REGISTRA, 5 foto su 5**
+— 2.9 / 5.8 / 5.1 / 8.5 / 4.3 px, rifinitura congiunta accettata (6.84→6.19),
+**lente misurata 28.08mm**. Ci si è arrivati scoprendo che TUTTO ciò che la
+sessione dichiarava era sbagliato: la gabbia vera è
+`(registration-cage :d 176 :flips #{:y :z})` (due anelli incollati ribaltati,
+ZERO fasi — le `:phases {:y 180 :x 180}` "verificate tre volte" erano false) e
+la lente vera è ~28, non la 44 "misurata" (su una gabbia dichiarata male: la
+circolarità che la memoria stessa ammoniva). Lo strumento che ha sbloccato
+tutto è la GABBIA VIRTUALE disegnata COME STAMPATA sopra la foto — anelli
+pieni, alette, box porta-stick, corone e doppi pallini — costruita in questa
+settimana su direttiva e collaudo foto-per-foto di Vincenzo.
 
 Entry point precedente, con tutta la storia della gabbia (detector, riletture,
 anello incollato a 90°, chiave di montaggio, portapezzi, la settimana
@@ -18,7 +22,325 @@ stato dei lavori per ripartire.
 
 ---
 
+## ATTERRAGGIO 2/9 — per la chat nuova, leggi PRIMA questo
+
+**LO STATO.** Sessione `~/Pictures/RidleyScan/battiscopa3`: 5/5 registrate
+(sopra), focale 28.08 accettata dalla rifinitura, gabbia `:flips #{:y :z}`.
+TUTTO IL LAVORO È NEL WORKING TREE, NON COMMITTATO (branch
+`grab-and-register`): prima mossa della chat nuova, con l'ok di Vincenzo,
+spezzare e committare — c'è dentro: gabbia virtuale col gizmo (facce lette
+dalla posa, guardia 20° con suggerimento `:geo-sign`), `:flips` in
+`registration-cage` (flip = rotazione propria + fase, id = etichette di
+stampa), disegno della gabbia come stampata (alette/spina/box forati solidi +
+corone/pallini, misure slot spostate dalla libreria al proxy — stampa
+verificata bit-identica), sbirciatina Alt+drag in 'p' (solo-preview,
+snap-back; Alt+click letterale quando la gabbia è nascosta), 'v' completo in
+'p', testimone dell'indice strumentato (senso/k/px nel messaggio), banco
+flip-aware (`declared-flips`), impronta del voto con `:flips`
+(`cage-flips-tag`), suite a 1005/0, warning `:app` 16 invariati.
+
+**LA CODA (ordine suggerito).**
+1. **Commit** (sopra).
+2. **Memoria per-camera della focale** (`~/.ridley/`): il 48 di default e la
+   44 sbagliata hanno mangiato quattro serate; ora c'è un numero VERO (28.08,
+   grab Continuity 1920×1440) da salvare e riproporre. Piccola e matura.
+3. **Anomalia del testimone su foto 2** (aperta, ora coi numeri): a
+   registrazione SANA (5.9px, pallini giusti) osserva «X rev k2 a 7.2px, Z
+   rev k3 a 10.8px» e suggerisce flip che i pallini smentiscono. Terzo
+   sospetto probabile (candidato del detector scambiato per indice) — da
+   spiegare al banco prima che eroda la fiducia nel voto di sessione.
+4. **Il seme del gizmo al ramo 'a'** (punto 5 della fetta, «il colpo
+   grosso»): `pnp/solve-pnp` accetta già `:seed`; la posa a occhio come gate
+   delle ipotesi → cold start chiuso anche per gabbie non dichiarate.
+5. I difetti aperti storici: `max-outliers` fisso a 2 (oggi era la focale, ma
+   il difetto resta), accettazione senza asticella, rinomina prima del solve,
+   riconciliazione di sessione, derivazione live durante il drag (probabilmente
+   non serve: al commit basta, collaudato).
+
+**TRAPPOLE OPERATIVE per la chat nuova.** Le solite due dell'handover (MAI
+compile `:app` a mano, MAI compile via clj-nrepl-eval) più: le sessioni nREPL
+di questa chat sono rimaste incastrate due volte — ripartire col ciclo pulito
+della memoria REPL; il collaudo UI si fa con Playwright su `localhost:9000`
+(pattern in questa chat: swap del session atom + chiamata diretta delle fn
+private, ripristino nel finally); Center Stage («Inquadratura automatica»)
+VA SPENTO nelle sessioni di grab, rende la lente variabile per costruzione.
+
+---
+
+## LA LENTE DEI GRAB NON È 44: È ~30 (2/9, sweep per-foto al banco)
+
+Vincenzo sospettava una focale DIVERSA PER FOTO (Center Stage). Lo sweep
+per-foto (set intero, senza scarti, gabbia flip-aware) dice: ottimi a
+**f30 (foto 1, rms 3.6!), ~29 (foto 2, 8.6), ~29 (foto 4, 12.2), 34
+(foto 5, 9.6)** — un grappolo attorno a 30, e NESSUNA foto vuole 44. La
+percezione «sulla 1 la 44 è quasi giusta» era la posa che compensava (a 44 la
+foto 1 sta a 11.1; rifittata a 30 crolla a 3.6). Il 44 viene da un'altra
+filiera (le tarature erano legate alle foto 4032px); i grab 1920×1440
+viaggiano sull'1x dell'iPhone (26mm equiv) più il ritaglio di Center Stage →
+~29-34. La variazione residua per-foto (29↔34) può essere davvero Center
+Stage: se dopo aver dichiarato 30 una foto resta alta, la focale per-foto
+diventa la feature da discutere — per ora il grosso era UN numero sbagliato
+condiviso. FOTO 3 (grab-04): i pick salvati sono spazzatura a QUALUNQUE
+focale (86-91px) — residui di giri falliti, vanno azzerati prima di 'R'
+(sospetto che siano loro, o la 44, dietro l'esplosione 12.9→88 dell'ultima
+rifinitura). Piano dato a Vincenzo: focale a mano 30 → 'r' su 1/2/4/5 →
+Azzera+riclick pulito su 3 → 'R' per la rifinitura fine → il numero che esce
+è LA LENTE DEI GRAB, da annotare (memoria per-camera ancora in coda). Fisica
+per il futuro: spegnere «Inquadratura automatica» (Center Stage) nelle
+sessioni di grab — rende la lente variabile per costruzione.
+
+## LA FOTO 4 A 13 E IL SOSPETTO FOCALE (2/9 mattina) — misure al banco
+
+Vincenzo: «la 4 non riesco a portarla sotto il 13». Tre cose fatte e una
+misura che indirizza la prossima mossa:
+
+1. **`declared-cage-mounting` si armava solo con `:phases`** — col form vero
+   (`:flips`, zero fasi) l'arbitro del gemello sarebbe rimasto in cold start.
+   Ora si arma anche coi flip, e l'atteso resta `:fwd k0` per TUTTI gli anelli
+   (gli alloggi vengono dagli anchor, che portano il flip: una gabbia
+   dichiarata giusta legge se stessa come nominale).
+2. **Il messaggio «l'indice contraddice» ora mostra la PROVA**: «Z visto rev
+   k11 a 4.2px invece di fwd k0» — e aggiunge il terzo sospetto (candidato del
+   detector scambiato per indice: riflesso, stick). Il prossimo log di
+   Vincenzo dirà cosa vede davvero il testimone — le contraddizioni ripetute
+   su Z (foto 2 e 4) e X (foto 5) restano DA SPIEGARE, ora con i numeri.
+3. **Il banco era flip-cieco**: ogni sonda costruiva il proxy dalle sole fasi
+   (`declared-flips` ora legge l'impronta o `CAGE_AUTO_FLIPS`). Prima di
+   questa correzione qualunque sonda su battiscopa3 misurava contro la gabbia
+   sbagliata.
+
+**LA MISURA (sonda `CAGE_AUTO_FIT`, gabbia flip-aware, copia in scratchpad):**
+foto 4: il set intero a f44 sta a 20.6 e scende solo a 11.4 dopo QUATTRO
+scarti — errore sparso, non un colpevole (il peggiore è però un click A MANO:
+`xm10` a 56.6px, da togliere con la gomma). E la focale spinge, su TUTTE:
+foto 4 (n=15) f44→11.4, f40→10.8, f38→9.2, f36→8.3, f32→6.0; foto 2 (n=22)
+f44→8.8, f38→6.7; foto 5 (n=15) f44→7.4, f41→6.9, f38→6.9. Tutte e tre
+migliorano sotto 44; l'ottimo per-foto è mal condizionato (scivola con la
+distanza camera), quindi il giudice è la rifinitura CONGIUNTA 'R' — rifiutata
+ieri perché partiva con la foto 4 avvelenata. Sospetto di fondo, dalla
+memoria del progetto: le tarature della focale erano legate alle foto da
+4032px — la 44 «misurata» per Continuity potrebbe non valere per i GRAB
+1920×1440 (altro crop). Piano: gomma su xm10 → 'r' su foto 4 → 'R' e lasciare
+che sia lei a dire la lente (attesa: sotto 44, zona 38-41).
+
+## LA GABBIA VERA DI battiscopa3 (2/9) — `:flips #{:y :z}`, NESSUNA fase
+
+Fine della caccia: **`(registration-cage :d 176 :flips #{:y :z})`**. Due anelli
+su tre incollati ribaltati, zero fasi. Verifica di Vincenzo: «i doppi pallini
+sono a posto», foto 4 registra a 11px, foto 1 (grab-01) a **11.08px, fit
+pulito** col DLT. Le `:phases {:y 180 :x 180}` dell'handover — «verificate tre
+volte» — erano entrambe false: il 180 di Y era il numero con cui il modello
+SENZA `:flips` assorbiva un ribaltamento, il 180 di X era falso e basta.
+Perché sono sopravvissute tanto: `crown-misreadings` include rot 6 (=180°),
+quindi la rietichettatura le assorbiva foto per foto lasciando residui buoni —
+**una fase "verificata" da un rms basso non è verificata**. L'arbitro vero,
+disponibile solo da ieri, è il doppio pallino disegnato sopra la foto.
+
+CONSEGUENZA DA NON DIMENTICARE: tutte le registrazioni precedenti di questa
+sessione sono state fatte contro una gabbia SBAGLIATA — vanno rifatte, e la
+rifinitura della focale ('R', la 44 è ancora "a mano") va rifatta DOPO, su
+foto sane.
+
 ## ATTERRAGGIO — 31/8 sera, leggi PRIMA questo
+
+**AGGIORNAMENTO 1/9 sera, secondo giro: 'v' in 'p' ora spoglia TUTTO il
+modello.** Il primo taglio nascondeva wireframe+alette ma lasciava i punti
+PREDETTI (coi nomi accesi ≈40 pallini = tre corone che «sono la gabbia») e le
+etichette dei nomi (DOM). Regola chiusa: 'v' in 'p' = foto nuda + i CLICK
+PIAZZATI dell'utente (overlay DOM, dati suoi); tutto ciò che è predetto dal
+modello — wireframe, alette, punti, nomi — va giù insieme (`draw-mark-names!`
+ha la guardia :pnp+hide, `toggle-proxy!` :pnp ridisegna anche l'overlay).
+**CONFERMATO DA VINCENZO (1/9 notte): le DUE fasi erano sbagliate.** Tolte
+`:phases {:y 180 :x 180}` (X e Y a 0, Y resta `:flips #{:y}`) la sessione
+quadra e la foto 4 si registra — a rms 21.3, con la diagnosi «l'errore è
+sparso su tutti» e l'indice dell'anello Z che contraddice la dichiarazione.
+Storia: il 180 di Y era il valore che la vecchia macchina, senza `:flips`,
+usava per assorbire un RIBALTAMENTO; il 180 di X era falso e nessun
+allineamento poteva smentirlo (vedi sotto). Conseguenze CABLATE stanotte:
+(a) i messaggi del montaggio non mandano più a RISTAMPARE — dicono la forma
+da incollare, costruita su misura dalla gabbia corrente
+(`flips-suggestion`, additiva: aggiunge l'asse ai flip già dichiarati e
+conserva le fasi); (b) il messaggio «l'indice contraddice la DICHIARAZIONE»
+non accusa più solo la registrazione: ora elenca DUE sospetti, il gemello e
+la dichiarazione stessa — il 1/9 ha provato che una dichiarazione sbagliata
+non è ipotetica; (c) BUG MIO CORRETTO: l'impronta della gabbia che valida il
+voto del montaggio non conteneva `:flips` — cioè proprio la cosa che il voto
+misura (legge l'ALLOGGIO dell'indice, che il flip specchia). Dichiarare un
+flip senza toccare le fasi NON invalidava il voto, e la sessione di Vincenzo
+ha portato osservazioni misurate prima del flip. Ora `cage-flips-tag` (nomi
+ordinati, nil se vuoto → sopravvive al JSON e non scarta i voti delle
+sessioni senza flip; verificato il round-trip). PROSSIMA IPOTESI DA PROVARE
+CON LUI per il rms 21: l'indice di Z dice specchiato → `:flips #{:y :z}`; e
+leggere il rapporto «fase degli anelli (da questa foto)» che il pannello
+stampa nel REPL a ogni solve accettato (misura leave-one-ring-out).
+
+**LA FASE DELL'ANELLO X NON HA TESTIMONI OLTRE LA CORONA (1/9 notte) — da
+verificare con Vincenzo, possibile errore di DICHIARAZIONE vecchio.** Lui, foto
+4: la gabbia virtuale combacia (alette e porta-stick al posto giusto) ma Xm0 è
+sfasato di 180°. Misurato: con `:phases {:x 180}` il modello mette xm00 a 195°
+invece che a 15° — cioè esattamente dove sta xm06 nel nominale (6 dischetti).
+E NIENTE di ciò con cui lui allinea può contraddirlo: le feritoie stanno a
+60°/240°, quindi una mezza rotazione mappa la coppia su se stessa (verificato:
+slots identici a 180°, spostati a 150/330 con 90°); l'anello X non possiede
+linguette proprie (`joint-tabs`: 4 sulla Z, 2 sulla Y, 0 sulla X — la X ha solo
+la TACCA della chiave). Quindi «alette e slot combaciano MA i mark sono a 180°»
+non è una contraddizione: è la firma esatta di una fase X sbagliata di mezzo
+giro, che nessun allineamento poteva smentire e che la rietichettatura
+(`crown-misreadings` include rot 6) può aver assorbito in silenzio foto per
+foto. ARGOMENTO FISICO da usare con lui: se la sua gabbia HA la chiave
+(spina+tacca, gabbie stampate dopo il 24/8) allora la rotazione della X è
+imposta dal montaggio e `:phases {:x 180}` NON può essere giusta; se la gabbia
+è anteriore alla chiave, la X è libera e decide la stampa. Corretto intanto un
+difetto che questo ha fatto emergere: la FASE ora ruota anche le FERITOIE
+(prima no: erano «dati di fabbricazione», ma ora si DISEGNANO come riferimento
+d'allineamento, e a 90° si sarebbe allineato su una bugia). Firma di stampa
+invariata (7408 vertici). I mark (celesti + doppi pallini arancio) ora si
+disegnano anche in 'p' — mancavano, ed è lì che servono per contare.
+
+ALT ERA GIÀ PRESO (1/9 notte, regressione mia trovata da Vincenzo): Alt+click
+significa «prendi il click ALLA LETTERA, niente aggancio automatico» da quando
+esiste il piatto (`click-pixel`) — la sbirciatina gliel'ha rubato la sera
+stessa. Regola sua, adottata alla lettera: gabbia VISIBILE → Alt rotola la
+gabbia; gabbia NASCOSTA ('v') → Alt torna a essere il click letterale, e la
+sbirciatina NON riaccende la gabbia da sola. Si divide pulito perché ciascun
+gesto è inutile nello stato dell'altro. Corretto anche il consiglio del
+pannello («riclicca tenendo ALT»), che con la gabbia accesa mandava a rotolare
+la gabbia: ora premette «prima premi 'v'». Verificato nei due stati.
+
+LA GUARDIA ORA SUGGERISCE (1/9 notte). Vincenzo, foto 4: «vengono aggiornati
+Xm/Xp e Zm/Zp ma non Ym/Yp, restano deselezionati entrambi». È la guardia del
+profilo che funziona (l'anello Y di grab-05 è il caso 13–17° per cui è stata
+scritta) — ma lasciava due bottoni spenti e nessun indizio. `cage-faces-from-
+pose` ora riporta anche `:geo-sign`, la lettura geometrica SENZA guardia:
+`:sign` è ciò che si può DICHIARARE (muove i pick, deve essere sicuro),
+`:geo-sign` è ciò che si può SUGGERIRE. Pannello e messaggio ora dicono «Y è
+quasi di taglio (15°): non la dichiaro io — direbbe Ym, premilo tu se lo
+confermi». Il suggerimento rispetta i `:flips`. Misurato live: X a 14° e Z a
+17° taciuti ma suggeriti, Y a 68° dichiarato.
+
+IL PROXY IN 'p' È SOLIDO (1/9 notte). Il wireframe c'era e si vedeva (provato
+a schermo: cerchi grigi sottili) ma Vincenzo vedeva alette e box solidi
+galleggiare senza anelli in mezzo, e la sua richiesta è stata netta: «in
+wireframe si vedono, devono essere PIENI». Il motivo storico del wireframe —
+la foto deve restare cliccabile sotto — è caduto lo stesso giorno per due
+strade: 'v' ora funziona in 'p', e la LENTE ingrandisce i pixel della FOTO,
+non il render, quindi un dischetto si mira anche col modello sopra. Verificato
+inoltre che `backdrop/pixel-under-pointer` fa `intersectObject` sul SOLO piano
+della foto: un solido davanti non intercetta i click, il picking è intatto.
+Stato 'v' in 'p' ora: acceso = gabbia piena + alette + box + punti predetti +
+nomi; spento = foto nuda + i soli click piazzati.
+
+DOPO IL COLLAUDO DELLA SBIRCIATINA (1/9 sera): (a) il peek disegnava il
+WIREFRAME (eredità del picking, dove è trasparente APPOSTA per cliccarci
+sotto) — ora disegna la gabbia PIENA, che per giunta OCCLUDE, e l'occlusione è
+essa stessa la lettura (un mark dietro un anello è nascosto anche sulla
+stampa, da quel lato). (b) I BOX PORTA-STICK ora si disegnano davvero —
+scatole solide grigio-azzurre con la BOCCA ELLITTICA del canale alle due
+estremità («box forati»), non più losanghe piatte: richiesta di Vincenzo,
+«anche loro sono elementi chirali riconoscibili», e ha ragione due volte
+perché il corpo sale da UNA faccia sola, quindi è un altro tratto che il
+gemello non sa riprodurre. (c) Le MISURE degli slot (body-w 8, body-len 14,
+body-h 9, body-lift 3, channel-lift 2.5, channel-r [2 2.2]) erano l'ultimo
+pezzo di gabbia descritto FUORI dal proxy: vivevano nella libreria
+`acquire-cage`. Spostate in `cage/stick-slots` (che ora prende anche `h`) e la
+libreria le legge da lì — tre consumatori (stampa, anello piatto, disegno) di
+un numero solo. PROVA CHE CONTA: la firma geometrica dell'anello stampato è
+IDENTICA prima e dopo (⌀176 :big → 2 mesh, 7408 vertici, 14720 facce, bbox
+z −1.5…7.5), misurata valutando la libreria vera nel browser.
+
+SBIRCIATINA Alt+drag COSTRUITA (variante scelta da Vincenzo: «molto più
+chiaro», niente maniglie sopra i dischetti): in 'p', Alt+trascina rotola la
+gabbia virtuale come una trackball (0.4°/px, camera-right/up come assi) e
+mostra wireframe + alette + TUTTI i puntini dei mark (culling sulla copia
+ruotata: le facce che rotolano verso la camera svelano le corone); al
+rilascio, dopo 1.2s (`peek-return-ms`), torna da sola. NIENTE è mai
+committato: il preview è una COPIA ruotata (attachment/rotate-mesh), la posa
+di sessione non si tocca per costruzione, lo snap-back è un redraw ritardato.
+Pointer capture al via (il rilascio fuori-canvas si sente), un nuovo Alt+drag
+nella finestra riparte da dov'è, stop-pnp!/navigazione uccidono timer e
+angoli. Verificato headless (angoli, item, vertice ruotato, mesh intatta,
+timer). Da collaudare dal vivo: il SEGNO dei drag (trackball «palla sotto la
+mano»: destra = la faccia vicina va a destra) — se a Vincenzo pare invertito,
+sono due segni in pnp-move-peek!.
+
+**AGGIORNAMENTO 1/9 sera: 'v' in PnP + facce lette all'INGRESSO di 'p'.**
+Collaudo di Vincenzo: (1) in modalità 'p' le alette solide restavano FISSE
+('v' era cablato solo in :gizmo/:retrace — giusto quando il proxy in 'p' era
+solo wireframe trasparente, rotto dalle alette solide che coprono i dischetti
+da cliccare) → 'v' ora attivo anche in :pnp (`toggle-proxy!` ha il ramo :pnp
+senza toccare il gizmo che lì non esiste; il preview PnP nasconde wireframe+
+feature ma MAI i punti di picking). (2) Chiedeva se i sei bottoni si settano
+da soli: sì, a ogni RILASCIO del gizmo (verificato live: choice {:x 1 :y -1
+:z 1} su gabbia ribaltata + messaggio) — ma una foto mai trascinata (il seme
+del giradischi basta spesso) non li riceveva MAI → ora `start-pnp!` deriva
+anche all'INGRESSO di 'p', solo se la foto non ha già una scelta, SENZA
+reface (il reface resta legato ai commit, dove la posa è esplicitamente sua).
+Warning 16 invariati.
+
+**AGGIORNAMENTO 1/9: `:flips` — il montaggio ribaltato si DICHIARA, non si
+ristampa.** Col disegno delle alette Vincenzo ha visto che la gabbia virtuale
+non combacia con la stampata: è l'anello Y montato RIBALTATO (che la leva 2
+aveva già scoperto dagli alloggi specchiati; test fisico 28/8). Costruito:
+`registration-cage :flips #{:y}` — il flip è una ROTAZIONE PROPRIA di 180°
+attorno a un diametro dell'anello (`cage/flip-in-ring`, niente specchi: un
+anello fisico non si specchia), poi il giro di fase misurato (`mount-anchor`,
+ordine flip→fase = ordine del montaggio); gli id restano ETICHETTE DI STAMPA
+(yp guarda −y da ribaltato) perché la chiralità del passetto è della stampa e
+il montaggio non la cambia — è `bridge/cage-faces-from-pose` che inverte il
+segno sull'anello dichiarato (`:cage-flips` sulla mesh); alette e feritoie
+dell'anello seguono il flip (la gabbia DISEGNATA = quella INCOLLATA), la fase
+continua a non muoverle (esatto per multipli di 180°). ATTENZIONE: dichiarare
+il flip CAMBIA cosa misura la fase di quell'anello — il {:y 180} storico era
+fittato senza flip e va RIMISURATO. 5 test nuovi (chiralità invariante =
+nessuno specchio accidentale; alloggio specchiato = firma leva 2; ordine
+flip→fase; feature che seguono; segno flip-aware con guardia), suite 1004/0,
+warning 16 invariati, smoke live ok. Manuale: sezione «The ring glued turned
+over» in registration-cage.md, indice rigenerato. Gate live: Vincenzo deve
+dichiarare `:flips #{:y}` nel suo sorgente e ricollaudare fase Y a vista sui
+doppi pallini.
+
+**AGGIORNAMENTO 31/8 notte: la fetta è COSTRUITA, manca il gate live.**
+Risposte di Vincenzo alla domanda di design: manipola la GABBIA (metafora
+oggetto-in-mano — che è già come si comporta il gizmo, live drag sul proxy e
+inversione sulla camera solo al commit, quindi nessun cambio di gesto); e la
+gabbia virtuale deve mostrarsi COME STAMPATA (alette, spina, feritoie) perché
+sono ciò con cui lui riconosce la posa quando gli zero-indice non si vedono —
+e sono anche ciò che uccide il gemello nell'appaiamento a occhio (le alette
+stanno su UNA faccia sola, la spina è asimmetrica). Costruito:
+`bridge/cage-faces-from-pose` (pura, guardia `cage-face-margin-deg` 20°,
+riporta i gradi anche quando non sentenzia — 4 deftests in bridge_test);
+`derive-faces-from-pose!` cablata in ENTRAMBI i commit del gizmo (riscrive
+`:cage-face-choice idx` e porta i pick con `reface-picks-to-declaration!`,
+override manuale = ultimo atto umano vince fino al prossimo commit);
+`cage-feature-items` (alette+fermi VERDI e spina ROSSA come SOLIDI
+semitrasparenti con spigoli sopra — il primo taglio era solo-spigoli e
+Vincenzo non li leggeva: «si vedono, ma in wireframe… dovrebbero essere più
+evidenti»; semitrasparenti perché l'aletta disegnata si appaia a quella
+FOTOGRAFATA, la foto deve restare leggibile sotto; feritoie grigio-azzurre a
+losanga, solo spigoli: sono aperture — da `:tabs`/`:stick-slots`; la
+key-notch NON si disegna, è un taglio; gli stick nemmeno, il modello non sa
+quali sono infilati) nei preview gizmo e PnP; `cage-marks-item` (1/9, due
+giri): TUTTI i mark delle facce frontali sul proxy virtuale — corone azzurre
+complete («dalla foto è difficile stabilire che numero è un certo pallino: sul
+virtuale si contano guardando dietro gli ostacoli») + i DOPPI PALLINI arancio
+(mark 0 grande 1.8 + zero-indice piccolo 1.1), culled per faccia sulla camera
+corrente, e SPARISCONO col proxy ('v') — i puntini sono parte della gabbia
+virtuale, non un overlay sulla foto (deciso da Vincenzo, ribaltando il primo
+taglio che li teneva sempre accesi; il problema-coperta del 27/8 era il
+picking, che tiene i suoi punti radi). Su gabbia `plate-crown-item` ora non
+disegna niente (il suo dump di TUTTE le ancore mostrava entrambe le facce
+attraverso la plastica); sul piatto invariato. Collaudo di Vincenzo su alette
+e flip: «ora è a posto»; la spina rossa non la vede (mezza sepolta tra aletta
+e anello grande — non essenziale, detto suo);
+nota gialla nel pannello per gli assi sotto guardia, coi gradi. Verificato:
+suite 999/0, warning `:app` 16 invariati (letti dalla UI shadow su :9630),
+smoke live nel browser (camera obliqua → Xp a 76.5°, Y a 13.5° → nil: il caso
+grab-05 ora tace). NON committato, NON collaudato da Vincenzo su battiscopa3.
+In coda restano: derivazione live durante il drag (oggi solo al commit — scelta
+del file, «probabilmente basta»), punto 5 (posa a occhio come SEME del ramo
+`a`), e i due giri di nREPL incastrati da un mio compile via clj-nrepl-eval
+(la trappola scritta qui sotto: al prossimo giro, ripartire con la sequenza
+della memoria REPL).
 
 **LA DECISIONE DI VINCENZO (31/8, dopo tredici giri live): basta prove coi
 toggle a mano, si costruisce la GABBIA VIRTUALE COL GIZMO.** Parole sue: «mi
