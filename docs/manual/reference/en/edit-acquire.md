@@ -215,6 +215,15 @@ constrained fit comes back at 1.91px held out against the free fit's 2.06px.
   folder. Deleting the second one throws away the registration and nothing else.
 - A live-grabbed frame has no turntable angle. It is kept as a *free* photograph,
   which the ring model leaves alone by design.
+- A grabbed frame has no EXIF either, so its focal length must be *measured* —
+  and once a session measures it (a plate grab, or `R`), it is filed under that
+  camera **at that delivered size** in `~/.ridley/cameras.json`. The next
+  session that opens the same camera starts from the measured lens instead of
+  the default, and says so ("focale ricordata"). Per size on purpose: the same
+  phone is a *different* lens at 4032px stills and at 1920×1440 grabs, and a
+  number measured on one does not transfer to the other. Turn OFF the phone's
+  automatic-framing feature (Center Stage) in grab sessions — it re-crops
+  live, which makes the lens a moving target no memory can absorb.
 - On the desktop app the camera needs macOS's permission the first time. In a
   browser it works on `localhost`; on a plain `http://` address from another
   machine it cannot work at all, because the camera requires a secure context.

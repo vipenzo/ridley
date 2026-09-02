@@ -75,10 +75,12 @@ giorni tre dichiarazioni false che sette giorni di residui "buoni" non avevano
 mai smentito: le `:phases {:y 180 :x 180}` (entrambe false), i ribaltamenti
 non dichiarabili (nato `:flips` — battiscopa3 è `#{:y :z}`), la focale 44 (la
 vera è 28.08, misurata dalla rifinitura congiunta a valle). **battiscopa3
-registra 5/5 a 2.9-8.5px.** Lavoro NON committato su `grab-and-register`;
-coda e trappole in `dev-docs/HANDOVER-cage-zero-click.md`, blocco
-ATTERRAGGIO 2/9 (1° commit, 2° memoria focale per-camera, 3° anomalia
-testimone foto 2, 4° seme del gizmo al ramo 'a').
+registra 5/5 a 2.9-8.5px.** Committato 2/9 in 8 commit tematici
+(`a454732..ad69b03`); fatta anche la memoria per-camera della focale
+(`~/.ridley/cameras.json`, chiave «label @ w×h», sorgente `:remembered`).
+Coda e trappole in `dev-docs/HANDOVER-cage-zero-click.md`, blocco
+ATTERRAGGIO 2/9 (restano: anomalia testimone foto 2, seme del gizmo al
+ramo 'a', difetti storici).
 
 *Gate manuale PASSATO e riconoscitore automatico avviato (2026-08-23/24)*: il
 gesto a mano si è dimostrato chiuso — una corona da sola è invariante per

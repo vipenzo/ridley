@@ -93,14 +93,19 @@
 ;;                                     hfov-deg (diagonal convention + the
 ;;                                     photo's aspect) wherever it feeds the
 ;;                                     backdrop/camera/intrinsics
-;;  :focal-source :exif|:live|:refined|:manual|:default — provenance of :focal-mm,
-;;                                     for the panel's honest label AND for deciding
-;;                                     whether a live grab may adopt its own
+;;  :focal-source :exif|:live|:refined|:manual|:remembered|:default — provenance of
+;;                                     :focal-mm, for the panel's honest label AND for
+;;                                     deciding whether a live grab may adopt its own
 ;;                                     single-frame measurement (see
 ;;                                     own-lens-sources). :live = measured off the
 ;;                                     plate by a grabbed frame; :refined = the joint
 ;;                                     fit over every view, which no single frame may
-;;                                     overwrite
+;;                                     overwrite; :remembered = this camera's lens
+;;                                     from ~/.ridley/cameras.json, measured by a
+;;                                     past session (camera-lens-key)
+;;  :grab-camera "label @ w×h"         — which camera this session's grabs came
+;;                                     from; persisted, so a later 'R' can file
+;;                                     its measured lens under the right key
 ;;  :acquire-results {idx {:picks :matched :rms-px}} — `s`'s edge-snap outcome
 ;;                                     per photo, feeding both the filmstrip's
 ;;                                     badges and acquire-state.json
@@ -547,6 +552,9 @@
        :live (str "Focale misurata dal piatto: " mm "mm")
        :refined (str "Focale rifinita su tutte le viste: " mm "mm")
        :manual (str "Focale impostata a mano: " mm "mm")
+       ;; from ~/.ridley/cameras.json — measured on this same camera by a past
+       ;; session; honest about being memory, not a fresh measurement
+       :remembered (str "Focale ricordata per questa camera: " mm "mm")
        (str "EXIF senza focale — uso " mm "mm (regola con lo slider)")))))
 
 ;; ============================================================
@@ -4573,7 +4581,7 @@
     (swap! session assoc-in [:pnp-residuals idx] residuals)
     (swap! session assoc-in [:pnp-outliers idx] (set (map :ci (:outliers sol))))))
 
-(declare register-live-frame live-focal)
+(declare register-live-frame live-focal remember-camera-focal! camera-lens-key)
 
 (defn- register-one-auto-photo!
   "Register ONE unregistered photo `idx` with zero clicks, through EXACTLY the
@@ -4606,7 +4614,13 @@
                      (when (and adopt? (:focal-mm measured))
                        (swap! session assoc :focal-mm (:focal-mm measured) :focal-source :live)
                        (auto-log! (str "  focale MISURATA dal piatto: "
-                                       (.toFixed (:focal-mm measured) 1) "mm-equiv")))
+                                       (.toFixed (:focal-mm measured) 1) "mm-equiv"))
+                       ;; filed only when measured off a GRABBED frame: this
+                       ;; batch also registers folder photos, and a still's
+                       ;; lens filed under the grab camera's key would be the
+                       ;; 4032↔1920 transplant the store exists to end
+                       (when (re-find #"^grab-" (or (:file (nth (:photos @session) idx)) ""))
+                         (remember-camera-focal! (:focal-mm measured) :live)))
                      (apply-auto-solve! idx sol picks proxy-pose)
                      (auto-log! (str "  foto " idx ": registrata ✓  rms "
                                      (.toFixed (:rms-px sol) 1) "px, " n " dischetti"))
@@ -4804,6 +4818,14 @@
           ;; ONE frame, and adopted it over the joint fit (found live 2026-08-11:
           ;; 28.41mm fitted on 5 views, replaced by 27.25mm from a single grab).
           (swap! session assoc :focal-mm focal-mm :focal-source :refined)
+          ;; the joint fit is the best number this lens will ever get from one
+          ;; session — file it under the camera the grabs came from, so the
+          ;; NEXT session starts at the measured lens instead of the mute 48.
+          ;; Only when the WHOLE film is grabs: the fit is one focal over every
+          ;; view, and in a mixed film that number belongs to no single camera
+          (when (and (seq (:photos @session))
+                     (every? #(re-find #"^grab-" (or (:file %) "")) (:photos @session)))
+            (remember-camera-focal! focal-mm :refined))
           (auto-log! (str "=== rifinitura congiunta: " (count poses) " foto ==="))
           (auto-log! (str "  focale " (modal/fmt-number (:focal-mm before))
                           " → " (modal/fmt-number focal-mm) " mm"
@@ -5244,11 +5266,18 @@
    - `:live`    measured off the plate by a grabbed frame;
    - `:refined` the joint fit over every registered view — strictly better than any
                 single frame, and the reason this is a SET and not one keyword;
-   - `:manual`  the user's own slider, which in a live session is their intent.
+   - `:manual`  the user's own slider, which in a live session is their intent;
+   - `:remembered` the store's number for THIS camera at THIS delivered size
+                (~/.ridley/cameras.json) — measured on this very lens by a past
+                session's joint fit, which is exactly what 'belongs to the lens'
+                means. Letting a single grabbed frame overwrite it would repeat
+                the 2026-08-11 mistake one session later; instead the grab only
+                REPORTS its own number, and a real divergence (Center Stage
+                moving the lens) shows up as that report disagreeing.
 
    Excluded: `:default` (a guess belonging to nothing) and `:exif` (a real lens, but
    the phone's STILLS camera, which is not the camera now pointed at the plate)."
-  #{:live :refined :manual})
+  #{:live :refined :manual :remembered})
 
 (defn- live-focal
   "The session's own lens, or nil when it has none yet. Provenance is what decides
@@ -5469,7 +5498,8 @@
                  ;; later frames only REPORT theirs, because adopting a new focal
                  ;; silently re-scales every pose already solved at the old one
                  (when adopt?
-                   (swap! session assoc :focal-mm (:focal-mm measured) :focal-source :live))
+                   (swap! session assoc :focal-mm (:focal-mm measured) :focal-source :live)
+                   (remember-camera-focal! (:focal-mm measured) :live))
                  ;; θ nil = "foto libera": a hand-held frame has no turntable angle,
                  ;; and the channel already knows what to do with one (free-photo?
                  ;; keeps it out of the ring model and its predictions).
@@ -5542,6 +5572,12 @@
     (if-let [{:keys [^js canvas size]} (camera/grab-frame)]
       (let [[w h] size]
         (auto-log! (str "=== presa dal vivo (" w "×" h ") ==="))
+        ;; the lens these grabs come from, remembered by the session (and
+        ;; persisted with it): the 'R' that finally measures the focal may run
+        ;; long after the camera is closed, and a measurement that cannot say
+        ;; which camera it belongs to cannot be filed
+        (when-let [k (camera-lens-key (:camera-info @session))]
+          (swap! session assoc :grab-camera k))
         (if (cage-proxy?)
           ;; a cage frame cannot register on the spot (the automatic path is
           ;; plate-shaped): keep it, and let 'p'+'a' register it in place
@@ -5625,6 +5661,95 @@
           (.catch (fn [err]
                     (set-status-message! (str "Could not delete " file ": " err))))))))
 
+;; ============================================================
+;; Per-camera focal memory — ~/.ridley/cameras.json
+;;
+;; A grabbed frame has no EXIF, so a grab session starts at the 48mm default,
+;; and a wrong focal does not present itself as a wrong focal: it registers
+;; cleanly with the camera at the wrong distance, MUTE (the default-48 on the
+;; 28mm Continuity lens ate four evenings across 28/8–2/9). The lens of a
+;; camera the user owns is a constant worth keeping, like the plate's
+;; calibration — measured once, proposed to every later session.
+;;
+;; Keyed by label AND delivered size, because a lens number is only worth the
+;; pipeline it was measured on: the 44 "measured" for Continuity's 4032px
+;; stills never held for its 1920×1440 grabs (different crop), and that
+;; transplant is precisely how battiscopa3 opened wrong. Same phone, two keys,
+;; two numbers — correct, not redundant. (Center Stage varies the crop live,
+;; which no key can absorb: it stays OFF in grab sessions.)
+;; ============================================================
+
+(def ^:private camera-store-path
+  "One JSON map for every camera the user has measured: key → {focal-mm,
+   source, updated}. Keys are free-form strings (labels have spaces), so the
+   file is read WITHOUT keywordizing."
+  "~/.ridley/cameras.json")
+
+(defn- camera-lens-key
+  "The identity a measured focal belongs to: «label @ w×h». nil when the label
+   is missing (a store entry under 'camera' would collide across devices)."
+  [{:keys [label size]}]
+  (when (and label (seq label) (not= label "camera") (= 2 (count size)))
+    (str label " @ " (first size) "×" (second size))))
+
+(defn- read-camera-store
+  "Promise of the store's map, {} when absent/unreadable — a missing store is
+   the normal first-run case, never an error."
+  []
+  (-> (stl/desktop-read-file (stl/expand-home camera-store-path))
+      (.then (fn [text] (js->clj (js/JSON.parse text))))
+      (.catch (fn [_] {}))))
+
+(defn- remember-camera-focal!
+  "File the session's measured lens under the camera it was grabbed with —
+   :grab-camera, stamped at grab time and persisted with the session, so the
+   'R' that finally measures the lens files it even if the camera has been
+   closed (or the session reopened) in between. Best-effort, like the plate
+   store: the session's own state is what makes this run reproducible."
+  [mm source]
+  (when-let [k (:grab-camera @session)]
+    (-> (read-camera-store)
+        (.then (fn [store]
+                 (stl/desktop-write-file
+                  (js/JSON.stringify
+                   (clj->js (assoc store k {"focal-mm" mm
+                                            "source" (name source)
+                                            "updated" (.slice (.toISOString (js/Date.)) 0 10)}))
+                   nil 2)
+                  (stl/expand-home camera-store-path))))
+        (.then (fn [_]
+                 (auto-log! (str "  lente annotata per «" k "»: " (.toFixed mm 2)
+                                 "mm (" (name source) ") — le prossime sessioni con "
+                                 "questa camera partono da qui, non dal default"))))
+        (.catch (fn [err]
+                  (js/console.warn "edit-acquire: couldn't save the camera focal" err))))))
+
+(defn- propose-remembered-focal!
+  "On camera open: if the store knows this camera at this size, give the
+   session that lens (source :remembered) — unless the session already owns
+   one (:live/:refined/:manual/:remembered), in which case a real disagreement
+   is REPORTED, never adopted: the number on file was measured, but so was the
+   session's, and silently replacing the nearer one is how wrong focals stay
+   mute. Async and best-effort."
+  [info]
+  (when-let [k (camera-lens-key info)]
+    (-> (read-camera-store)
+        (.then (fn [store]
+                 (when-let [mm (get-in store [k "focal-mm"])]
+                   (let [updated (get-in store [k "updated"])]
+                     (if (live-focal)
+                       (when (> (js/Math.abs (- mm (:focal-mm @session))) 0.5)
+                         (auto-log! (str "  per «" k "» ho in memoria " (.toFixed mm 1)
+                                         "mm (del " updated "), la sessione usa "
+                                         (.toFixed (:focal-mm @session) 1)
+                                         "mm — se i residui restano alti, 'R' fa da giudice")))
+                       (do (swap! session assoc :focal-mm mm :focal-source :remembered)
+                           (auto-log! (str "  focale ricordata per «" k "»: " (.toFixed mm 1)
+                                           "mm (misurata il " updated ") — 'R' la rimisura"))
+                           (report-focal!)
+                           (update-panel!)))))))
+        (.catch (fn [_] nil)))))
+
 (defn- mount-camera-preview!
   "Put the live preview in the corner of the viewport — you frame by looking at the
    OBJECT, so the preview has to be the thing you glance at, not the thing you stare
@@ -5663,6 +5788,9 @@
                (swap! session assoc :camera-info info)
                (set-status-message! (str "Camera: " (:label info) " · "
                                          (first (:size info)) "×" (second (:size info))))
+               ;; a camera the store has already measured brings its lens with
+               ;; it — the cure for the mute default-48 that ate four evenings
+               (propose-remembered-focal! info)
                (refresh-cameras!)))
       (.catch (fn [err]
                 (set-status-message! (str "Camera not opened: " (.-message err)))
@@ -7791,6 +7919,12 @@
                                           ;; runs before load-acquire-state!).
                                           :focal {:mm (:focal-mm @session)
                                                   :source (:focal-source @session)}
+                                          ;; which camera this session's grabs
+                                          ;; came from («label @ w×h») — it is
+                                          ;; what lets a LATER 'R', camera long
+                                          ;; closed, still file the measured
+                                          ;; lens under ~/.ridley/cameras.json
+                                          :grab-camera (:grab-camera @session)
                                           ;; P4a-3 — named marks (object-frame
                                           ;; position + normal + id) and the
                                           ;; current mark face, so they survive
@@ -7815,7 +7949,7 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane plate-calib cage-mounting-obs cage-face-choice]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal grab-camera marks mark-plane plate-calib cage-mounting-obs cage-face-choice]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
           int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
@@ -7900,6 +8034,10 @@
       ;; saved manual tweak wins; an unchanged EXIF/default value restores to itself.
       (when-let [mm (:mm focal)]
         (swap! session assoc :focal-mm mm :focal-source (keyword (:source focal))))
+      ;; the camera this session's grabs came from — restored so a later 'R'
+      ;; can still file its measured lens under ~/.ridley/cameras.json
+      (when grab-camera
+        (swap! session assoc :grab-camera grab-camera))
       ;; P4a-3 — named marks + the current mark face. Marks are object-frame
       ;; (position/normal vectors) + a string id; coerce the vectors back.
       (when (seq marks)

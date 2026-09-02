@@ -40,10 +40,18 @@ flip-aware (`declared-flips`), impronta del voto con `:flips`
 (`cage-flips-tag`), suite a 1005/0, warning `:app` 16 invariati.
 
 **LA CODA (ordine suggerito).**
-1. **Commit** (sopra).
-2. **Memoria per-camera della focale** (`~/.ridley/`): il 48 di default e la
-   44 sbagliata hanno mangiato quattro serate; ora c'è un numero VERO (28.08,
-   grab Continuity 1920×1440) da salvare e riproporre. Piccola e matura.
+1. **Commit** — FATTO 2/9 (chat successiva): spezzato in 8 commit tematici
+   `a454732..ad69b03`, working tree byte-identico, suite 1005/0, warning 16.
+2. **Memoria per-camera della focale** — FATTA 2/9 (chat successiva):
+   `~/.ridley/cameras.json`, chiave «label @ w×h» (la stessa Continuity è una
+   lente DIVERSA a 4032px e a 1920×1440 — è così che è nata la 44 sbagliata).
+   Si scrive quando la lente viene misurata (:live e 'R' :refined; la sessione
+   ricorda `:grab-camera` anche a camera chiusa, persistito in
+   acquire-state.json); si ripropone all'apertura della camera come
+   `:focal-source :remembered` (dentro own-lens-sources: un singolo grab non
+   la scavalca, riporta solo la divergenza — che è il sintomo di Center
+   Stage). NOTA: battiscopa3 è precedente alla chiave — il 28.08 entra in
+   memoria alla prossima sessione live che rifà 'R', o a mano nel JSON.
 3. **Anomalia del testimone su foto 2** (aperta, ora coi numeri): a
    registrazione SANA (5.9px, pallini giusti) osserva «X rev k2 a 7.2px, Z
    rev k3 a 10.8px» e suggerisce flip che i pallini smentiscono. Terzo
