@@ -3583,7 +3583,13 @@
         picks (pnp-picks)
         hand (into {} (remove (comp :proposed? val) picks))]
     (when (and sol
-               (> (:rms-px sol) pnp/accept-rms-px)
+               ;; two triggers, same medicine: the fit WITH the proposals is
+               ;; over the bar, or the re-solve with them was REFUSED outright
+               ;; (:reproposed-refused? — camera-dietro on the proposal set,
+               ;; Vincenzo 2026-09-02): either way the guesses are the suspects
+               ;; and the clicks alone get their chance
+               (or (:reproposed-refused? sol)
+                   (> (:rms-px sol) pnp/accept-rms-px))
                (< (count hand) (count picks))
                (>= (count hand) (min-pnp-picks)))
       (let [targets (pnp-targets)
@@ -3671,7 +3677,26 @@
         (if-let [sol (let [r (solve-and-apply! iw ih)]
                        (when-not (= r ::refused) r))]
           (let [added (propose-and-snap! (:pose sol) (session-intrinsics iw ih))
-                settled (if (pos? added) (or (solve-and-apply! iw ih) sol) sol)
+                ;; the re-solve WITH the proposals can itself be REFUSED
+                ;; (camera-dietro) — and ::refused must not flow on as if it
+                ;; were a solution: (:method ::refused) is nil, and (name nil)
+                ;; is the «Doesn't support name» crash Vincenzo hit live
+                ;; (2026-09-02, prima sessione col seme dell'occhio). The
+                ;; FIRST accepted solve stays the fact on screen; the refusal
+                ;; is recorded on the result so the hand-retry below — the
+                ;; same medicine as over-the-bar guesses — gets its chance to
+                ;; shed the proposals that caused it.
+                settled (if (pos? added)
+                          (let [r (solve-and-apply! iw ih)]
+                            (if (or (nil? r) (= r ::refused))
+                              (-> sol
+                                  (assoc :reproposed-refused? true)
+                                  (update :note
+                                          #(str (when % (str % " — "))
+                                                "le proposte agganciate mandavano il ri-solve "
+                                                "in rifiuto: tenuta la posa dei tuoi click")))
+                              r))
+                          sol)
                 ;; over the bar with guesses in the set? try the clicks alone
                 rescued (retry-on-hand-picks! settled iw ih)
                 final (or rescued settled)]
@@ -3684,7 +3709,10 @@
              (str "PnP " (name (:method final)) ": " (pnp-diagnosis final)
                   (when-let [dropped (:hand-only final)]
                     (str " · le " dropped " proposte automatiche remavano contro"
-                         " (" (.toFixed (:rms-px settled) 1) "px con loro): tolte,"
+                         " (" (if (:reproposed-refused? settled)
+                                "rifiuto secco"
+                                (str (.toFixed (:rms-px settled) 1) "px"))
+                         " con loro): tolte,"
                          " registrata sui tuoi soli click"))
                   (when (and (pos? added) (not (:hand-only final)))
                     (str " · " added " " (pnp-noun) " agganciati in automatico"))
@@ -3848,20 +3876,25 @@
                                       (not= k (:k m))))]
                  {:axis (str/upper-case (name axis))
                   :seen (str (name sense) " k" k
-                             (when d (str " a " (.toFixed d 1) "px"))
-                             (when (and (number? zero-d)
-                                        (> zero-d match-cage/index-obs-px))
-                               (str ", e al posto NOMINALE nessun dischetto — "
-                                    "il più vicino a " (.toFixed zero-d 0)
-                                    "px: l'indice vero è coperto o non rilevato, "
-                                    "pesa il terzo sospetto")))
-                  :expected (str (name (:sense m)) " k" (:k m))})
+                             (when d (str " a " (.toFixed d 1) "px")))
+                  :expected (str (name (:sense m)) " k" (:k m))
+                  ;; the nominal slot's own state rides the evidence: an index
+                  ;; nobody detected cannot testify, so the stray that did is
+                  ;; the prime suspect — appended AFTER the expectation, or the
+                  ;; sentence reads «pesa il terzo sospetto invece di fwd k0»
+                  ;; (Vincenzo's live log, 2026-09-02)
+                  :nominal (when (and (number? zero-d)
+                                      (> zero-d match-cage/index-obs-px))
+                             (str " (e al posto NOMINALE nessun dischetto — il più "
+                                  "vicino a " (.toFixed zero-d 0) "px: l'indice vero "
+                                  "è coperto o non rilevato, pesa il terzo sospetto)"))})
         dis (set (map :axis dis-ev))
         dis-detail (fn [axes]
                      (str/join "; "
-                               (for [{:keys [axis seen expected]} dis-ev
+                               (for [{:keys [axis seen expected nominal]} dis-ev
                                      :when (contains? (set axes) axis)]
-                                 (str axis " visto " seen " invece di " expected))))
+                                 (str axis " visto " seen " invece di " expected
+                                      nominal))))
         ;; a ring the session reads TURNED by whole steps, unanimously and
         ;; twice over, has earned the `:phases` suggestion — the diagnosis
         ;; Vincenzo asked for by direttiva (28/8: riconoscere e suggerire,
