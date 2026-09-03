@@ -4909,8 +4909,21 @@
           ;;     stays ambiguous and the current start keeps the bench.
           [out active-views held-out from-remembered?]
           (let [m (:remembered-focal-mm @session)]
-            (if (and m (number? m)
-                     (> (js/Math.abs (- m focal-now)) (* 0.02 m)))
+            (cond
+              ;; SAY the decision, whatever it is: Vincenzo's last run of 3/9
+              ;; showed a no-restart R re-filing its local minimum with no way
+              ;; to tell WHY the second start never ran — a silent skip is
+              ;; undiagnosable from a log, and the log is the instrument
+              (not (number? m))
+              (do (auto-log! "  (nessuna lente in memoria per questa camera: un solo start)")
+                  [out active-views held-out false])
+
+              (<= (js/Math.abs (- m focal-now)) (* 0.02 m))
+              (do (auto-log! (str "  (lente in memoria " (modal/fmt-number m)
+                                  "mm ≈ quella della sessione: un solo start)"))
+                  [out active-views held-out false])
+
+              :else
               (let [reseeded (mapv (fn [v]
                                      (let [[iw2 ih2] (:image-size v)
                                            k2 (pcamera/intrinsics-from-fov
@@ -4928,8 +4941,17 @@
                          (>= (count av2) (count active-views))
                          (< (:rms-px o2) (:rms-px out)))
                   [o2 av2 ho2 true]
-                  [out active-views held-out false]))
-              [out active-views held-out false]))]
+                  (do (auto-log!
+                       (str "  secondo start dalla lente in memoria ("
+                            (modal/fmt-number m) "mm, pose rifatte): "
+                            (if (:error o2)
+                              (str "fallito (" (:error o2) ")")
+                              (str "battuto — rms " (modal/fmt-number (:rms-px o2))
+                                   "px su " (count av2) " viste contro "
+                                   (modal/fmt-number (:rms-px out)) "px su "
+                                   (count active-views)))
+                            " — tengo il run di partenza"))
+                      [out active-views held-out false])))))]
       (doseq [idx unregistered]
         (auto-log! (str "  foto " (inc idx) " ha click ma NON è registrata: non vota "
                         "sulla lente. Registrala prima (Azzera, 4 click + doppio "

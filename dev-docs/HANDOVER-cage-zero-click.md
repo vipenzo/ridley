@@ -22,6 +22,65 @@ stato dei lavori per ripartire.
 
 ---
 
+## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo
+
+**LO STATO.** La coda del 2/9 è TUTTA CHIUSA e committata (`a454732..`,
+~20 commit su `grab-and-register`, suite 1009/0, warning `:app` 16): commit
+spezzato, memoria focale per-camera (`~/.ridley/cameras.json`, chiave
+«label @ w×h»), testimone curato (un anello = UNA lettura), e IL SEME
+DELL'OCCHIO — la posa appaiata a mano come seme diretto di 'a' (assign+ICP,
+niente ellissi), **provato dal vivo da Vincenzo**: «Gabbia letta dalla TUA
+posa a occhio: 12 dischetti piazzati (rms 7.9px)» su battiscopa4 (sessione
+nuova, C922, gabbia `:flips #{:y :z}`). Il collaudo live ha fruttato altri
+fix committati: il leak `::refused` («Doesn't support name»), lo slider
+della focale che non salvava, la R robusta (leave-one-out: una vista che
+peggiora il fit perde il VOTO sulla lente, MAI il posto nel film —
+direttiva di Vincenzo), la briglia della R spiegata (±15% per passata).
+
+**IL FILO APERTO — la R di battiscopa4 inchiodata a un minimo locale.**
+La R lì «converge» a 34.05mm (prima 40.67, prima ancora briglia a 40.8: tre
+minimi locali in una sera) su una camera che sta a **27.35** (misure RDCam
+di agosto). La verità è al banco: sonda nuova `CAGE_AUTO_SWEEP=1` (i PICK
+salvati — pixel, lens-free — risolti a una scala di focali): **f27.35
+mediana 2.36px contro 9.60 a f40.7**, foto 2/3/5 a 1.5-2.4px. Lezioni
+cablate: l'appaiamento perfetto della gabbia NON giudica la lente (posa ↔
+focale si compensano, l'errore muto fondante); ripartire dalla focale senza
+rifare le POSE non riparte niente (dal 29 a mano è SALITA a 34 — il bacino
+delle pose vecchie vince). Cura committata (`ec56436`+successivo): la R fa
+MULTI-START — riparte anche dalla lente in memoria CON LE POSE RIFATTE
+(per-view DLT sui pick), confronto per dominanza (≥ viste E rms più basso).
+MA nell'ultimo run di Vincenzo il multi-start NON risulta partito (nessuna
+riga «RIPARTITA», 34.05 ri-archiviato): sospetto primo il TAB con build
+vecchio (l'hot-reload può mancare un tab in silenzio — memoria nota);
+adesso il ramo logga SEMPRE la sua decisione (nessuna memoria / ≈ uguale /
+battuto coi numeri / vince), quindi il prossimo run si spiega da solo.
+
+**PRIMA MOSSA della chat nuova**: fargli fare hard-reload della pagina,
+aprire battiscopa4, UNA R. Atteso: «RIPARTITA dalla lente in memoria
+(27.35mm)…», focale ~27-28, foto buone a ~2-3px, «lente annotata» col
+numero vero. Se resta a 34: il log ora dice il perché — leggerlo, non
+tirare a indovinare. Lo store è stato rimesso a 27.35 (tre volte: 40.80
+briglia, 40.67 e 34.05 minimi locali ci sono finiti dentro — la guardia
+attuale blocca solo il clamp e il no-op, non un minimo locale convergente;
+se ricapita, valutare un'asticella di plausibilità sullo scarto).
+
+**CODA dopo il filo**: i difetti storici di sempre (max-outliers fisso a 2,
+accettazione senza asticella, rinomina prima del solve, riconciliazione di
+sessione), 'a' con 1-3 click che non fa niente (trappola UX vista live),
+foto 4 di battiscopa4 mediocre anche alla lente giusta (~7.5px: inquadratura
+con tutti gli anelli di taglio — capitolo «vantage warning» possibile: la
+derivazione facce sa già dire quando tutto è di taglio PRIMA dello scatto).
+
+**TRAPPOLE OPERATIVE**: le solite (MAI compile `:app` a mano col watcher —
+via nREPL 7888 `(shadow.cljs.devtools.api/compile :app)`; warning 16 è
+l'invariante; suite = compile :test via nREPL + `node out/test.js`,
+1009/0); il formatter/parinfer sui .cljs RIBILANCIA le parentesi
+dall'indentazione — mai wrappare un blocco grosso senza re-indentarlo
+(pasticcio fatto e risolto su match_cage, i write da bash/python NON
+triggherano il hook); le sessioni nREPL si incastrano — ciclo pulito della
+memoria REPL; il collaudo UI vero lo fa Vincenzo (i suoi log sono lo
+strumento di misura del canale).
+
 ## ATTERRAGGIO 2/9 — per la chat nuova, leggi PRIMA questo
 
 **LO STATO.** Sessione `~/Pictures/RidleyScan/battiscopa3`: 5/5 registrate
