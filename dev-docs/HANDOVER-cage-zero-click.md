@@ -259,6 +259,39 @@ aggiungere `:rim-marks? true` alla forma del proxy della sessione. Resta
 per il futuro: la geometria a due colori nella libreria `acquire-cage`
 (quando deciderà di ristampare) e il detector dei segmenti (barre scure
 ~70×6px, ricerca guidata dalla posa nei percorsi seminato/occhio).
+Collaudo visivo di Vincenzo: nessun conflitto con le alette.
+
+**GIUNTI GEN 2 — seconda chiave + tasche d'invito (richieste di Vincenzo,
+stessa notte).** Due difetti fisici della gabbia attuale: (1) il flip
+dell'anello PICCOLO non è vietato da niente — le sue quattro alette
+incollano altrettanto bene ribaltate, ed è così che la battiscopa ha preso
+i suoi `:flips`; (2) l'azimut di ogni incollaggio si trova a occhio mentre
+l'epossidica prende («il risultato è sempre un pressapoco» — fasi misurate
+1-2°, e a R85 un grado è 1.5mm). Cure nel modello, TUTTE dietro
+**`:gen 2`** su `registration-cage` (default 1 = le gabbie stampate di
+oggi: la gabbia disegnata deve restare quella incollata — un secondo pino
+rosso o alette affondate su un modello della gabbia vecchia farebbero
+allineare l'occhio a plastica inesistente):
+- **Seconda chiave** (`joint-tabs` gen 2): spina sull'aletta di Z verso X
+  + tacca nel bordo di X, a 90° dalla prima — «una tacca a 90 gradi oltre
+  a quella già messa». Con Y→X e Z→X inchiodati, ogni coppia è fissata
+  per transitività: mai più `:flips` non dichiarati.
+- **Tasche d'invito** (`:seat`, tagli di `seat-depth` 0.8mm nella faccia
+  del partner, pareti a tab-clearance ±0.25 ≈ ±0.16° a R88): l'aletta ci
+  AFFONDA (glue-face ribassata di 0.8) entrando assialmente durante la
+  stessa corsa d'assemblaggio — l'azimut lo tengono le pareti, non
+  l'occhio. La libreria `acquire-cage` ora taglia `#{:key-notch :seat}`
+  (era «la tacca è l'unico taglio della famiglia»).
+- Test: chiavi su ENTRAMBE le generazioni (gen 1 = una chiave, niente
+  tasche — invariato), `seats-locate-the-glue-azimuth`,
+  `gen2-laps-sink-only-into-their-seats` (fondo tasca, terzo anello,
+  collisioni fra giunti).
+Lezione ripagata di nuovo: mai avvolgere un corpo grosso in una nuova
+arity coi piccoli edit (parinfer ribilancia) — firma variadica
+`[d h & [gen]]` e il corpo resta intatto. E il ciclo pulito di shadow
+quando la sessione nREPL si incastra dopo un kill della suite.
+Prossima stampa: dichiarare `(registration-cage :d … :gen 2
+:rim-marks? true)` e stampare da lì.
 
 ---
 

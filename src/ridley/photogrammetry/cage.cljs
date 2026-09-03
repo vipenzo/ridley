@@ -270,6 +270,21 @@
    by peeling the tab, shallow enough to stay clear of the crown."
   0.7)
 
+(def seat-depth
+  "How deep (mm) the seat pocket is cut into the partner's face where each lap
+   tab lands — Vincenzo's «tacche/inviti» (3/9 notte). Today the azimuth of a
+   glue-up is found by eye while the epoxy sets («il risultato è sempre un
+   pressapoco» — the measured phases of the reference cage run 1-2°, and at
+   R85 a degree is 1.5mm): the pocket receives the tab during the last
+   fraction of the partner's own seating slide — the direction assembly
+   already moves in, so nothing is swept laterally — and its walls locate the
+   azimuth positively (±tab-clearance ≈ ±0.16° at this radius). The tab sinks
+   seat-depth minus the glue line; 0.8 leaves 0.55mm of wall engagement and
+   2.2mm of face under the pocket. A partner offered FLIPPED shows the face
+   without pockets and sits proud by the same 0.55 — a visible witness,
+   though the hard refusal of flips is the keys' job."
+  0.8)
+
 (def ^:private key-pin-azim
   "The assembly key's azimuthal width (mm) — how wide the pin is along the rim it
    blocks."
@@ -295,7 +310,15 @@
    smallest ring, two on the middle one, none on the largest. `:kind` is
 
      :lap   the glued tab itself, standing proud of its own ring so the contact
-            with the partner is a face and not an edge;
+            with the partner is a face and not an edge. Since 3/9 it sinks
+            `seat-depth` into the partner's seat pocket (below), so its
+            azimuth is located by plastic instead of by eye;
+     :seat  the pocket cut in the partner's face where the lap lands —
+            Vincenzo's «tacche/inviti»: entered axially during the partner's
+            own seating slide, walls at tab-clearance, so the pair's azimuth
+            clicks to nominal instead of settling wherever the epoxy caught
+            (the measured 1-2° phases of the reference cage). A CUT in its
+            owner, like the key notch;
      :stop  a lip just BEYOND the partner's rim, so the partner drops between the
             pair of them and lands where it belongs instead of where the eye put
             it. Only on the smallest ring's joints, and that restriction is the
@@ -306,14 +329,19 @@
             and are never swept through; the middle ring's would sit exactly where
             the largest ring's rim passes on its way in, so they are not made;
      :key-pin, :key-notch
-            the assembly key — the spina on one middle-ring tab and the tacca it
-            needs cut in the largest ring's rim (the ONE box here that is a CUT
-            in its owner, not an addition). Together they refuse every rotation
-            and flip of the largest ring but the nominal one — the rotation no
-            other joint imposes, and the one that was found glued 90° round on
-            the reference cage (2026-08-24)."
-  [d h]
-  (let [band (* d band-frac)
+            the assembly keys — a spina on one tab, the tacca it needs cut in
+            the partner's rim. TWO since 3/9 notte (Vincenzo: «una tacca a 90
+            gradi oltre a quella già messa»): the middle ring's key refuses
+            every rotation and flip of the largest ring but the nominal one —
+            the rotation no other joint imposes, found glued 90° round on the
+            reference cage (2026-08-24) — and the smallest ring's key, 90°
+            round the same rim, refuses the SMALL ring flipped: its four tabs
+            glue equally well either way up (which is how the battiscopa cage
+            got its :flips), and with Z pinned to X and Y pinned to X the
+            last mounting freedom any pair had is closed, transitively."
+  [d h & [gen]]
+  (let [gen2? (>= (or gen 1) 2)
+        band (* d band-frac)
         root (* band tab-root-frac)
         rings (into {} (for [k (range ring-count)]
                          [(ring-axis k) (ring-radii d k)]))
@@ -341,11 +369,28 @@
               ;; the tab grows off ONE face of its own ring, so the part still
               ;; prints flat: the ring lies on the bed and this rises from it
               rise [(/ (- tab-height h) 2.0) tab-height]
+              ;; gen 2: the tab's glue face sits at the seat pocket's floor
+              ;; plus the glue line — sunk seat-depth below the partner's
+              ;; face, so the pocket walls, not the gluer's eye, hold the
+              ;; azimuth. gen 1 (the cages already printed): on the face.
+              glue-face (+ (if gen2? (- (/ h 2.0) seat-depth) (/ h 2.0))
+                           tab-clearance)
               lap (fn [axis]
                     (condp = axis
                       shared [(* sign (/ (+ (- q-outer root) tip) 2.0)) len]
-                      p-axis [(+ (/ h 2.0) tab-clearance (/ tab-width 2.0)) tab-width]
+                      p-axis [(+ glue-face (/ tab-width 2.0)) tab-width]
                       q-axis rise))
+              seat (fn [axis]
+                     (condp = axis
+                       shared [(* sign (/ (+ (- q-outer root) tip) 2.0))
+                               (+ len (* 2.0 tab-clearance))]
+                       ;; from the pocket floor to 1mm past the face: a cut
+                       ;; that stops flush would leave coincident faces, the
+                       ;; known CSG-artifact recipe
+                       p-axis (let [lo (- (/ h 2.0) seat-depth)
+                                    hi (+ (/ h 2.0) 1.0)]
+                                [(/ (+ lo hi) 2.0) (- hi lo)])
+                       q-axis (let [[c s] rise] [c (+ s (* 2.0 tab-clearance))])))
               ;; the lip reaches from beyond the tab back ACROSS the partner's
               ;; plane, which is what makes it a stop rather than decoration
               far (+ p-outer stop-gap)
@@ -364,33 +409,39 @@
                        :center (mapv first parts)
                        :size (mapv second parts)}))]
           (cond-> [(box :lap lap)]
+            ;; the seat is cut in the PARTNER, the ring whose face receives
+            ;; the tab — owner says whose material a cut removes
+            gen2? (conj (assoc (box :seat seat) :owner p-axis :partner q-axis))
             stopped? (conj (box :stop stop))
-            ;; ── the assembly key ────────────────────────────────────────────
-            ;; ONE pin on ONE of the middle ring's tabs, and a matching notch in
-            ;; the largest ring's rim. It exists because the largest ring is the
-            ;; one part of the cage whose rotation no joint imposes — it is held
-            ;; by the others pressing on its face and can turn while staying
-            ;; seated — and because at a whole number of steps the tabs land
-            ;; between marks again, so a quarter-turn glue-up LOOKS nominal and
-            ;; is invisible until the photographs disagree with the zero-index
-            ;; (which is how it was found: Vincenzo's reference cage, 2026-08-24,
-            ;; 90° — proposed by him as 'una tacca e una spina', and that is
-            ;; exactly what this is).
+            ;; ── the assembly keys ───────────────────────────────────────────
+            ;; A pin on a tab, and the notch it needs cut in the partner's rim.
+            ;; The first (middle ring → largest, 'una tacca e una spina',
+            ;; Vincenzo 2026-08-24) exists because the largest ring is the one
+            ;; part whose rotation no joint imposes — held by the others
+            ;; pressing on its face, it can turn while staying seated, and at
+            ;; a whole number of steps the glue-up LOOKS nominal (found at 90°
+            ;; on the reference cage, by the photographs disagreeing with the
+            ;; zero-index).
             ;;
-            ;; The pin protrudes from the tab across the partner's plane, inside
-            ;; its rim: sliding in, the rim meets the pin and the ring cannot
-            ;; seat — at ANY wrong rotation, not just wrong steps — unless the
-            ;; notch admits it. One key, asymmetric, so it also refuses the ring
-            ;; flipped face-for-face. It costs nothing to print: the pin sits at
-            ;; the tab's bed end and prints as first-layer footprint; the notch
-            ;; is a cut in a flat part.
+            ;; The pin protrudes from the tab across the partner's plane,
+            ;; inside its rim: sliding in, the rim meets the pin and the ring
+            ;; cannot seat — at ANY wrong rotation, not just wrong steps —
+            ;; unless the notch admits it; asymmetric (bed end of the tab), so
+            ;; the flipped engagement is refused too. It costs nothing to
+            ;; print: the pin is first-layer footprint, the notch a cut in a
+            ;; flat part.
             ;;
-            ;; On the middle↔largest joint and not a small-ring one, because the
-            ;; small ring's own tabs already impose its rotation — the middle
-            ;; and small rings key each other by construction; only the largest
-            ;; is free, and it is the middle ring's tabs that hold it without
-            ;; stops.
-            (and (= q-axis :y) (= p-axis :x) (pos? sign))
+            ;; The SECOND key (smallest ring → largest, 90° round the same
+            ;; rim — Vincenzo, 3/9 notte: «una tacca a 90 gradi oltre a
+            ;; quella già messa») closes the freedom the first left open: the
+            ;; small ring's rotation is imposed by its own four tabs, but its
+            ;; FLIP is not — flipped, its tabs land on the partners' other
+            ;; faces and glue just as well, which is exactly how the
+            ;; battiscopa cage got its :flips. With Y pinned to X and Z
+            ;; pinned to X, every pair's mounting is fixed, transitively.
+            (and (or (= [:y :x] [q-axis p-axis])
+                     (and gen2? (= [:z :x] [q-axis p-axis])))
+                 (pos? sign))
             (into (let [;; pin, radially: from half a mm inside the rim, reaching
                         ;; key-pin-radial into the band
                         pin-r-hi (- p-outer 0.5)
@@ -401,13 +452,13 @@
                         ;; pin, across the partner's plane: from 1mm INSIDE the tab
                         ;; (an exact touch would be a pair of coincident faces, the
                         ;; known CSG-artifact recipe) inward by key-pin-block past
-                        ;; the glue face
-                        pin-p-hi (+ (/ h 2.0) tab-clearance 1.0)
+                        ;; the glue face (which the seat pocket has sunk)
+                        pin-p-hi (+ glue-face 1.0)
                         mid (fn [lo hi] [(/ (+ lo hi) 2.0) (- hi lo)])
                         pin (fn [axis]
                               (condp = axis
                                 shared (let [[c sz] (mid pin-r-lo pin-r-hi)] [(* sign c) sz])
-                                p-axis (mid (- (+ (/ h 2.0) tab-clearance) key-pin-block)
+                                p-axis (mid (- glue-face key-pin-block)
                                             pin-p-hi)
                                 ;; at the tab's BED end, off-centre — asymmetric on
                                 ;; purpose, so the flipped ring is refused too
@@ -1002,8 +1053,8 @@
    The anchors are non-coplanar, so `pnp/solve-pnp` routes them to the general
    DLT rather than the planar homography — pick marks on TWO rings and the pose
    is conditioned on all six degrees of freedom with no mirror twin to reject."
-  [& {:keys [d marks disc h seg phases flips index-phase rim-marks?]
-      :or {h default-h seg 64 index-phase default-index-phase}}]
+  [& {:keys [d marks disc h seg phases flips index-phase rim-marks? gen]
+      :or {h default-h seg 64 index-phase default-index-phase gen 1}}]
   (when-not (and (number? d) (pos? d))
     (throw (js/Error.
             (str "registration-cage: dimmi il diametro della gabbia — quello "
@@ -1074,6 +1125,14 @@
      ;; have them. `:rim-marks? true` is for the design preview and, when a
      ;; cage is printed with them, for the real thing.
      :rim-marks? (boolean rim-marks?)
+     ;; The FABRICATION GENERATION of the physical cage, declared like
+     ;; everything else about it: 1 = the prints of today (one assembly key,
+     ;; tabs on the partner's face); 2 = seat pockets with sunk tabs and the
+     ;; second key (designed 3/9 notte, not yet printed). The drawn cage must
+     ;; be the glued one — a second red pin, or alette sunk 0.8mm, on the
+     ;; model of a cage that does not have them would have the eye aligning
+     ;; to plastic that is not there.
+     :cage-gen gen
      :rings rings
      ;; Fabrication rides on the proxy for the same reason the marks do: the
      ;; `acquire-cage` library must not restate any of this, or the printed cage
@@ -1084,7 +1143,7 @@
      :tabs (mapv (fn [t] (cond-> t
                            (flip? (:owner t))
                            (update :center (partial flip-in-ring (:owner t)))))
-                 (joint-tabs d h))
+                 (joint-tabs d h gen))
      ;; A slot is part of its ring, so it takes the ring's mounting whole: the
      ;; flip first, then the PHASE — unlike the tabs, which are not turned
      ;; because a turned tab would not reach its partner (that is precisely why

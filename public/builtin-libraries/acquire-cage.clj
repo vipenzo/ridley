@@ -242,12 +242,15 @@
                  (let [sz (:size t)]
                    (mesh-translate (box (nth sz 1) (nth sz 2) (nth sz 0))
                                    (:center t))))
-        ;; una scatola è o materiale dell'anello (linguette, battute, la SPINA
-        ;; della chiave di montaggio) o un TAGLIO (la tacca che la riceve):
-        ;; lo dice il suo :kind, e la tacca è l'unico taglio della famiglia
-        cuts (concat (map as-box (filter (fn [t] (= :key-notch (:kind t))) tabs-boxes))
+        ;; una scatola è o materiale dell'anello (linguette, battute, le SPINE
+        ;; delle chiavi di montaggio) o un TAGLIO nel suo proprietario: le
+        ;; tacche che ricevono le spine, e dal 3/9 le TASCHE (:seat) in cui
+        ;; le linguette del partner affondano — l'invito che fissa l'azimut
+        ;; dell'incollaggio al posto dell'occhio
+        cut? (fn [t] (contains? #{:key-notch :seat} (:kind t)))
+        cuts (concat (map as-box (filter cut? tabs-boxes))
                      slot-cuts)
-        tabs (concat (map as-box (remove (fn [t] (= :key-notch (:kind t))) tabs-boxes))
+        tabs (concat (map as-box (remove cut? tabs-boxes))
                      slot-bodies)
         solid (as-> annulus m
                 (if (empty? tabs) m (mesh-union (cons m tabs)))

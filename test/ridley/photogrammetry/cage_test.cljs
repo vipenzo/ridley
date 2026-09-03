@@ -105,6 +105,9 @@
           (is (> contact 80.0)
               "the joint must meet the partner on a FACE — an edge-on stripe of
                3×12 was the first design, and it is a strip of card in torsion")
+          ;; gen 1 (il default, le gabbie già stampate): la linguetta sta
+          ;; SULLA faccia del partner — a gen 2 affonda nella sua tasca, e
+          ;; quello lo asserisce gen2-laps-sink-only-into-their-seats
           (is (not (every? true? (map #(overlap? (span tab %) (nth (ring-slab d h (axis-i partner)) %))
                                       [0 1 2])))
               "a tab that intersects its partner cannot be assembled")
@@ -243,24 +246,41 @@
           (is (> (nth up 2) 0.999) "che salgono verso l'alto di stampa"))))))
 
 (deftest assembly-key-refuses-every-wrong-rotation
-  ;; The key Vincenzo asked for after gluing the reference cage 90° round
-  ;; ('una tacca e una spina', 2026-08-24): one pin on one middle-ring tab, one
-  ;; notch in the largest ring's rim. Pure geometry checks: the pin must BLOCK
-  ;; the largest ring's slide at any rotation, the notch must admit exactly the
-  ;; pin (with clearance), and the pair must be asymmetric enough to refuse the
-  ;; ring flipped face-for-face.
-  (println "\n=== gabbia: la chiave di montaggio (tacca e spina) ===")
+  ;; The keys Vincenzo asked for: 'una tacca e una spina' (2026-08-24, after
+  ;; gluing the reference cage 90° round) and 'una tacca a 90 gradi oltre a
+  ;; quella già messa' (3/9 notte, after the battiscopa cage proved the small
+  ;; ring can glue flipped). Pure geometry checks, run on BOTH keys: the pin
+  ;; must BLOCK the partner's slide at any rotation, the notch must admit
+  ;; exactly the pin (with clearance), and the pair must be asymmetric enough
+  ;; to refuse the flipped engagement.
+  (println "\n=== gabbia: le chiavi di montaggio (tacche e spine) ===")
   (let [d 176.0 h 3.0
-        boxes (cage/joint-tabs d h)
+        boxes (cage/joint-tabs d h 2)
         pins (filterv #(= :key-pin (:kind %)) boxes)
         notches (filterv #(= :key-notch (:kind %)) boxes)
         x (cage/ring-radii d 0)
         axis-i {:x 0 :y 1 :z 2}]
-    (is (= 1 (count pins)) "UNA spina — una chiave, non una serratura per faccia")
-    (is (= 1 (count notches)) "e UNA tacca")
-    (let [pin (first pins) notch (first notches)]
-      (is (= :y (:owner pin)) "la spina sta su una linguetta dell'anello di MEZZO")
-      (is (= :x (:owner notch)) "la tacca si taglia nell'anello GRANDE")
+    ;; gen 1, il default: le gabbie già stampate hanno UNA chiave, e il
+    ;; modello dichiarato deve restare quello incollato
+    (is (= 1 (count (filterv #(= :key-pin (:kind %)) (cage/joint-tabs d h))))
+        "gen 1: una chiave sola")
+    (is (empty? (filterv #(= :seat (:kind %)) (cage/joint-tabs d h)))
+        "gen 1: niente tasche")
+    ;; DUE chiavi dal 3/9 notte («una tacca a 90 gradi oltre a quella già
+    ;; messa»): quella del medio tiene rotazione e flip del grande, quella
+    ;; del piccolo tiene il SUO flip — le sue quattro linguette incollano
+    ;; altrettanto bene ribaltate, ed è così che la gabbia battiscopa ha
+    ;; preso i suoi :flips
+    (is (= 2 (count pins)) "DUE spine: rotazione del grande, flip del piccolo")
+    (is (= 2 (count notches)) "e DUE tacche")
+    (is (= #{:y :z} (set (map :owner pins)))
+        "le spine stanno su una linguetta del MEDIO e una del PICCOLO")
+    (is (every? #(= :x (:owner %)) notches) "entrambe le tacche nel GRANDE")
+    (is (= #{:y :z} (set (map :along notches)))
+        "sui due assi condivisi: a 90° l'una dall'altra sul bordo del grande")
+    (doseq [pin pins
+            :let [notch (first (filter #(= (:along pin) (:along %)) notches))]]
+      (is (some? notch) "ogni spina ha la sua tacca, sullo stesso giunto")
       (let [ish (axis-i (:along pin))
             ip (axis-i (:partner pin))
             iq (axis-i (:owner pin))
@@ -488,7 +508,9 @@
               ;; CUT, and a through cut necessarily crosses both faces
               tab-z (mapcat #(let [cz (nth (:center %) 2) sz (nth (:size %) 2)]
                                [(- cz (/ sz 2)) (+ cz (/ sz 2))])
-                            (remove #(= :key-notch (:kind %)) (:tabs p)))]
+                            ;; i TAGLI (tacche delle chiavi, tasche degli
+                            ;; incastri) attraversano le facce per mestiere
+                            (remove #(#{:key-notch :seat} (:kind %)) (:tabs p)))]
           (println (str "  anello " (name (:axis p)) ": " (count (:marks p))
                         " mark su z=±" (.toFixed (apply max (map Math/abs zs)) 2)
                         ", raggi " (.toFixed (apply min rs) 1) "…" (.toFixed (apply max rs) 1)
@@ -1055,3 +1077,80 @@
             anchor (get-in c [:anchors :xp03 :position])]
         (is (< (Math/abs (- (az mid) (az anchor))) 1e-6)
             "il segmento k sta sull'azimut del mark k")))))
+
+(deftest seats-locate-the-glue-azimuth
+  ;; Vincenzo's «tacche/inviti» (3/9 notte): today the azimuth of a glue-up is
+  ;; found by eye while the epoxy sets — the measured phases of the reference
+  ;; cage run 1-2°, and at R85 a degree is 1.5mm. Each lap tab now sinks into
+  ;; a pocket cut in the partner's face: entered axially during the partner's
+  ;; own seating slide, walls at tab-clearance — the azimuth clicks to
+  ;; nominal instead of settling wherever the epoxy caught.
+  (println "\n=== gabbia: le tasche d'invito (seat, gen 2) ===")
+  (let [d 176.0 h 3.0
+        boxes (cage/joint-tabs d h 2)
+        seats (filterv #(= :seat (:kind %)) boxes)
+        laps (filterv #(= :lap (:kind %)) boxes)
+        axis-i {:x 0 :y 1 :z 2}]
+    (is (= 6 (count seats)) "una tasca per linguetta")
+    (is (= {:x 4 :y 2} (frequencies (map :owner seats)))
+        "quattro nella faccia del grande, due in quella del medio: chi riceve")
+    (doseq [{:keys [owner partner along sign] :as st} seats]
+      (let [lap (first (filter #(and (= :lap (:kind %))
+                                     (= partner (:owner %))
+                                     (= owner (:partner %))
+                                     (= along (:along %))
+                                     (= sign (:sign %)))
+                               laps))
+            io (axis-i owner)]
+        (println (str "  tasca in " (name owner) " per la linguetta di "
+                      (name partner) " lungo " (if (pos? sign) "+" "-")
+                      (name along)))
+        (is (some? lap) "ogni tasca ha la sua linguetta")
+        (doseq [i (remove #{io} [0 1 2])]
+          (let [[slo shi] (span st i)
+                [llo lhi] (span lap i)]
+            (is (and (< slo llo) (> shi lhi))
+                "la tasca riceve la linguetta con gioco su entrambi i lati")))
+        (let [[plo phi] (span st io)]
+          (is (< (Math/abs (- plo (- (/ h 2.0) cage/seat-depth))) 1e-9)
+              "profonda seat-depth nella faccia")
+          (is (> phi (/ h 2.0))
+              "e aperta oltre la faccia: un taglio a filo lascia facce coincidenti"))
+        (let [[llo _] (span lap io)]
+          (is (< llo (/ h 2.0)) "la linguetta pesca nella tasca")
+          (is (> llo (- (/ h 2.0) cage/seat-depth))
+              "ma resta sopra il fondo: sotto c'è la colla"))))))
+
+(deftest gen2-laps-sink-only-into-their-seats
+  ;; At gen 2 the lap dips into the partner on purpose — but ONLY down to its
+  ;; seat pocket's floor, and still clear of the third ring: the two ways the
+  ;; sink could go wrong, each invisible until four hours into a print.
+  (println "\n=== gabbia: i lap di gen 2 affondano solo nelle tasche ===")
+  (let [d 176.0 h 3.0
+        boxes (cage/joint-tabs d h 2)
+        laps (filterv #(= :lap (:kind %)) boxes)
+        axis-i {:x 0 :y 1 :z 2}]
+    (doseq [{:keys [owner partner] :as tab} laps]
+      (let [[plo _] (span tab (axis-i partner))]
+        (is (> plo (- (/ h 2.0) cage/seat-depth 1e-9))
+            "la linguetta scende al massimo fino al fondo della sua tasca")
+        (is (< plo (/ h 2.0))
+            "e pesca davvero: l'azimut lo tengono le pareti, non l'occhio"))
+      (let [third (first (remove #{owner partner} [:x :y :z]))
+            slab (fn [ax]
+                   (let [{:keys [outer]} (cage/ring-radii d (axis-i ax))]
+                     (mapv (fn [a] (if (= a ax)
+                                     [(/ h -2.0) (/ h 2.0)]
+                                     [(- outer) outer]))
+                           [:x :y :z])))]
+        (is (not (every? true? (map #(overlap? (span tab %) (nth (slab third) %))
+                                    [0 1 2])))
+            (str "anche affondata, la linguetta non tocca l'anello " (name third)))))
+    ;; material boxes of different joints still keep their distance
+    (let [material (filterv #(#{:lap :stop :key-pin} (:kind %)) boxes)]
+      (doseq [[a b] (for [i (range (count material)) j (range (inc i) (count material))]
+                      [(nth material i) (nth material j)])
+              :when (not= [(:owner a) (:along a) (:sign a)]
+                          [(:owner b) (:along b) (:sign b)])]
+        (is (not (every? true? (map #(overlap? (span a %) (span b %)) [0 1 2])))
+            "due giunti di gen 2 non devono collidere")))))
