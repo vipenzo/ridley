@@ -1020,3 +1020,38 @@
           (do (is (approx3 (:position s-flp) (m (:position s-nom))))
               (is (approx3 (:up s-flp) (m (:up s-nom))) "il corpo sale dall'altra faccia"))
           (is (= s-nom s-flp)))))))
+
+(deftest rim-segments-are-declared-and-as-built
+  ;; Vincenzo's rim marks (3/9 notte): the rim speaks exactly when the face
+  ;; vanishes. Declared, never assumed — and as-built, like every printed
+  ;; feature: the drawn cage must be the glued one.
+  (testing "senza dichiarazione: niente — le gabbie stampate di oggi non li hanno"
+    (is (nil? (cage/rim-segments (cage/registration-cage :d 176)))))
+  (testing "dichiarati: 12 per anello, mezzo spessore verso p, zero interrotto a 2/3"
+    (let [c (cage/registration-cage :d 176 :rim-marks? true :flips #{:y})
+          rs (cage/rim-segments c)
+          by-axis (group-by :axis rs)]
+      (is (= 36 (count rs)) "dodici segmenti per ciascuno dei tre anelli")
+      (doseq [[ax segs] by-axis]
+        (is (= 12 (count segs)) (str (name ax) ": dodici segmenti"))
+        (is (= 1 (count (filter :zero? segs)))
+            (str (name ax) ": un solo segmento zero")))
+      (doseq [s rs]
+        (is (= (if (:zero? s) 2 1) (count (:pieces s)))
+            "lo zero è spezzato in due (l'interruzione a 2/3), gli altri interi"))
+      (let [h2 (/ (:cage-h c) 2.0)
+            zs (fn [ax] (for [s (get by-axis ax)
+                              p (:pieces s)
+                              pt (concat (:lo p) (:hi p))]
+                          (nth (cage/unplace ax pt) 2)))]
+        (is (every? #(and (>= % -1e-9) (<= % (+ h2 1e-9))) (zs :x))
+            "X non ribaltato: la banda occupa la metà verso la faccia p")
+        (is (every? #(and (<= % 1e-9) (>= % (- (- h2) 1e-9))) (zs :y))
+            "Y ribaltato: la banda segue il ribaltamento — disegnata dove sta la plastica"))
+      (let [seg (first (filter #(and (= :x (:axis %)) (= 3 (:k %))) rs))
+            mid (let [pts (:lo (first (:pieces seg)))]
+                  (nth pts (quot (count pts) 2)))
+            az (fn [pt] (let [[u v _] (cage/unplace :x pt)] (Math/atan2 v u)))
+            anchor (get-in c [:anchors :xp03 :position])]
+        (is (< (Math/abs (- (az mid) (az anchor))) 1e-6)
+            "il segmento k sta sull'azimut del mark k")))))

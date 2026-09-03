@@ -235,6 +235,31 @@ ristampati (gabbia nuova). Non urgente: luce ambiente + due anelli di
 faccia + seme dell'occhio coprono; da progettare per la prossima
 iterazione fisica.
 
+**AGGIORNATO dalla discussione con Vincenzo (stessa notte):** i fori erano
+il ripiego per stampa mono-estrusore (cambio colore per strato → nessun
+motivo azimutale su parete verticale); con una multi-materiale vera il SUO
+disegno è migliore e più ricco: **12 segmenti orizzontali sul bordo, a
+mezza altezza dello spessore** (la metà dice la faccia m/p — la PRIMA
+asimmetria di faccia fisica della gabbia: i dischetti sono fori, identici
+dai due lati per costruzione), agli azimut dei mark, **zero interrotto a
+2/3** (letto ribaltato appare a 1/3: testimone di chiralità e zero del
+bordo). Vincolo suo: le alette limitano la lunghezza a <1/25 di giro
+(«forse meno») → `cage/rim-seg-deg` 12° (1/30, ≥9° dal centro-aletta).
+
+**MODELLO + DISEGNO COSTRUITI («vederli prima di stamparli»):**
+`cage/rim-segments` (pura, as-built: fasi e flip come le ancore — flip poi
+turn; banda verso la faccia p DI STAMPA, su anello ribaltato finisce
+dall'altro lato come la plastica vera; test
+`rim-segments-are-declared-and-as-built`), opzione **`:rim-marks?` su
+registration-cage** — DICHIARATA, mai assunta: la gabbia disegnata deve
+essere quella incollata, e le gabbie di oggi non li hanno.
+`cage-feature-items*` li disegna (nastri BLU 0x4455ee + spigoli, r-off
+0.15 anti z-fight) solo quando dichiarati. Per la revisione del disegno:
+aggiungere `:rim-marks? true` alla forma del proxy della sessione. Resta
+per il futuro: la geometria a due colori nella libreria `acquire-cage`
+(quando deciderà di ristampare) e il detector dei segmenti (barre scure
+~70×6px, ricerca guidata dalla posa nei percorsi seminato/occhio).
+
 ---
 
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo

@@ -646,6 +646,86 @@
       (:heading a) (update :heading t)
       (:up a) (update :up t))))
 
+;; --- rim segments (Vincenzo's design, 2026-09-03 notte) ---------------------
+;;
+;; The rim of a ring is maximally visible exactly when its face vanishes: a
+;; signal that turns ON in the hardest case (rings di taglio — grab-09, where
+;; Y at 9-17° and Z at 6-20° left zero-click nothing to assemble). Twelve
+;; segments at the crown's own azimuths, each occupying the HALF of the rim
+;; thickness toward the print face p — the first physically face-asymmetric
+;; feature of the cage: every face disc is a through-hole, identical from
+;; both sides by construction, while a half-thickness segment SHOWS which
+;; face it hugs. The zero segment carries a break at 2/3 of its length: it
+;; breaks the crown's 12-fold symmetry on the rim (the rim's own zero-index)
+;; and reads at 1/3 on a ring glued flipped — a chirality witness.
+
+(def rim-seg-deg
+  "Azimuthal extent (deg) of one rim segment. The binding constraint is the
+   glue tabs, which own the rim at 0/90/180/270 in every ring's local frame:
+   by Vincenzo's eye a segment must stay under 1/25 of the turn (14.4°),
+   «forse meno». 12° is 1/30 — centred between tabs like the marks are
+   (crown-phase), it leaves ≥9° of rim to the nearest tab centre."
+  12.0)
+
+(def rim-zero-break
+  "The zero segment's interruption: `:at` as a fraction of the segment's
+   length ALONG THE NUMBERING DIRECTION (increasing azimuth), `:width` the
+   fraction removed. At 2/3 by design: seen from the other side — or on a
+   ring glued flipped — the same break reads at 1/3, so its position alone
+   distinguishes the two mountings the crown's through-holes cannot."
+  {:at (/ 2.0 3.0) :width (/ 1.0 6.0)})
+
+(defn rim-segments
+  "The rim marks of a cage that DECLARES them (`:rim-marks?` on
+   registration-cage), as-built: crown azimuths, phases and flips applied
+   exactly as the anchors take them (flip first, then the measured turn), the
+   band spanning the half thickness toward the PRINT face p — on a flipped
+   ring the drawn segments land on the cage's other side, like the glued
+   plastic does. Returns [{:axis :k :zero? :pieces [{:lo pts :hi pts}]} …]
+   in cage coordinates — :lo the arc at the ring's mid-plane, :hi at the p
+   edge, `samples` points each, radius = ring outer + `r-off`. nil when the
+   mesh does not declare rim marks: today's printed cages do not have them,
+   and a drawn feature the plastic does not have is worse than none."
+  [mesh & {:keys [r-off samples seg-deg]
+           :or {r-off 0.0 samples 7 seg-deg rim-seg-deg}}]
+  (when (:rim-marks? mesh)
+    (let [n (:cage-marks mesh)
+          h (:cage-h mesh)
+          phases (:cage-phases mesh)
+          flips (or (:cage-flips mesh) #{})
+          step (/ (* 2.0 Math/PI) n)
+          phase (crown-phase n)
+          w (deg->rad seg-deg)
+          {:keys [at width]} rim-zero-break]
+      (vec
+       (for [{:keys [axis outer]} (:rings mesh)
+             i (range n)
+             :let [a0 (- (+ phase (* i step)) (/ w 2.0))
+                   po (or (get phases axis) 0.0)
+                   flip? (contains? flips axis)
+                   mount (fn [p]
+                           (turn-about-axis axis
+                                            (if flip? (flip-in-ring axis p) p)
+                                            po))
+                   r (+ outer r-off)
+                   arc (fn [t0 t1 z]
+                         (vec (for [s (range samples)
+                                    :let [t (+ t0 (* (- t1 t0)
+                                                     (/ s (dec samples))))
+                                          a (+ a0 (* w t))]]
+                                (mount (place axis [(* r (Math/cos a))
+                                                    (* r (Math/sin a))
+                                                    z])))))
+                   spans (if (zero? i)
+                           [[0.0 (- at (/ width 2.0))]
+                            [(+ at (/ width 2.0)) 1.0]]
+                           [[0.0 1.0]])]]
+         {:axis axis :k i :zero? (zero? i)
+          :pieces (mapv (fn [[t0 t1]]
+                          {:lo (arc t0 t1 0.0)
+                           :hi (arc t0 t1 (/ h 2.0))})
+                        spans)})))))
+
 (defn- ring-radius [{:keys [axis obj]}]
   (let [[u v _] (unplace axis obj)] (Math/sqrt (+ (* u u) (* v v)))))
 
@@ -922,7 +1002,7 @@
    The anchors are non-coplanar, so `pnp/solve-pnp` routes them to the general
    DLT rather than the planar homography — pick marks on TWO rings and the pose
    is conditioned on all six degrees of freedom with no mirror twin to reject."
-  [& {:keys [d marks disc h seg phases flips index-phase]
+  [& {:keys [d marks disc h seg phases flips index-phase rim-marks?]
       :or {h default-h seg 64 index-phase default-index-phase}}]
   (when-not (and (number? d) (pos? d))
     (throw (js/Error.
@@ -989,6 +1069,11 @@
      :cage-phases phases
      :cage-flips flip?
      :cage-index-phase index-phase
+     ;; Vincenzo's rim segments (see rim-segments): DECLARED, never assumed —
+     ;; the drawn cage must match the printed one, and today's cages do not
+     ;; have them. `:rim-marks? true` is for the design preview and, when a
+     ;; cage is printed with them, for the real thing.
+     :rim-marks? (boolean rim-marks?)
      :rings rings
      ;; Fabrication rides on the proxy for the same reason the marks do: the
      ;; `acquire-cage` library must not restate any of this, or the printed cage

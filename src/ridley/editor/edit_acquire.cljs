@@ -267,6 +267,7 @@
 (def ^:private cage-key-pin-color 0xff5533) ; rosso: la spina della chiave di montaggio
 (def ^:private cage-slot-color 0x8899aa)    ; grigio-azzurro: i box porta-stick
 (def ^:private cage-channel-color 0xe8f0ff) ; quasi bianco: la bocca del canale
+(def ^:private cage-rim-color 0x4455ee)     ; blu: i segmenti sul bordo (rim marks)
 
 (defn- box-corners
   "The 8 corners of a box: `center`, three orthonormal `axes`, and the
@@ -407,17 +408,49 @@
                                                (ellipse-loop (m/v+ c (m/v* heading (* s half)))
                                                              side r-across up r-up))
                                              [1.0 -1.0])))
-                                 (:stick-slots mesh))]
+                                 (:stick-slots mesh))
+            ;; Vincenzo's rim segments (cage/rim-segments — drawn only when the
+            ;; proxy DECLARES them, :rim-marks?): ribbons on the outer wall,
+            ;; half thickness toward the print face p, the zero broken at 2/3.
+            ;; A hair off the wall (r-off) so they never z-fight the mesh.
+            rim-pieces (mapcat :pieces (cage/rim-segments mesh :r-off 0.15))
+            rim-ribbon (when (seq rim-pieces)
+                         (let [{:keys [verts faces]}
+                               (reduce (fn [{:keys [verts faces]} {:keys [lo hi]}]
+                                         (let [b (count verts)
+                                               s (count lo)]
+                                           {:verts (into (into verts lo) hi)
+                                            :faces (into faces
+                                                         (mapcat (fn [i]
+                                                                   [[(+ b i) (+ b i 1) (+ b s i 1)]
+                                                                    [(+ b i) (+ b s i 1) (+ b s i)]])
+                                                                 (range (dec s))))}))
+                                       {:verts [] :faces []}
+                                       rim-pieces)]
+                           {:type :mesh
+                            :data {:vertices (mapv w verts)
+                                   :faces faces
+                                   :material {:color cage-rim-color :opacity 0.8
+                                              :double-sided true
+                                              :metalness 0.0 :roughness 0.9}}}))
+            rim-edge-pairs (mapcat (fn [{:keys [lo hi]}]
+                                     (concat (map vector lo (rest lo))
+                                             (map vector hi (rest hi))
+                                             [[(first lo) (first hi)]
+                                              [(peek lo) (peek hi)]]))
+                                   rim-pieces)]
         (into []
               (remove nil?)
               [(solid tab-corners cage-tab-color 0.55)
                (solid pin-corners cage-key-pin-color 0.85)
                (solid slot-boxes cage-slot-color 0.5)
+               rim-ribbon
                {:type :lines
                 :data (vec (concat (segs (mapcat box-edges tab-corners) cage-tab-color)
                                    (segs (mapcat box-edges pin-corners) cage-key-pin-color)
                                    (segs (mapcat box-edges slot-boxes) cage-slot-color)
-                                   (segs channel-segs cage-channel-color)))}])))))
+                                   (segs channel-segs cage-channel-color)
+                                   (segs rim-edge-pairs cage-rim-color)))}])))))
 
 (defn- cage-feature-items [] (cage-feature-items* (:proxy-mesh @session)))
 
