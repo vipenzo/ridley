@@ -131,6 +131,19 @@ SPIEGATA (spiegati/rilevati): relativa, non assoluta — la stessa cura per
 Azzera foto 7 → gabbia a occhio col gizmo → 'a' a zero click (il seme
 dell'occhio, già provato su foto 1).
 
+**RECOVERY RIUSCITO (stessa notte, log di Vincenzo):** Azzera + gizmo a
+occhio + 'a' zero click → «Gabbia letta dalla TUA posa a occhio: 16
+dischetti piazzati (rms 1.9px)», solve a 2.0px con 8 proposte deboli
+ESCLUSE e dette per nome, R accettata: 7/7 foto a 1.56-2.38px, lente
+27.99mm (terza misura concorde: 28.08 battiscopa3, 28.12 ieri). Sonda TWIN
+sullo stato nuovo: foto 7 spiega **16/39 a 2.00px** (era 4/39 a 11.7) —
+camera passata dal lato vero, e coi 19 pick sparsi il residuo ora
+DISTINGUE le facce (2.0 vs 9.8 del flip): la cecità era tutta nel seme
+coplanare di un anello solo. Il seme dell'occhio è ufficialmente il
+recovery di elezione per le inquadrature dove lo zero-click rifiuta.
+La fetta «asticella relativa» resta PROPOSTA, in attesa del via di
+Vincenzo.
+
 ---
 
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo
