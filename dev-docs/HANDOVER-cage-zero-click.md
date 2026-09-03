@@ -185,6 +185,56 @@ UN punto dato: da confermare scattando le prossime foto in luce ambiente.
 E la rete di sicurezza è rimasta ZITTA su una foto buona — mezzo gate
 dell'asticella passato (l'altra metà aspetta una foto storta).
 
+**grab-09 (punto dato 2 sulla luce):** ambiente, 48 candidati (raccolto
+ancora su) ma zero-click RIFIUTATO — Y a 9-17° e Z a 6-20°, due anelli
+quasi di taglio: la selezione non assembla l'anello. Il SEME DELL'OCCHIO
+l'ha presa (19 dischetti, 2.1px; R: 9/9 foto a 1.55-2.43px, lente
+28.15mm, quarta misura concorde). Lettura: la luce cura la FAME DI
+CANDIDATI, non le inquadrature di taglio — lì il recovery resta gizmo+'a'.
+Prescrizione di scatto che si forma: luce ambiente E almeno due anelli
+ben di faccia.
+
+**RICONCILIAZIONE DI SESSIONE — COSTRUITA (via di Vincenzo), l'ultimo dei
+«difetti storici di sempre».** Il voto di montaggio ora CONDANNA per nome:
+`match-cage/convict-mounting` (pura, node-testata: `the-vote-names-its-twin`)
+fa leave-one-out — per ogni posa registrata, il voto di TUTTE le altre
+(fuso sulla dichiarazione con `merge-mounting`, la stessa politica di
+`session-cage-mounting`, ora UNA sola) e condanna sugli assi dove la sua
+lettura contraddice un vincitore con ≥2 voti. In sessione:
+`reconcile-cage-mounting!` gira a ogni osservazione nuova
+(`remember-cage-mounting!`) — condanna annunciata UNA volta con prove e
+cura («⚠ GEMELLO in sessione: foto N legge X in rev k6 contro il fwd k0
+votato da D…»), assoluzione detta forte quando la foto rifatta concorda;
+la R esclude le condannate dal VOTO sulla lente (mai dal film — il rms di
+un gemello è esemplare sui SUOI pick, la barra delle avvelenate non lo
+vede). Limite dichiarato: le obs muoiono con la lente (si azzerano dopo
+ogni R adottata) e rinascono coi prossimi 'a' — l'esclusione vive finché
+vive l'evidenza; sulla gabbia DICHIARATA (:flips/:phases) il quorum c'è
+sempre (la dichiarazione vota 2). Caso motivante misurato: foto 1 della
+sessione-verità del banco, gemello a mano scoperto dal voto delle altre
+cinque — fino a stanotte da NESSUNO nell'app. Gate live: alla prossima
+sessione, quando una registrazione vecchia contraddirà il voto.
+
+**SEME DI PROGETTO — mark sul BORDO degli anelli (idea di Vincenzo, 3/9
+notte; era nata per il piatto singolo).** Il bordo è massimamente visibile
+esattamente quando la faccia sparisce: il segnale si accende nel caso più
+difficile (anelli di taglio — grab-09). Vincoli già ragionati: (a) il
+cambio colore stampa per STRATO, quindi un motivo azimutale sul bordo
+verticale NON è stampabile a colori → la forma giusta sono FORI RADIALI
+passanti (2-3mm su bordo ~6mm), scuri con ogni luce come i fori di faccia,
+e SENZA gemello attraverso-la-plastica (si vedono solo dal loro arco
+esterno); stessi azimut della corona + doppio-foro come zero del bordo.
+(b) Alle distanze di lavoro: bordo ~15-20px, foro ~9px — stessa scala dei
+dischetti attuali, stesso detector. (c) Percorso software dal più
+economico: ancore nel modello + bande disegnate sulla gabbia virtuale →
+assign/ICP nei percorsi seeded e seme dell'occhio (nessun assemblatore
+nuovo) → zero-click da ellissi degeneri solo se serve. (d) Limiti: i fori
+di bordo sono quasi complanari col loro anello (da soli non rompono il
+gemello del singolo anello — valore INCROCIATO), e servono anelli
+ristampati (gabbia nuova). Non urgente: luce ambiente + due anelli di
+faccia + seme dell'occhio coprono; da progettare per la prossima
+iterazione fisica.
+
 ---
 
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo
