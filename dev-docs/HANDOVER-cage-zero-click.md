@@ -169,6 +169,22 @@ tre pezzi:**
 
 Gate live: alla prossima foto difficile (grab-07 è già recuperata a mano).
 
+**grab-08 (3/9, subito dopo): PRIMA PRESA ZERO-CLICK DAL VIVO — e la
+scoperta della LUCE.** Foto in sola luce ambiente (niente luci ad hoc,
+scelta di Vincenzo), inquadratura che a occhio era difficile: «Gabbia
+letta DA SOLA: anello x + zero-indice trovati, 14 dischetti (rms 1.2px)»,
+solve a 2.1px, 8 proposte deboli escluse per nome. Sonda TWIN: 15
+dischetti spiegati, facce distinte nette (2.10 vs 9.37 del flip), camera
+da un punto di vista nuovo (lato opposto, quasi a livello tavolo). Il dato
+che regge l'ipotesi di Vincenzo («forse è la via giusta»): **42 dischetti
+rilevati contro i 29-31 di tutte le foto con luci ad hoc** — le rifiutate
+storiche dello zero-click morivano allo stadio delle ellissi per fame di
+candidati, e la luce diffusa ha alzato il raccolto del detector di un
+terzo (meccanismo plausibile: niente riflessi speculari sulla plastica).
+UN punto dato: da confermare scattando le prossime foto in luce ambiente.
+E la rete di sicurezza è rimasta ZITTA su una foto buona — mezzo gate
+dell'asticella passato (l'altra metà aspetta una foto storta).
+
 ---
 
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo
