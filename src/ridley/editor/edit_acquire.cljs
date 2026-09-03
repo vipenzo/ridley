@@ -4964,14 +4964,30 @@
           ;; session — file it under the camera the grabs came from, so the
           ;; NEXT session starts at the measured lens instead of the mute 48.
           ;; Only when the WHOLE film is grabs: the fit is one focal over every
-          ;; view, and in a mixed film that number belongs to no single camera
-          (when (and (seq (:photos @session))
+          ;; view, and in a mixed film that number belongs to no single camera.
+          ;; And NEVER when the refine was CLAMPED: R moves the lens at most
+          ;; 15% per pass, so a clamped result is the trust region's edge, not
+          ;; a measurement — filed once (3/9, C922 partita dal default 48):
+          ;; 48×0.85 = 40.80mm went into the store as «refined» over the
+          ;; camera's real 27.3, and every next session would inherit the lie
+          (when (and (not (:clamped? out))
+                     (seq (:photos @session))
                      (every? #(re-find #"^grab-" (or (:file %) "")) (:photos @session)))
             (remember-camera-focal! focal-mm :refined))
           (auto-log! (str "=== rifinitura congiunta: " (count poses) " foto ==="))
           (auto-log! (str "  focale " (modal/fmt-number (:focal-mm before))
                           " → " (modal/fmt-number focal-mm) " mm"
-                          (when (:clamped? out) "  (fermata al limite: guarda i click, non la lente)")))
+                          ;; a clamped move has two very different causes and
+                          ;; the old text named only one: bad clicks dragging
+                          ;; the lens (the 2026-08-25 disaster) — but a lens
+                          ;; that STARTED far (the default 48 on a ~27 camera,
+                          ;; 3/9) clamps too, and there the cure is simply to
+                          ;; press R again: ±15% per pass, it walks home
+                          (when (:clamped? out)
+                            (str "  (fermata al limite di QUESTA passata: la R si "
+                                 "muove al massimo del 15% alla volta — RIPREMI R; "
+                                 "se sbatte sul limite anche dopo 2-3 passate, "
+                                 "guarda i click)"))))
           (auto-log! (str "  riproiezione " (modal/fmt-number (:rms-px before))
                           " → " (modal/fmt-number rms-px) " px"))
           ;; ONE number over N views cannot be judged — Vincenzo, 2026-08-11: "non so
@@ -5014,6 +5030,8 @@
           (set-status-message!
            (str "Rifinitura: focale " (modal/fmt-number focal-mm) " mm, riproiezione "
                 (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px"
+                (when (:clamped? out)
+                  " · la lente ha sbattuto sul limite della passata (±15%): RIPREMI R")
                 (when (seq held-out)
                   (str " · " (if (> (count held-out) 1) "le foto " "la foto ")
                        (str/join "/" (map inc (sort held-out)))
@@ -6906,6 +6924,18 @@
   (when (not= focal-mm (:focal-mm @session))
     (swap! session dissoc :cage-mounting-obs))
   (swap! session assoc :focal-mm focal-mm :focal-source :manual)
+  ;; a manual lens is a human DECLARATION and must survive a reload like the
+  ;; picks do — it didn't (found 3/9: Vincenzo's 28 lived only in memory, the
+  ;; page reloaded at the default 48, and R clamped its way to 40.8 from
+  ;; there). Debounced: the slider fires per-tick while dragging, and one
+  ;; write after the hand settles is the honest amount of disk
+  (when-let [t (:focal-save-timer @session)] (js/clearTimeout t))
+  (swap! session assoc :focal-save-timer
+         (js/setTimeout (fn []
+                          (when @session
+                            (swap! session dissoc :focal-save-timer)
+                            (save-acquire-state!)))
+                        400))
   (backdrop/set-focal! focal-mm viewport/set-camera-fov!))
 
 (defn- build-panel! []
