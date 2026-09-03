@@ -1244,8 +1244,68 @@
                                   (one (inc i)))))))))]
       (one 0))))
 
+(defn- focal-sweep-probe!
+  "CAGE_AUTO_SWEEP=1: the session's own saved PICKS re-solved at a ladder of
+   focal lengths — the judge the joint refine cannot be when its valley is
+   flat. Picks are PIXELS and pixels do not depend on the lens: if the data
+   knows the focal, the per-photo rms curve dips at the true one; if the
+   curve is flat, the views genuinely cannot tell (all rings near-edge-on)
+   and the lens must come from the store's measurement, not from R. Born on
+   battiscopa4 (3/9): R 'converged' at 40.67mm on a 27.3mm camera — not
+   clamped, just stalled — and the drawn cage covering the photo proved
+   nothing, because pose absorbs focal exactly (the founding mute error).
+   Outliers excluded as the app's own solve excludes them."
+  []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
+        targets (cage-targets proxy)
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        focals [22 24 26 27.35 29 31 34 37 40.7 44 48]]
+    (println (str "\n=== sweep di focale sui pick salvati: " (count files) " foto · gabbia "
+                  (pr-str {:phases phases :flips (vec (sort (declared-flips state)))}) " ==="))
+    (-> (decode (.join path dir (first files)))
+        (.then
+         (fn [res]
+           (let [{:keys [w h]} (sampler res)
+                 rows (vec
+                       (for [i (range (count files))
+                             :let [pnp (get-in state [:pnp (keyword (str i))])
+                                   out (set (:outliers pnp))
+                                   corr (vec (for [[k v] (:picks pnp)
+                                                   :let [ci (js/parseInt (name k) 10)]
+                                                   :when (and (not (out ci))
+                                                              (nth targets ci nil))]
+                                               {:ci ci :world (:obj (nth targets ci))
+                                                :px (:px v)}))]
+                             :when (>= (count corr) 6)]
+                         [i corr]))]
+             (doseq [f focals]
+               (let [intr (cam/intrinsics-from-fov
+                           (cam/equiv-focal->hfov-deg f (/ w h)) w h)
+                     per (vec (for [[i corr] rows
+                                    :let [sol (pnp/solve-pnp corr intr {})]]
+                                [i (some-> sol :rms-px)]))
+                     ok (keep second per)]
+                 (println (str "  f" (fmt f 2) "mm: "
+                               (apply str (interpose " · "
+                                                     (for [[i r] per]
+                                                       (str "foto" (inc i) " "
+                                                            (if r (fmt r 1) "—")))))
+                               "   | mediana "
+                               (if (seq ok)
+                                 (fmt (nth (vec (sort ok)) (quot (dec (count ok)) 2)) 2)
+                                 "—")))))
+             (println (str "  (pick per foto: "
+                           (apply str (interpose ", " (map (fn [[i c]] (str (inc i) ":" (count c)))
+                                                           rows))) ")")))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
 (defn ^:export main [& _]
   (cond
+    (aget (.-env js/process) "CAGE_AUTO_SWEEP") (focal-sweep-probe!)
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
     (aget (.-env js/process) "CAGE_AUTO_SEED") (seed-probe!)
     (aget (.-env js/process) "CAGE_AUTO_EYESEED") (eyeseed-probe!)

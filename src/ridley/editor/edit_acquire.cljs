@@ -4873,18 +4873,46 @@
           ;; resta nel film, con posa e click suoi; l'esclusione si dice
           ;; sempre, a voce alta — misura e riferisce, mai compensare in
           ;; silenzio.
-          [out active-views held-out]
-          (loop [vs views held []]
-            (let [o (bundle/refine-session vs (:focal-mm @session))]
-              (if (and (not (:error o))
-                       (> (:rms-px o) (+ (:rms-px (:before o)) 1e-9))
-                       (> (count vs) 4)
-                       (seq (:per-view o)))
-                (let [idxs (:views o)
-                      w (nth idxs (first (apply max-key second
-                                                (map-indexed vector (:per-view o)))))]
-                  (recur (vec (remove #(= w (:idx %)) vs)) (conj held w)))
-                [o vs held])))]
+          focal-now (:focal-mm @session)
+          refine-from
+          (fn [f0]
+            (loop [vs views held []]
+              (let [o (bundle/refine-session vs f0)]
+                (if (and (not (:error o))
+                         (> (:rms-px o) (+ (:rms-px (:before o)) 1e-9))
+                         (> (count vs) 4)
+                         (seq (:per-view o)))
+                  (let [idxs (:views o)
+                        w (nth idxs (first (apply max-key second
+                                                  (map-indexed vector (:per-view o)))))]
+                    (recur (vec (remove #(= w (:idx %)) vs)) (conj held w)))
+                  [o vs held]))))
+          [out active-views held-out] (refine-from focal-now)
+          ;; the session's ACTUAL state, for honest before→after messages even
+          ;; when the winner restarted from the store (whose own :before is
+          ;; the old poses evaluated under the other lens — a big number that
+          ;; measures the restart, not the session)
+          session-before (:rms-px (:before out))
+          ;; MULTI-START: the refine is a local optimizer in a valley the
+          ;; poses keep flattening (focal ↔ distance), and it can stall far
+          ;; from home — measured 3/9 on battiscopa4: from the default 48 it
+          ;; 'converged' at 40.67mm, not clamped, just stalled, while the
+          ;; sweep of the SAME picks dips at 27.35 (mediana 2.36px contro
+          ;; 9.60). The store's number for this camera is a measurement and
+          ;; exactly the prior that breaks that valley: try it as a second
+          ;; start and let the residuals judge — on the same view set, or
+          ;; the comparison is apples to oranges.
+          [out active-views held-out from-remembered?]
+          (let [m (:remembered-focal-mm @session)]
+            (if (and m (number? m)
+                     (> (js/Math.abs (- m (:focal-mm @session))) (* 0.02 m)))
+              (let [[o2 av2 ho2] (refine-from m)]
+                (if (and (not (:error o2))
+                         (= (set (map :idx av2)) (set (map :idx active-views)))
+                         (< (:rms-px o2) (:rms-px out)))
+                  [o2 av2 ho2 true]
+                  [out active-views held-out false]))
+              [out active-views held-out false]))]
       (doseq [idx unregistered]
         (auto-log! (str "  foto " (inc idx) " ha click ma NON è registrata: non vota "
                         "sulla lente. Registrala prima (Azzera, 4 click + doppio "
@@ -4975,8 +5003,14 @@
                      (every? #(re-find #"^grab-" (or (:file %) "")) (:photos @session)))
             (remember-camera-focal! focal-mm :refined))
           (auto-log! (str "=== rifinitura congiunta: " (count poses) " foto ==="))
-          (auto-log! (str "  focale " (modal/fmt-number (:focal-mm before))
+          (auto-log! (str "  focale "
+                          (modal/fmt-number (if from-remembered? focal-now (:focal-mm before)))
                           " → " (modal/fmt-number focal-mm) " mm"
+                          (when from-remembered?
+                            (str "  (RIPARTITA dalla lente in memoria di questa camera, "
+                                 (modal/fmt-number (:remembered-focal-mm @session))
+                                 "mm: la focale della sessione era un minimo locale — "
+                                 "i residui, sulle stesse viste, danno ragione alla memoria)"))
                           ;; a clamped move has two very different causes and
                           ;; the old text named only one: bad clicks dragging
                           ;; the lens (the 2026-08-25 disaster) — but a lens
@@ -4988,7 +5022,8 @@
                                  "muove al massimo del 15% alla volta — RIPREMI R; "
                                  "se sbatte sul limite anche dopo 2-3 passate, "
                                  "guarda i click)"))))
-          (auto-log! (str "  riproiezione " (modal/fmt-number (:rms-px before))
+          (auto-log! (str "  riproiezione "
+                          (modal/fmt-number (if from-remembered? session-before (:rms-px before)))
                           " → " (modal/fmt-number rms-px) " px"))
           ;; ONE number over N views cannot be judged — Vincenzo, 2026-08-11: "non so
           ;; giudicare, un po' migliora, ma poco". It was 9.3px because five views
@@ -5002,8 +5037,13 @@
                 per-before (:per-view before)
                 worst (when (seq per) (reduce max per))]
             (doseq [[idx b a] (map vector idxs per-before per)]
-              (auto-log! (str "    foto " (inc idx) ": " (modal/fmt-number b)
-                              " → " (modal/fmt-number a) " px"
+              ;; on a restart from the store, the per-view 'before' measures
+              ;; the RESTART (old poses under the other lens), not the
+              ;; session — print only the landing
+              (auto-log! (str "    foto " (inc idx) ": "
+                              (if from-remembered?
+                                (str (modal/fmt-number a) " px (con la lente nuova)")
+                                (str (modal/fmt-number b) " → " (modal/fmt-number a) " px"))
                               (when (and worst (= a worst) (> a (* 2.0 rms-px)))
                                 "   ← è questa che tira su la media"))))
             (doseq [[idx a] (map vector idxs per)]
@@ -5029,7 +5069,12 @@
           (enter-photo! (:current-idx @session))
           (set-status-message!
            (str "Rifinitura: focale " (modal/fmt-number focal-mm) " mm, riproiezione "
-                (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px"
+                (modal/fmt-number (if from-remembered? session-before (:rms-px before)))
+                " → " (modal/fmt-number rms-px) " px"
+                (when from-remembered?
+                  (str " · RIPARTITA dalla lente in memoria ("
+                       (modal/fmt-number (:remembered-focal-mm @session))
+                       "mm): la focale che avevi era un minimo locale"))
                 (when (:clamped? out)
                   " · la lente ha sbattuto sul limite della passata (±15%): RIPREMI R")
                 (when (seq held-out)
@@ -5876,19 +5921,24 @@
    store: the session's own state is what makes this run reproducible."
   [mm source]
   (when-let [k (:grab-camera @session)]
+    (swap! session assoc :remembered-focal-mm mm)
     (-> (read-camera-store)
         (.then (fn [store]
-                 (stl/desktop-write-file
-                  (js/JSON.stringify
-                   (clj->js (assoc store k {"focal-mm" mm
-                                            "source" (name source)
-                                            "updated" (.slice (.toISOString (js/Date.)) 0 10)}))
-                   nil 2)
-                  (stl/expand-home camera-store-path))))
-        (.then (fn [_]
-                 (auto-log! (str "  lente annotata per «" k "»: " (.toFixed mm 2)
-                                 "mm (" (name source) ") — le prossime sessioni con "
-                                 "questa camera partono da qui, non dal default"))))
+                 ;; an unchanged number is not news: a no-op R re-filed (and
+                 ;; re-announced) the same lens three times in one sitting
+                 (when-not (some-> (get-in store [k "focal-mm"])
+                                   (- mm) js/Math.abs (< 0.05))
+                   (-> (stl/desktop-write-file
+                        (js/JSON.stringify
+                         (clj->js (assoc store k {"focal-mm" mm
+                                                  "source" (name source)
+                                                  "updated" (.slice (.toISOString (js/Date.)) 0 10)}))
+                         nil 2)
+                        (stl/expand-home camera-store-path))
+                       (.then (fn [_]
+                                (auto-log! (str "  lente annotata per «" k "»: " (.toFixed mm 2)
+                                                "mm (" (name source) ") — le prossime sessioni con "
+                                                "questa camera partono da qui, non dal default"))))))))
         (.catch (fn [err]
                   (js/console.warn "edit-acquire: couldn't save the camera focal" err))))))
 
@@ -5904,6 +5954,8 @@
     (-> (read-camera-store)
         (.then (fn [store]
                  (when-let [mm (get-in store [k "focal-mm"])]
+                   ;; stash for R's multi-start regardless of adoption
+                   (swap! session assoc :remembered-focal-mm mm)
                    (let [updated (get-in store [k "updated"])]
                      (if (live-focal)
                        (when (> (js/Math.abs (- mm (:focal-mm @session))) 0.5)
@@ -8297,7 +8349,19 @@
 (defn- load-acquire-state! []
   (-> (stl/desktop-read-file (acquire-state-path))
       (.then apply-loaded-state!)
-      (.catch (fn [_] nil)))) ;; no file yet (first snap of a fresh session) — fine
+      (.catch (fn [_] nil)) ;; no file yet (first snap of a fresh session) — fine
+      (.then (fn [_]
+               ;; a reopened grab session knows its camera (:grab-camera just
+               ;; restored) — stash the store's measured lens so R can use it
+               ;; as a SECOND STARTING POINT (multi-start). Stashed, not
+               ;; adopted: adoption stays the camera-open flow's business,
+               ;; where the session provably has no lens of its own.
+               (when-let [k (:grab-camera @session)]
+                 (-> (read-camera-store)
+                     (.then (fn [store]
+                              (when-let [mm (get-in store [k "focal-mm"])]
+                                (swap! session assoc :remembered-focal-mm mm))))
+                     (.catch (fn [_] nil))))))))
 
 (defn- announce-plate-calibration!
   "Apply `c` to the proxy and SAY SO. Every entry into a calibrated session goes
