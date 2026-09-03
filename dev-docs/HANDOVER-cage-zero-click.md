@@ -141,8 +141,33 @@ camera passata dal lato vero, e coi 19 pick sparsi il residuo ora
 DISTINGUE le facce (2.0 vs 9.8 del flip): la cecità era tutta nel seme
 coplanare di un anello solo. Il seme dell'occhio è ufficialmente il
 recovery di elezione per le inquadrature dove lo zero-click rifiuta.
-La fetta «asticella relativa» resta PROPOSTA, in attesa del via di
-Vincenzo.
+
+**ASTICELLA RELATIVA — COSTRUITA (via di Vincenzo, «certo, vai pure»),
+tre pezzi:**
+
+1. **read-crown**: la soglia di accettazione sale coi dischetti rilevati —
+   `max(min-explained, min(12, rilevati/3))`. Il min-explained assoluto (6)
+   è quasi gratis su un frame ricco (i 4 click del seme sono candidati
+   anche loro): il 7-su-29 di grab-07 ora viene RIFIUTATO (bar 9), le
+   letture sane (16-24 spiegati) passano larghe, i frame poveri (≤18
+   rilevati) tengono la soglia vecchia.
+2. **rename-bar in solve-and-apply!**: un rescue può RINOMINARE i click
+   solo sotto `min(accept, max(accept/2, 3×mediana-rms delle altre foto
+   registrate))` — l'11.7px «accettabile» in assoluto era un fuori-scala
+   5.8× in una sessione a 2px. Stesso moltiplicatore 3× dell'esclusione
+   della R; sessione giovane (nessun'altra foto) = barra vecchia.
+3. **cage-pose-verdict!** — la rete di sicurezza sull'ESITO: dopo ogni 'a'
+   che registra, la posa finale si misura contro i dischetti RILEVATI
+   (match-cage/explained, tol 26) e sotto la soglia relativa il log dice
+   «ATTENZIONE: spiega solo N dei M — guarda la gabbia disegnata, se è
+   storta: Azzera, gizmo a occhio, 'a' senza click». Parla solo quando il
+   numero è brutto (un caveat che stampa sempre smette di essere letto);
+   qualunque anello della catena abbia mentito, l'esito non passa muto.
+   In più: la lettura seminata dice SEMPRE la sua frazione («la lettura
+   spiega E dei M dischetti rilevati») e il rifiuto del ramo seminato va
+   nel log col suggerimento del seme dell'occhio.
+
+Gate live: alla prossima foto difficile (grab-07 è già recuperata a mano).
 
 ---
 

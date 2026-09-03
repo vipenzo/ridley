@@ -2992,6 +2992,17 @@
                             "px con lo zero dentro (misurato, non indovinato). "
                             "Intanto qui lo zero resta fuori dal fit.")))))))
 
+(defn- session-rms-median
+  "Median reprojection rms of the OTHER registered photos — what 'a good fit'
+   means in THIS session, measured rather than assumed. nil when no other photo
+   is registered (a young session has no opinion yet)."
+  [skip-idx]
+  (let [rs (vec (sort (keep (fn [[i r]]
+                              (when (and (not= i skip-idx) (registered-result? r))
+                                (:rms-px r)))
+                            (:acquire-results @session))))]
+    (when (seq rs) (nth rs (quot (dec (count rs)) 2)))))
+
 (defn- outlier-budget
   "Proportional outlier budget for a per-photo solve: 40% of the picks, floor 2.
    The historic cap of 2 is sized for the occasional mis-click and stays right
@@ -3155,7 +3166,22 @@
                         ;; while the focal was poisoned at 61mm, corrupting photo
                         ;; after photo until no single lens satisfied them all and
                         ;; the joint refinement could only refuse.
-                        rename-worthy? (fn [sol] (and sol (<= (:rms-px sol) pnp/accept-rms-px)))
+                        ;; the bar a rescue must clear to REWRITE names tightens
+                        ;; with the session's own measured quality: 11.7px is
+                        ;; «acceptable» in the abstract (absolute bar 12) but in
+                        ;; a session whose registered photos sit at 2px it is a
+                        ;; 5.8× outlier wearing a badge — grab-07 (3/9 notte),
+                        ;; where exactly that rescue renamed 6 discs onto the
+                        ;; mirror twin. 3× the median is the same multiplier the
+                        ;; R uses to exclude views; the floor at accept/2 keeps
+                        ;; a very sharp session from refusing every honest new
+                        ;; frame, and with no other photo registered the old
+                        ;; absolute bar stands (a young session has no opinion).
+                        rename-bar (if-let [med (session-rms-median idx)]
+                                     (min pnp/accept-rms-px
+                                          (max (/ pnp/accept-rms-px 2.0) (* 3.0 med)))
+                                     pnp/accept-rms-px)
+                        rename-worthy? (fn [sol] (and sol (<= (:rms-px sol) rename-bar)))
                         flip-ok? (and flip-sol
                                       (rename-worthy? flip-sol)
                                       (bridge/camera-sees-marks?
@@ -4007,6 +4033,29 @@
             "due registrazioni è il GEMELLO. Un click sul doppio pallino di "
             "quell'anello in una TERZA foto fa da spareggio")))))
 
+(defn- cage-pose-verdict!
+  "The LAST word after a cage 'a' lands: the registered pose, measured against
+   the discs actually DETECTED in the photo — the arbiter the residual cannot
+   be. Every step of the chain can lie politely (grab-07, 3/9 notte: reading
+   «adopted», planar «fit pulito 1.59px», rescue «11.7px» — and the final pose
+   explained 4 of 39 visible marks while the drawn cage sat visibly wrong);
+   this check runs on the OUTCOME, whoever produced it, and speaks only when
+   the number is bad — a caveat that always prints stops being read."
+  [idx targets cands k]
+  (when (registered-result? (get-in @session [:acquire-results idx]))
+    (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+          cam (get-in @session [:camera-poses idx])
+          pose (when cam (bridge/editor->solver-pose cam proxy-pose))
+          n (when pose
+              (match-cage/explained targets (mapv :center cands) k pose 26.0))
+          bar (max 6 (min 12 (quot (count cands) 3)))]
+      (when (and n (< n bar))
+        (auto-log! (str "  ATTENZIONE foto " (inc idx) ": la posa registrata spiega solo "
+                        n " dei " (count cands) " dischetti rilevati nella foto (una "
+                        "posa sana ne spiega più di un terzo). La gabbia disegnata "
+                        "probabilmente NON combacia: guardala — se è storta, Azzera, "
+                        "posala a occhio col gizmo e ripremi 'a' senza click."))))))
+
 (defn- cage-read-and-place!
   "Cage 'a': the crown you clicked, read by the REST OF THE CAGE — then every
    other mark it accounts for placed for you, and the pose solved on all of them.
@@ -4212,7 +4261,8 @@
                                      (.toFixed (:deg (:phase-suspect rr)) 0) "°"))
                               (when mounting
                                 (cage-mounting-suffix mounting (:index-obs rr)))))
-                        (on-solve-pnp!))))))
+                        (on-solve-pnp!)
+                        (cage-pose-verdict! idx targets cands k))))))
                (.catch (fn [e]
                          (say! (str "Lettura automatica fallita: " (str e)))))))
          50))
@@ -4246,23 +4296,32 @@
                                                  (get-in @session [:cage-face-choice idx])})]
                  (cond
                    (nil? res)
-                   (say!
-                    (str "Non riesco a leggere la gabbia da questa foto: dei "
-                         (count cands) " dischetti trovati, nessuna delle 48 riletture "
-                         "della corona ne spiega abbastanza. Di solito vuol dire che si vede "
-                         "UN anello solo — bastano pochi gradi fuori dall'asse perché "
-                         "ricompaiano gli altri."
-                         ;; the evidence in the log, camera-dietro-style: foto 3
-                         ;; (30/8) refused on a seed silently polluted by clicks
-                         ;; from three nights before, and nothing printed WHICH
-                         ;; picks the reading was fed
-                         " · seme " (pr-str (vec (sort-by (comp str key) picks-by-id)))
-                         (when-let [others (seq (remove (set (keys picks-by-id))
-                                                        (keys hand-picks)))]
-                           (str " · altri click a mano nel mucchio: "
-                                (str/join " " (sort (map name others)))
-                                " — se qualcuno è di una sessione di lavoro passata, "
-                                "Azzera e riclicca pulito"))))
+                   ;; logged as well as flashed (the 4-second status line is not
+                   ;; a record), and the refusal now has a second honest cause:
+                   ;; since the relative bar (3/9 notte) a best reading that
+                   ;; explains too little of what the frame OFFERS is refused
+                   ;; rather than adopted — grab-07's 7-of-29 would land here
+                   (let [msg (str "Non riesco a leggere la gabbia da questa foto: dei "
+                                  (count cands) " dischetti trovati, nessuna delle 48 riletture "
+                                  "della corona ne spiega abbastanza per fidarsi (la soglia "
+                                  "sale con i dischetti rilevati). Di solito vuol dire che si "
+                                  "vede UN anello solo — bastano pochi gradi fuori dall'asse "
+                                  "perché ricompaiano gli altri. In alternativa: posa la "
+                                  "gabbia a occhio col gizmo e premi 'a' SENZA click — il "
+                                  "seme dell'occhio."
+                                  ;; the evidence in the log, camera-dietro-style: foto 3
+                                  ;; (30/8) refused on a seed silently polluted by clicks
+                                  ;; from three nights before, and nothing printed WHICH
+                                  ;; picks the reading was fed
+                                  " · seme " (pr-str (vec (sort-by (comp str key) picks-by-id)))
+                                  (when-let [others (seq (remove (set (keys picks-by-id))
+                                                                 (keys hand-picks)))]
+                                    (str " · altri click a mano nel mucchio: "
+                                         (str/join " " (sort (map name others)))
+                                         " — se qualcuno è di una sessione di lavoro passata, "
+                                         "Azzera e riclicca pulito")))]
+                     (auto-log! (str "  " foto-tag msg))
+                     (say! msg))
 
                    :else
                    (let [{:keys [reading corr]} res
@@ -4357,6 +4416,11 @@
                                                                        wit-obs)]
                                                    (str/upper-case (name axis)))))))
                            suffix (str
+                                   ;; the number that would have screamed on
+                                   ;; grab-07: the reading's whole-cage evidence,
+                                   ;; against what the frame offered
+                                   (str " · la lettura spiega " (:explained res)
+                                        " dei " (count cands) " dischetti rilevati")
                                    (when wit-obs
                                      (cage-mounting-suffix (session-cage-mounting idx) wit-obs))
                                    (when unvoted
@@ -4437,7 +4501,8 @@
                                       " riletture spiegano la gabbia altrettanto bene — "
                                       "questa foto non basta a decidere"))
                                suffix)))
-                       (on-solve-pnp!)))))))
+                       (on-solve-pnp!)
+                       (cage-pose-verdict! idx targets cands k)))))))
             (.catch (fn [e]
                       (say! (str "Lettura della gabbia fallita: " (str e))))))))))
 

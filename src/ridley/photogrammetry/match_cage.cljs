@@ -428,8 +428,21 @@
                                         (assoc ps :axis axis :steps k
                                                :deg (* k (/ 360.0 marks))))))
              corr (assign targets candidates intrinsics (:pose result) tol-px)
-             full (when (>= (count corr) 6) (pnp/solve-pnp corr intrinsics {}))]
-         (when (>= (:explained result) min-explained)
+             full (when (>= (count corr) 6) (pnp/solve-pnp corr intrinsics {}))
+             ;; The bar RISES with the evidence available. min-explained alone is
+             ;; nearly free on a busy frame: the seed ring's own clicked discs are
+             ;; candidates too, so 4 clicks + noise reach 6 no matter what the
+             ;; reading says about the rest of the cage — grab-07 (3/9 notte):
+             ;; a flip-face twin explaining 7 of 29 detected discs passed the
+             ;; absolute bar, RENAMED four correct hand clicks, and the pose it
+             ;; seeded explained 4 of 39 visible marks (a healthy read explains
+             ;; 16-24). One candidate in three is the floor a true reading clears
+             ;; with room (measured 55-70%); the cap at 12 keeps junk-heavy
+             ;; frames from demanding more than any true reading could show, and
+             ;; on sparse frames (≤18 candidates) the old absolute bar is
+             ;; unchanged.
+             bar (max min-explained (min 12 (quot (count candidates) 3)))]
+         (when (>= (:explained result) bar)
            (assoc result
                   :corr corr
                   :full (when full (select-keys full [:pose :rms-px]))
