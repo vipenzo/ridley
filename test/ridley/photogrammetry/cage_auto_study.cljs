@@ -10,6 +10,7 @@
             [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.blob-detect :as bd]
             [ridley.photogrammetry.bridge :as bridge]
+            [ridley.photogrammetry.bundle :as bundle]
             [ridley.photogrammetry.cage :as cage]
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.linalg :as la]
@@ -1303,8 +1304,139 @@
                                                            rows))) ")")))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
+(defn- restart-probe!
+  "CAGE_AUTO_RESTART=1: replica del SECONDO START della R (multi-start di
+   `f03a840`) fuori dall'app — pose rifatte per-vista (solve-pnp ai pick
+   salvati, outlier esclusi) alla lente in memoria, poi rifinitura congiunta
+   con lo stesso leave-one-out, stampando a ogni giro la focale (e la
+   BRIGLIA ±15%), l'rms prima→dopo e i per-vista. Nata il 3/9: il secondo
+   start di battiscopa4 è finito «battuto — rms 32.79px su 4 viste» quando
+   la sweep degli STESSI pick a f27.35 misura mediana 2.36px — questa sonda
+   fa vedere dove i 2.36 diventano 32.79. CAGE_AUTO_RESTART_F cambia la
+   lente di partenza (default 27.35)."
+  []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
+        targets (cage-targets proxy)
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        m (or (some-> (aget (.-env js/process) "CAGE_AUTO_RESTART_F") js/parseFloat) 27.35)]
+    (println (str "\n=== secondo start replicato: lente " (fmt m 2) "mm, pose rifatte · "
+                  (count files) " foto ==="))
+    (-> (decode (.join path dir (first files)))
+        (.then
+         (fn [res]
+           (let [{:keys [w h]} (sampler res)
+                 intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg m (/ w h)) w h)
+                 views (vec (for [i (range (count files))
+                                  :let [pnp-e (get-in state [:pnp (keyword (str i))])
+                                        out (set (:outliers pnp-e))
+                                        corr (vec (for [[k v] (:picks pnp-e)
+                                                        :let [ci (js/parseInt (name k) 10)]
+                                                        :when (and (not (out ci))
+                                                                   (nth targets ci nil))]
+                                                    {:ci ci
+                                                     :world (:obj (nth targets ci))
+                                                     :px (:px v)}))
+                                        ;; come il multi-start dell'app (3/9):
+                                        ;; budget proporzionale (40%), e al
+                                        ;; refine solo i sopravvissuti
+                                        budget (max 2 (quot (* 2 (count corr)) 5))
+                                        sol (when (>= (count corr) 6)
+                                              (pnp/solve-pnp corr intr {:max-outliers budget}))
+                                        survivors (when (:pose sol)
+                                                    (mapv #(select-keys % [:ci :world :px])
+                                                          (:per-point sol)))]
+                                  :when (and (:pose sol) (>= (count survivors) 4))]
+                              {:idx i :image-size [w h] :pose (:pose sol) :picks survivors
+                               :seed-rms (:rms-px sol)
+                               :dropped (count (:outliers sol))}))]
+             (println (str "  reseed: "
+                           (apply str (interpose " · "
+                                                 (for [v views]
+                                                   (str "foto" (inc (:idx v)) " "
+                                                        (fmt (:seed-rms v) 1) "px/"
+                                                        (count (:picks v)) "pick(-"
+                                                        (:dropped v) ")"))))))
+             (loop [vs views held []]
+               (let [o (bundle/refine-session vs m)]
+                 (if (:error o)
+                   (println (str "  ERRORE refine: " (:error o)))
+                   (do
+                     (println (str "  refine su " (count vs) " viste: focale "
+                                   (fmt m 2) " → " (fmt (:focal-mm o) 2)
+                                   (when (:clamped? o) "  ← BRIGLIA (il fit voleva uscire dal ±15%)")
+                                   " · rms " (fmt (:rms-px (:before o)) 2)
+                                   " → " (fmt (:rms-px o) 2) "px"))
+                     (println (str "    per-vista: "
+                                   (apply str (interpose " · "
+                                                         (map (fn [i r] (str "foto" (inc i) " " (fmt r 1)))
+                                                              (:views o) (:per-view o))))))
+                     (if (and (> (:rms-px o) (+ (:rms-px (:before o)) 1e-9))
+                              (> (count vs) 4)
+                              (seq (:per-view o)))
+                       (let [idxs (:views o)
+                             worst (nth idxs (first (apply max-key second
+                                                           (map-indexed vector (:per-view o)))))]
+                         (println (str "    → peggiora: tolgo dal voto foto " (inc worst) " e riprovo"))
+                         (recur (vec (remove #(= worst (:idx %)) vs)) (conj held worst)))
+                       (println (str "  esito: rms " (fmt (:rms-px o) 2) "px su " (count vs)
+                                     " viste, focale " (fmt (:focal-mm o) 2) "mm"
+                                     (when (seq held)
+                                       (str " (fuori dal voto: foto "
+                                            (str/join "/" (map inc (sort held))) ")"))))))))))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
+(defn- outlier-budget-probe!
+  "CAGE_AUTO_BUDGET=1: i solve per-vista a focale fissa con budget di outlier
+   CRESCENTI (2, 4, 6, 9). L'ipotesi da giudicare (3/9): i pick nati
+   dall'assegnazione fatta alla lente sbagliata portano PIÙ di 2 etichette
+   sbagliate a vista — il tetto storico di solve-pnp — e sono i sopravvissuti
+   sbagliati a tirare il fit congiunto verso 34. Se a f27.35 con budget 6 le
+   foto ribelli (1/4/6) crollano a ~2-3px, l'ipotesi è provata; se restano
+   a 7-11px, quelle inquadrature non vedono la focale e la storia è un'altra."
+  []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
+        targets (cage-targets proxy)
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)]
+    (-> (decode (.join path dir (first files)))
+        (.then
+         (fn [res]
+           (let [{:keys [w h]} (sampler res)]
+             (doseq [f [27.35 34.0]]
+               (let [intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg f (/ w h)) w h)]
+                 (println (str "\n=== f" (fmt f 2) "mm ==="))
+                 (doseq [b [2 4 6 9]]
+                   (println (str "  budget " b ": "
+                                 (apply str
+                                        (interpose " · "
+                                                   (for [i (range (count files))
+                                                         :let [pnp-e (get-in state [:pnp (keyword (str i))])
+                                                               out (set (:outliers pnp-e))
+                                                               corr (vec (for [[k v] (:picks pnp-e)
+                                                                               :let [ci (js/parseInt (name k) 10)]
+                                                                               :when (and (not (out ci))
+                                                                                          (nth targets ci nil))]
+                                                                           {:world (:obj (nth targets ci)) :px (:px v)}))
+                                                               sol (when (>= (count corr) 6)
+                                                                     (pnp/solve-pnp corr intr {:max-outliers b}))]]
+                                                     (str "foto" (inc i) " "
+                                                          (if sol
+                                                            (str (fmt (:rms-px sol) 1) "px(-"
+                                                                 (count (:outliers sol)) ")")
+                                                            "—")))))))))))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
 (defn ^:export main [& _]
   (cond
+    (aget (.-env js/process) "CAGE_AUTO_BUDGET") (outlier-budget-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_RESTART") (restart-probe!)
     (aget (.-env js/process) "CAGE_AUTO_SWEEP") (focal-sweep-probe!)
     (aget (.-env js/process) "CAGE_AUTO_SYNTH") (synth-run!)
     (aget (.-env js/process) "CAGE_AUTO_SEED") (seed-probe!)

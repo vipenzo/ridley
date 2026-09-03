@@ -22,6 +22,61 @@ stato dei lavori per ripartire.
 
 ---
 
+## ATTERRAGGIO 3/9 sera — per la chat nuova, leggi PRIMA questo
+
+**LO STATO.** Il run del pomeriggio ha sciolto il filo: il multi-start È
+partito (la riga di decisione c'era) ma «battuto — rms 32.79px su 4 viste
+contro 9.43 su 6». Riprodotto ESATTO al banco (sonda nuova
+`CAGE_AUTO_RESTART=1`, stesso 32.79) e trovati TRE difetti concatenati,
+tutti curati e verificati:
+
+1. **La briglia restituiva una chimera.** `bundle/refine-session`, quando il
+   fit sbatteva sul ±15%, tornava focale CLAMPATA + pose del fit in fuga:
+   uno stato che nessuno ha mai fittato, rms 28-33px su viste che da sole
+   stavano a 2-11 — e il leave-one-out, giudicando su quel numero, buttava
+   fuori le viste BUONE. Cura: al clamp le pose si RI-FITTANO con la focale
+   congelata al bordo (bundle.cljs).
+2. **I pick portano l'impronta della lente a cui sono nati.** Foto 1/4/6 di
+   battiscopa4 hanno 7-8 etichette sbagliate CIASCUNA (assegnate da 'a'
+   quando la sessione era a 34-40mm su camera 27.35) — sopra il tetto
+   storico di 2 outlier; il refine congiunto le mangiava tutte e voleva 34.
+   Sonda `CAGE_AUTO_BUDGET=1`: a f27.35 con budget alto TUTTE le foto
+   crollano d'accordo a 1.5-2.6px; a f34 le foto sane restano a 4.6-6.4 e il
+   greedy SI RIFIUTA di scartare — l'errore da lente sbagliata si spalma su
+   tutti i residui, non spicca. È questa asimmetria che tiene onesto il
+   budget: la lente sbagliata non può barare a colpi di scarti. Cura: il
+   reseed del secondo start scarta con budget proporzionale (40% dei pick)
+   e al refine congiunto vanno solo i sopravvissuti; se il restart VINCE,
+   gli scarti freschi finiscono in `:pnp-outliers` (rossi sulla foto, fuori
+   dal voto, riassegnabili con 'a'). Lezione, gemella di quella del 3/9
+   mattina: rifare le pose senza rifare i PICK non riparte niente.
+3. **La bugia sigillava la propria via di fuga.** Il run perdente ha
+   ri-archiviato 34.05 «refined» sopra il 27.35 appena rimesso (QUARTA
+   volta) — e con memoria ≈ sessione il multi-start non sarebbe mai più
+   partito. Cura: asticella di plausibilità — un refined che dista >15%
+   dalla misura in memoria si RIFERISCE a voce alta, non si archivia
+   («cancella la voce da ~/.ridley/cameras.json se la camera è cambiata»).
+   Store rimesso a 27.35 (source `measured`, RDCam agosto).
+
+**VERIFICA AL BANCO** (stessa sonda, dopo le cure): reseed 1.5-2.6px su
+6/6 viste, refine congiunto 27.35 → **28.12mm, rms 2.06px su 6 viste**,
+niente briglia, nessuna vista scartata → la dominanza (6≥6 E 2.06<9.43) fa
+VINCERE il restart. E 28.12 combacia col 28.08 misurato su battiscopa3 con
+la stessa C922: due sessioni indipendenti, stesso numero.
+
+**PRIMA MOSSA della chat nuova**: hard-reload della pagina, battiscopa4,
+UNA R. Atteso: «RIPARTITA dalla lente in memoria (27.35mm)…», focale
+~28.1, per-vista ~2px, «N click portavano l'etichetta della lente vecchia:
+segnati come scarti (rossi)», «lente annotata ~28.1». Se il multi-start
+non parte, la riga di decisione dice il perché — leggerla.
+
+**CODA**: quella del 3/9 mattina, più: il tetto di 2 outlier resta il
+difetto storico nei solve per-foto ('a'/'r') fuori dal restart — valutare
+il budget proporzionale anche lì, con la stessa asimmetria a fare da
+guardiano.
+
+---
+
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo
 
 **LO STATO.** La coda del 2/9 è TUTTA CHIUSA e committata (`a454732..`,
