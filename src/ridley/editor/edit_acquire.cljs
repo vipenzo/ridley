@@ -2992,6 +2992,32 @@
                             "px con lo zero dentro (misurato, non indovinato). "
                             "Intanto qui lo zero resta fuori dal fit.")))))))
 
+(defn- outlier-budget
+  "Proportional outlier budget for a per-photo solve: 40% of the picks, floor 2.
+   The historic cap of 2 is sized for the occasional mis-click and stays right
+   for a handful of hand picks (below 8 picks this IS 2) — but picks born from
+   an ASSIGNMENT made at the wrong lens carry far more (battiscopa4, 3/9:
+   7-8 wrong labels per photo out of 20-30), and with the cap the survivors
+   drag every later solve and the joint R toward the wrong lens's basin. The
+   generous budget cannot buy a wrong hypothesis a pass: at the wrong lens (or
+   under wrong names) the error spreads over EVERY residual — the mislabeled-
+   mark signature in pnp's docstring — so gross-outlier? finds nothing to drop
+   and the greedy loop stops; only under the right hypothesis do the bad picks
+   stand out individually and fall (measured, CAGE_AUTO_BUDGET probe: foto2 at
+   f34 dropped 1 with budget 9 and stayed at 6.4px; at f27.35 it dropped its
+   2 and every photo agreed at 1.5-2.6px). NOT used by cage-relabel-rescue:
+   there the solve JUDGES a naming hypothesis, and a naming must not earn its
+   acceptance by shedding the picks that contradict it."
+  [corr]
+  (max 2 (quot (* 2 (count corr)) 5)))
+
+(defn- solve-photo
+  "pnp/solve-pnp with the per-photo proportional outlier budget. `opts` may
+   still override :max-outliers explicitly."
+  ([corr k] (solve-photo corr k {}))
+  ([corr k opts]
+   (pnp/solve-pnp corr k (merge {:max-outliers (outlier-budget corr)} opts))))
+
 (defn- solve-and-apply!
   "Solve the current photo's placed correspondences and APPLY the pose (move the
    proxy on photo 0, the camera otherwise), updating results/residuals/outliers
@@ -3008,7 +3034,7 @@
                                {:ci ci :world (:obj (nth targets ci)) :px px}))
         camera-pose (current-camera-pose)
         k (session-intrinsics iw ih)]
-    (let [sol (let [first-try (pnp/solve-pnp correspondences k {})
+    (let [sol (let [first-try (solve-photo correspondences k)
                     detect (bridge/plate-detect (:proxy-mesh @session))
                     sees? (fn [s] (and s (bridge/camera-sees-marked-face?
                                           detect (:pose s))))
@@ -3044,7 +3070,7 @@
                                          (let [j (flip (:ci c))]
                                            (assoc c :ci j :world (:obj (nth targets j)))))
                                        correspondences)
-                        m-sol (pnp/solve-pnp mirrored k {})]
+                        m-sol (solve-photo mirrored k)]
                     (if (sees? m-sol)
                       (do (relabel-picks! idx flip)
                           (assoc m-sol :note
@@ -3054,8 +3080,8 @@
                       ;; The mirror didn't rescue it either: fall back on
                       ;; refining from the pose the user has on screen.
                       (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
-                            retry (pnp/solve-pnp correspondences k
-                                                 {:method :seeded :seed seed})]
+                            retry (solve-photo correspondences k
+                                               {:method :seeded :seed seed})]
                         (if (sees? retry)
                           (assoc retry :note
                                  (str "la prima soluzione metteva la camera dietro il piatto: "
@@ -3120,7 +3146,7 @@
                                   (mapv (fn [c] (let [j (flip-face (:ci c))]
                                                   (assoc c :ci j :world (:obj (nth targets j)))))
                                         correspondences))
-                        flip-sol (when flipped (pnp/solve-pnp flipped k {}))
+                        flip-sol (when flipped (solve-photo flipped k))
                         ;; A rescue may REWRITE the user's names only when the fit
                         ;; it buys is one the session would accept. Renaming on the
                         ;; strength of a 100px fit is guessing — and the guess gets
@@ -3136,8 +3162,8 @@
                                        targets (mapv :ci flipped) (:pose flip-sol)))
                         seed (bridge/editor->solver-pose camera-pose proxy-pose)
                         retry (when-not flip-ok?
-                                (pnp/solve-pnp correspondences k
-                                               {:method :seeded :seed seed}))
+                                (solve-photo correspondences k
+                                             {:method :seeded :seed seed}))
                         ;; Before blaming the geometry, suspect the NAMES. On a
                         ;; cage the offered labels come from where the proxy sits,
                         ;; not from the photograph, and the two faces of a ring
@@ -3192,14 +3218,14 @@
                                                      targets (mapv :ci hand-corr) (:pose s))))
                                 retry-hand (when (and (< (count hand-corr) (count correspondences))
                                                       (>= (count hand-corr) (min-pnp-picks)))
-                                             (pnp/solve-pnp hand-corr k {}))
+                                             (solve-photo hand-corr k))
                                 hand-flipped (when (and retry-hand
                                                         (not (sees-hand? retry-hand))
                                                         (every? some? (map (comp flip-face :ci) hand-corr)))
                                                (mapv (fn [c] (let [j (flip-face (:ci c))]
                                                                (assoc c :ci j :world (:obj (nth targets j)))))
                                                      hand-corr))
-                                hand-flip-sol (when hand-flipped (pnp/solve-pnp hand-flipped k {}))
+                                hand-flip-sol (when hand-flipped (solve-photo hand-flipped k))
                                 hand-flip-ok? (and hand-flip-sol
                                                    (rename-worthy? hand-flip-sol)
                                                    (bridge/camera-sees-marks?
@@ -3596,7 +3622,7 @@
             k (session-intrinsics iw ih)
             corr (vec (for [[ci {:keys [px]}] hand]
                         {:ci ci :world (:obj (nth targets ci)) :px px}))
-            try-sol (pnp/solve-pnp corr k {})
+            try-sol (solve-photo corr k)
             sees? (and try-sol
                        (or (nil? (some :normal targets))
                            (bridge/camera-sees-marks? targets (mapv :ci corr) (:pose try-sol))))]
@@ -4948,10 +4974,8 @@
                                            k2 (pcamera/intrinsics-from-fov
                                                (pcamera/equiv-focal->hfov-deg m (/ iw2 ih2))
                                                iw2 ih2)
-                                           budget (max 2 (quot (* 2 (count (:picks v))) 5))
                                            s (when (>= (count (:picks v)) 6)
-                                               (pnp/solve-pnp (:picks v) k2
-                                                              {:max-outliers budget}))
+                                               (solve-photo (:picks v) k2))
                                            survivors (when (:pose s)
                                                        (mapv #(select-keys % [:ci :world :px])
                                                              (:per-point s)))]
