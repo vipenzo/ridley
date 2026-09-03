@@ -5029,7 +5029,13 @@
                 " Tengo focale e pose che avevi.")))
 
         :else
-        (let [{:keys [focal-mm poses rms-px before]} out]
+        (let [{:keys [focal-mm poses rms-px before]} out
+              ;; the lens the restart STARTED from, read before the annotation
+              ;; below swaps :remembered-focal-mm to the freshly filed value —
+              ;; Vincenzo's gate log (3/9 sera) said «RIPARTITA dalla lente in
+              ;; memoria, 28.1209mm» about a run that restarted from 27.35: the
+              ;; story was right and the number was the one just written
+              started-from-mm (:remembered-focal-mm @session)]
           ;; active-views, NOT views: a held-out photo's pose must not be
           ;; overwritten by a zip against the subset's poses — it kept its own
           (doseq [[view pose] (map vector (filterv #(and (:pose %) (>= (count (:picks %)) 4))
@@ -5108,7 +5114,7 @@
                           " → " (modal/fmt-number focal-mm) " mm"
                           (when from-remembered?
                             (str "  (RIPARTITA dalla lente in memoria di questa camera, "
-                                 (modal/fmt-number (:remembered-focal-mm @session))
+                                 (modal/fmt-number started-from-mm)
                                  "mm: la focale della sessione era un minimo locale — "
                                  "i residui, sulle stesse viste, danno ragione alla memoria)"))
                           ;; a clamped move has two very different causes and
@@ -5173,7 +5179,7 @@
                 " → " (modal/fmt-number rms-px) " px"
                 (when from-remembered?
                   (str " · RIPARTITA dalla lente in memoria ("
-                       (modal/fmt-number (:remembered-focal-mm @session))
+                       (modal/fmt-number started-from-mm)
                        "mm): la focale che avevi era un minimo locale"))
                 (when (:clamped? out)
                   " · la lente ha sbattuto sul limite della passata (±15%): RIPREMI R")

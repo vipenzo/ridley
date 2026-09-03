@@ -64,11 +64,17 @@ niente briglia, nessuna vista scartata → la dominanza (6≥6 E 2.06<9.43) fa
 VINCERE il restart. E 28.12 combacia col 28.08 misurato su battiscopa3 con
 la stessa C922: due sessioni indipendenti, stesso numero.
 
-**PRIMA MOSSA della chat nuova**: hard-reload della pagina, battiscopa4,
-UNA R. Atteso: «RIPARTITA dalla lente in memoria (27.35mm)…», focale
-~28.1, per-vista ~2px, «N click portavano l'etichetta della lente vecchia:
-segnati come scarti (rossi)», «lente annotata ~28.1». Se il multi-start
-non parte, la riga di decisione dice il perché — leggerla.
+**GATE LIVE PASSATO (3/9 sera, log di Vincenzo)**: una R su battiscopa4 →
+«RIPARTITA dalla lente in memoria», focale 34.0455 → **28.1209mm**,
+riproiezione 9.4342 → **2.0639px**, sei foto a 1.55-2.42px, **26 click
+segnati come scarti** — esattamente gli 8+2+0+7+2+7 contati dal banco, e
+il 28.12 combacia col 28.08 di battiscopa3 (stessa C922, sessione
+indipendente). Store: 28.12 «refined». Un difetto cosmetico trovato nel
+log del gate e corretto subito: «RIPARTITA dalla lente in memoria,
+28.1209mm» — il messaggio leggeva `:remembered-focal-mm` DOPO che
+l'annotazione l'aveva già aggiornata; ora il valore di partenza (27.35) si
+cattura prima. Il log è lo strumento di misura: non deve mentire nemmeno
+per sbaglio.
 
 **CODA**: quella del 3/9 mattina, più: il tetto di 2 outlier resta il
 difetto storico nei solve per-foto ('a'/'r') fuori dal restart — valutare
