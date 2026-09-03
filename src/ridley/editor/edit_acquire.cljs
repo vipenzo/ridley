@@ -4859,8 +4859,11 @@
                                   ;; current photo's, which is every photo's
                                   :image-size [iw ih]
                                   :pose (bridge/editor->solver-pose cam proxy-pose)
+                                  ;; :ci rides along so the restart's fresh
+                                  ;; solves can name the picks they reject
                                   :picks (vec (for [[ci {:keys [px]}] picks]
-                                                {:world (:obj (nth targets ci)) :px px}))})))
+                                                {:ci ci :world (:obj (nth targets ci))
+                                                 :px px}))})))
                            (range (count (:photos @session)))))
           ;; LEAVE-ONE-OUT quando peggiora — direttiva di Vincenzo (2/9 sera,
           ;; dopo grab-04): una foto vale per il PEZZO che mostra, non per come
@@ -4924,17 +4927,41 @@
                   [out active-views held-out false])
 
               :else
+              ;; The restart re-solves each view at the remembered lens with a
+              ;; PROPORTIONAL outlier budget (40% of its picks), and feeds the
+              ;; joint refine only the survivors. The historic cap of 2 is
+              ;; sized for the occasional mis-click; picks born from an
+              ;; ASSIGNMENT made at the wrong lens carry far more (battiscopa4,
+              ;; 3/9: foto 1/4/6 held 7-8 wrong labels each — 'a' had assigned
+              ;; them while the session sat at 34-40mm on a 27.35 camera), and
+              ;; those survivors dragged the restart's joint fit straight back
+              ;; up: it hit the ±15% briglia and lost with a garbage rms while
+              ;; the same picks, solved fresh per-view at 27.35, sat at 2.36px
+              ;; median. The budget cannot help a WRONG remembered lens cheat:
+              ;; at the wrong focal the error spreads over every residual (the
+              ;; mislabeled-mark signature of pnp's docstring) and the greedy
+              ;; loop refuses to drop — measured: foto2 at f34 dropped 1 with
+              ;; a budget of 9 and stayed at 6.4px, while at f27.35 the bad
+              ;; picks stood out individually and fell.
               (let [reseeded (mapv (fn [v]
                                      (let [[iw2 ih2] (:image-size v)
                                            k2 (pcamera/intrinsics-from-fov
                                                (pcamera/equiv-focal->hfov-deg m (/ iw2 ih2))
                                                iw2 ih2)
+                                           budget (max 2 (quot (* 2 (count (:picks v))) 5))
                                            s (when (>= (count (:picks v)) 6)
-                                               (pnp/solve-pnp (:picks v) k2 {}))]
+                                               (pnp/solve-pnp (:picks v) k2
+                                                              {:max-outliers budget}))
+                                           survivors (when (:pose s)
+                                                       (mapv #(select-keys % [:ci :world :px])
+                                                             (:per-point s)))]
                                        ;; a view whose fresh solve fails keeps
                                        ;; its old pose — better a dragged seat
                                        ;; than an empty one
-                                       (if (:pose s) (assoc v :pose (:pose s)) v)))
+                                       (if (and (:pose s) (>= (count survivors) 4))
+                                         (assoc v :pose (:pose s) :picks survivors
+                                                :fresh-outlier-cis (vec (keep :ci (:outliers s))))
+                                         v)))
                                    views)
                     [o2 av2 ho2] (refine-from m reseeded)]
                 (if (and (not (:error o2))
@@ -5010,6 +5037,21 @@
                                    poses)]
             (swap! session assoc-in [:camera-poses (:idx view)]
                    (bridge/solver-pose->camera pose proxy-pose)))
+          ;; when the RESTART won, the picks its fresh solves rejected are not
+          ;; noise: they are labels from the wrong-lens assignment, and left
+          ;; unmarked they would re-poison every later per-photo solve (and the
+          ;; next R). Mark them as outliers — red on the photo, out of the vote,
+          ;; recoverable by re-clicking or by re-pressing 'a' at the new lens.
+          (when from-remembered?
+            (doseq [v active-views]
+              (when-let [cis (seq (:fresh-outlier-cis v))]
+                (swap! session update-in [:pnp-outliers (:idx v)] (fnil into #{}) cis)))
+            (let [n (reduce + 0 (map #(count (:fresh-outlier-cis %)) active-views))]
+              (when (pos? n)
+                (auto-log! (str "  " n " click portavano l'etichetta della lente "
+                                "vecchia: segnati come scarti (rossi). Ripremi 'a' "
+                                "sulle foto peggiori per riassegnarli con la lente "
+                                "nuova")))))
           ;; the exclusions, said out loud — the photo stays in the film with
           ;; its pose and clicks; it only lost its vote on the LENS. A photo
           ;; is worth what it SHOWS (l'inquadratura può essere quella giusta
@@ -5037,10 +5079,29 @@
           ;; a measurement — filed once (3/9, C922 partita dal default 48):
           ;; 48×0.85 = 40.80mm went into the store as «refined» over the
           ;; camera's real 27.3, and every next session would inherit the lie
+          ;; …and NEVER over a remembered measure it plainly disagrees with:
+          ;; the asticella di plausibilità. A CONVERGED local minimum passes
+          ;; the clamp guard above — 3/9, fourth time: 34.05 (a stalled R on
+          ;; battiscopa4's poisoned picks) overwrote the 27.35 the store had
+          ;; just been reset to, and with the store matching the session the
+          ;; multi-start stopped even running: the lie sealed its own escape
+          ;; hatch. A refined focal that sits outside the briglia's own ±15%
+          ;; of the remembered measure is describing a different camera or a
+          ;; poisoned session, and either way it is news to REPORT, not a
+          ;; measure to file.
           (when (and (not (:clamped? out))
                      (seq (:photos @session))
                      (every? #(re-find #"^grab-" (or (:file %) "")) (:photos @session)))
-            (remember-camera-focal! focal-mm :refined))
+            (let [mem (:remembered-focal-mm @session)]
+              (if (and (number? mem)
+                       (> (js/Math.abs (- focal-mm mem)) (* bundle/focal-band mem)))
+                (auto-log! (str "  NON annoto questa lente: " (modal/fmt-number focal-mm)
+                                "mm dista più del 15% dalla misura in memoria ("
+                                (modal/fmt-number mem) "mm), e una misura non si "
+                                "sovrascrive con un fit che la contraddice. Se la "
+                                "camera è cambiata davvero, cancella la sua voce da "
+                                "~/.ridley/cameras.json e rifai R"))
+                (remember-camera-focal! focal-mm :refined))))
           (auto-log! (str "=== rifinitura congiunta: " (count poses) " foto ==="))
           (auto-log! (str "  focale "
                           (modal/fmt-number (if from-remembered? focal-now (:focal-mm before)))
