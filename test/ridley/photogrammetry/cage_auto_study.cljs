@@ -1433,8 +1433,101 @@
                                                             "—")))))))))))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
+(defn- twin-probe!
+  "CAGE_AUTO_TWIN=<n>: la foto n com'è SALVATA contro il suo gemello di
+   faccia — stessi pixel, nomi flip-face — giudicati non dal residuo (che
+   per costruzione non li distingue) ma da quanti dischetti RILEVATI nella
+   foto ciascuna posa spiega sull'INTERA gabbia. Nata su grab-07 (3/9
+   notte): un rescue camera-dietro ha rinominato 6 dischetti e adottato un
+   fit da 11.7px che Vincenzo vede grossolanamente fuori posa — la gabbia
+   disegnata è l'arbitro, questa sonda è il suo conto. CAGE_AUTO_FOCAL
+   forza la lente (default: quella salvata nella sessione)."
+  []
+  (let [n (js/parseInt (aget (.-env js/process) "CAGE_AUTO_TWIN") 10)
+        idx (dec n)
+        state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
+        targets (cage-targets proxy)
+        id->i (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
+        pnp-e (get-in state [:pnp (keyword (str idx))])
+        saved-out (set (:outliers pnp-e))
+        entries (vec (for [[k v] (:picks pnp-e)
+                           :let [ci (js/parseInt (name k) 10)]
+                           :when (nth targets ci nil)]
+                       {:ci ci :px (:px v)
+                        :hand? (not (:proposed? v))
+                        :out? (boolean (saved-out ci))}))
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        file (nth files idx)
+        flip-ci (fn [ci] (some->> (cage/relabel (:id (nth targets ci))
+                                                {:rot 0 :mirror? false :flip-face? true}
+                                                (count (filter #(str/starts-with? (name (:id %)) "xp")
+                                                               targets)))
+                                  (get id->i)))
+        names (fn [es] (str/join " " (map #(name (:id (nth targets (:ci %)))) es)))]
+    (println (str "\n=== gemello di faccia: foto " n " (" file ") · lente " (fmt focal 2)
+                  "mm · gabbia " (pr-str {:phases phases
+                                          :flips (vec (sort (declared-flips state)))}) " ==="))
+    (println (str "  click a MANO come salvati: " (names (filterv :hand? entries))))
+    (-> (decode (.join path dir file))
+        (.then
+         (fn [res]
+           (let [{:keys [data lum-at w h]} (sampler res)
+                 intr (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                 cands (mapv :center (bd/detect-blobs lum-at [w h]
+                                                      (assoc bd/cage-opts :rgba data)))
+                 near (fn [[u v]] (reduce min js/Infinity
+                                          (map (fn [[cu cv]] (Math/hypot (- cu u) (- cv v)))
+                                               cands)))
+                 score (fn [pose]
+                         (let [c (cam/camera-center pose)]
+                           (reduce (fn [acc t]
+                                     (if (and (:normal t)
+                                              (pos? (la/v-dot (:normal t)
+                                                              (la/v-sub c (:obj t)))))
+                                       (if-let [p (cam/project intr pose (:obj t))]
+                                         (let [d (near p)]
+                                           (cond-> (update acc :vis inc)
+                                             (< d 12) (update :d12 inc)
+                                             (< d 26) (update :d26 inc)))
+                                         acc)
+                                       acc))
+                                   {:d12 0 :d26 0 :vis 0} targets)))
+                 solve-set (fn [label es]
+                             (let [corr (vec (for [e es :when (not (:out? e))]
+                                               {:ci (:ci e)
+                                                :world (:obj (nth targets (:ci e)))
+                                                :px (:px e)}))
+                                   sol (when (>= (count corr) 4)
+                                         (pnp/solve-pnp corr intr {}))]
+                               (if-not (:pose sol)
+                                 (println (str "  " label ": nessun solve (" (count corr) " pick)"))
+                                 (let [s (score (:pose sol))
+                                       c (cam/camera-center (:pose sol))]
+                                   (println (str "  " label ": " (count corr) " pick · rms "
+                                                 (fmt (:rms-px sol) 2) "px · scartati "
+                                                 (count (:outliers sol)) " · camera ["
+                                                 (str/join " " (map #(js/Math.round %) c))
+                                                 "] · dischetti spiegati " (:d12 s) " a 12px, "
+                                                 (:d26 s) " a 26px, su " (:vis s) " visibili"))))))
+                 flipped (mapv (fn [e] (if-let [j (flip-ci (:ci e))] (assoc e :ci j) e))
+                               entries)]
+             (println (str "  click a MANO flip-face:    " (names (filterv :hand? flipped))))
+             (println (str "  (" (count cands) " dischetti rilevati nella foto)"))
+             (solve-set "SALVATI, tutti i pick   " entries)
+             (solve-set "FLIP-FACE, tutti i pick " flipped)
+             (solve-set "SALVATI, solo mano      " (filterv :hand? entries))
+             (solve-set "FLIP-FACE, solo mano    " (filterv :hand? flipped)))))
+        (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
+
 (defn ^:export main [& _]
   (cond
+    (aget (.-env js/process) "CAGE_AUTO_TWIN") (twin-probe!)
     (aget (.-env js/process) "CAGE_AUTO_BUDGET") (outlier-budget-probe!)
     (aget (.-env js/process) "CAGE_AUTO_RESTART") (restart-probe!)
     (aget (.-env js/process) "CAGE_AUTO_SWEEP") (focal-sweep-probe!)

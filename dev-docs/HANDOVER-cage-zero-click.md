@@ -111,6 +111,26 @@ rinomina prima del solve, riconciliazione di sessione. Famiglia zero-click:
 selezione (foto 3 del bench), recall del detector (foto 2, e foto 6 che
 rifiuta solo per mancanza di indice rilevato).
 
+**COLLAUDO LIVE grab-07 (3/9 notte, log di Vincenzo) — i difetti in coda
+hanno un caso misurato.** Foto nuova, zero-click rifiuta due volte (bene, e
+il rifiuto ora è NEL LOG — la cura della trappola funziona), 4 click ALT
+giusti su ring X (xm00/01/06 + ⊙xm, li legge dal pezzo stampato). Da lì la
+catena del disastro, tutta PRE-esistente: read-crown adotta una rilettura
+flip-face che spiega **3 dischetti su 29 rilevati** (sopra il min-off-ring
+ASSOLUTO di 2 — rumore, ma passa) e RINOMINA i click giusti xm→xp; il
+solve planare su 4 click coplanari dice «fit pulito, 1.59px» (il gemello
+fitta identico — 1.59 uguale per entrambe le facce, sonda); propose-and-snap
+allucina 16 proposte dalla posa sbagliata; il rescue camera-dietro rinomina
+altri 6 e adotta 11.7px (sotto la barra ASSOLUTA di 12). Sonda nuova
+`CAGE_AUTO_TWIN=<n>` (+ `CAGE_AUTO_FOCAL`): la posa adottata spiega **4/39
+visibili** contro i **21/39** della foto 3 sana — e nemmeno il flip salva
+(4-7/39 comunque: non è un gemello di faccia, è la POSA sbagliata di lato,
+il mirror del piano dell'anello). L'arbitro che mancava è la FRAZIONE
+SPIEGATA (spiegati/rilevati): relativa, non assoluta — la stessa cura per
+«accettazione senza asticella» e «rinomina prima del solve». Recovery live:
+Azzera foto 7 → gabbia a occhio col gizmo → 'a' a zero click (il seme
+dell'occhio, già provato su foto 1).
+
 ---
 
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo
