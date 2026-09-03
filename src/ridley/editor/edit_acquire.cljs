@@ -4875,8 +4875,8 @@
           ;; silenzio.
           focal-now (:focal-mm @session)
           refine-from
-          (fn [f0]
-            (loop [vs views held []]
+          (fn [f0 vs0]
+            (loop [vs vs0 held []]
               (let [o (bundle/refine-session vs f0)]
                 (if (and (not (:error o))
                          (> (:rms-px o) (+ (:rms-px (:before o)) 1e-9))
@@ -4887,28 +4887,45 @@
                                                   (map-indexed vector (:per-view o)))))]
                     (recur (vec (remove #(= w (:idx %)) vs)) (conj held w)))
                   [o vs held]))))
-          [out active-views held-out] (refine-from focal-now)
+          [out active-views held-out] (refine-from focal-now views)
           ;; the session's ACTUAL state, for honest before→after messages even
           ;; when the winner restarted from the store (whose own :before is
-          ;; the old poses evaluated under the other lens — a big number that
-          ;; measures the restart, not the session)
+          ;; the reseeded state, which measures the restart, not the session)
           session-before (:rms-px (:before out))
-          ;; MULTI-START: the refine is a local optimizer in a valley the
-          ;; poses keep flattening (focal ↔ distance), and it can stall far
-          ;; from home — measured 3/9 on battiscopa4: from the default 48 it
-          ;; 'converged' at 40.67mm, not clamped, just stalled, while the
-          ;; sweep of the SAME picks dips at 27.35 (mediana 2.36px contro
-          ;; 9.60). The store's number for this camera is a measurement and
-          ;; exactly the prior that breaks that valley: try it as a second
-          ;; start and let the residuals judge — on the same view set, or
-          ;; the comparison is apples to oranges.
+          ;; MULTI-START, and a real restart: poses RE-SOLVED FRESH (per-view
+          ;; DLT on the saved picks) at the remembered lens, then refined
+          ;; jointly. Both halves were bought on battiscopa4 (3/9):
+          ;; (1) the refine is a local optimizer and the poses drag it — from
+          ;;     Vincenzo's hand-set 29 it walked UP to 34 (the old poses were
+          ;;     40.67-consistent and their basin won), while the sweep of the
+          ;;     same picks with FRESH per-focal solves dips at 27.35, mediana
+          ;;     2.36px contro 9.60. Restarting the focal without restarting
+          ;;     the poses restarts nothing.
+          ;; (2) the first same-view-set guard was too rigid: the stalled run
+          ;;     had shed views 1/4 in leave-one-out, the good run kept all
+          ;;     six, sets differed — and the good result was DISCARDED. The
+          ;;     honest rule is dominance: at least as many views AND lower
+          ;;     rms is strictly better evidence; fewer views with lower rms
+          ;;     stays ambiguous and the current start keeps the bench.
           [out active-views held-out from-remembered?]
           (let [m (:remembered-focal-mm @session)]
             (if (and m (number? m)
-                     (> (js/Math.abs (- m (:focal-mm @session))) (* 0.02 m)))
-              (let [[o2 av2 ho2] (refine-from m)]
+                     (> (js/Math.abs (- m focal-now)) (* 0.02 m)))
+              (let [reseeded (mapv (fn [v]
+                                     (let [[iw2 ih2] (:image-size v)
+                                           k2 (pcamera/intrinsics-from-fov
+                                               (pcamera/equiv-focal->hfov-deg m (/ iw2 ih2))
+                                               iw2 ih2)
+                                           s (when (>= (count (:picks v)) 6)
+                                               (pnp/solve-pnp (:picks v) k2 {}))]
+                                       ;; a view whose fresh solve fails keeps
+                                       ;; its old pose — better a dragged seat
+                                       ;; than an empty one
+                                       (if (:pose s) (assoc v :pose (:pose s)) v)))
+                                   views)
+                    [o2 av2 ho2] (refine-from m reseeded)]
                 (if (and (not (:error o2))
-                         (= (set (map :idx av2)) (set (map :idx active-views)))
+                         (>= (count av2) (count active-views))
                          (< (:rms-px o2) (:rms-px out)))
                   [o2 av2 ho2 true]
                   [out active-views held-out false]))
