@@ -4080,17 +4080,28 @@
       (nil? file)
       (set-status-message! "Nessuna foto su cui leggere la gabbia.")
 
-      ;; ZERO click: try to read the cage entirely on its own (Vincenzo,
-      ;; 2026-08-27: «se non riusciamo ad avere la registrazione automatica
-      ;; sarà tutto inutile»). The machine finds a ring among the detector's
-      ;; candidates, pins its zero-index on the pixels, and solves on the whole
-      ;; cage — measured on the battiscopa session: 2 of 8 frames register
-      ;; alone, camera within 1-4mm of the hand result, zero false positives.
-      ;; When it refuses, the seeded path (4 clicks + 'a') is the fallback, and
-      ;; the message says so.
-      (zero? (count picks-by-id))
+      ;; UNDER 4 clicks on the seed ring: try to read the cage entirely on its
+      ;; own (Vincenzo, 2026-08-27: «se non riusciamo ad avere la registrazione
+      ;; automatica sarà tutto inutile»). The machine finds a ring among the
+      ;; detector's candidates, pins its zero-index on the pixels, and solves on
+      ;; the whole cage — measured on the battiscopa session: 2 of 8 frames
+      ;; register alone, camera within 1-4mm of the hand result, zero false
+      ;; positives. When it refuses, the seeded path (4 clicks + 'a') is the
+      ;; fallback, and the message says so.
+      ;; NOT `zero?`: 1-3 clicks used to land in a refusal that only flashed the
+      ;; 4-second status line — nothing in the log, nothing on the photo — and
+      ;; whose advice was to DELETE the clicks to let 'a' try alone (la trappola
+      ;; UX del collaudo 3/9). Too few to seed is not poisoned: the clicks stay,
+      ;; the machine tries alone, and if its reading contradicts their names
+      ;; they surface as red outliers like any other suspect pick.
+      (< (count picks-by-id) 4)
       (do
-        (say! "Leggo la gabbia DA SOLA (zero click)… può volerci fino a mezzo minuto")
+        (say! (if (zero? (count picks-by-id))
+                "Leggo la gabbia DA SOLA (zero click)… può volerci fino a mezzo minuto"
+                (str "Con " (count picks-by-id) " click su un anello non posso "
+                     "seminare la lettura (ne servono 4 + il doppio pallino): "
+                     "provo DA SOLA, i tuoi click restano… può volerci fino a "
+                     "mezzo minuto")))
         (js/setTimeout
          (fn []
            (-> (backdrop/load-luminance-sampler (photo-path file))
@@ -4138,15 +4149,23 @@
                                                   :teeth? (boolean (or (seq mounting)
                                                                        eye-pose))})]
                     (if (nil? rr)
-                      (say!
-                       (str "Da sola non ci riesco su questa foto (" (count cands)
-                            " dischetti trovati, nessun anello identificato con certezza). "
-                            "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'."
-                            (when eye-pose
-                              (str " Ho provato anche dalla tua posa a occhio, ma il fit "
-                                   "non reggeva le barre: se la gabbia disegnata ti sembra "
-                                   "già appaiata bene, il problema sono i dischetti rilevati "
-                                   "(pochi, o su un anello solo)."))))
+                      ;; the refusal goes to the LOG too: a 4-second status line
+                      ;; is not a record, and «'a' non fa niente» (3/9) was this
+                      ;; very message evaporating before it was read
+                      (let [msg (str "Da sola non ci riesco su questa foto (" (count cands)
+                                     " dischetti trovati, nessun anello identificato con certezza). "
+                                     (if (pos? (count picks-by-id))
+                                       (str "I tuoi " (count picks-by-id) " click restano ma non "
+                                            "bastano a seminare: portali a 4 su UN anello + il "
+                                            "doppio pallino, poi ripremi 'a'.")
+                                       "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'.")
+                                     (when eye-pose
+                                       (str " Ho provato anche dalla tua posa a occhio, ma il fit "
+                                            "non reggeva le barre: se la gabbia disegnata ti sembra "
+                                            "già appaiata bene, il problema sono i dischetti rilevati "
+                                            "(pochi, o su un anello solo).")))]
+                        (auto-log! (str "  " foto-tag msg))
+                        (say! msg))
                       (let [canvas (viewport/get-canvas)
                             ;; a clean slate: with zero hand clicks whatever picks
                             ;; exist are STALE proposals of an older pose — left
@@ -4156,8 +4175,17 @@
                             _ (swap! session update-in [:pnp-picks idx]
                                      (fn [m] (into {} (remove (comp :proposed? val) m))))
                             added (reduce (fn [n {:keys [ci px]}]
-                                            (let [j (id->ci ci)]
-                                              (if (nil? j)
+                                            (let [j (id->ci ci)
+                                                  ;; a HAND click already sitting on
+                                                  ;; this mark is not overwritable by
+                                                  ;; a proposal: with 1-3 clicks in
+                                                  ;; play (allowed since 3/9) the
+                                                  ;; reading must not eat the very
+                                                  ;; evidence that can contradict it
+                                                  hand-here? (when j
+                                                               (when-let [p (get-in @session [:pnp-picks idx j])]
+                                                                 (not (:proposed? p))))]
+                                              (if (or (nil? j) hand-here?)
                                                 n
                                                 (do (swap! session assoc-in [:pnp-picks idx j]
                                                            {:px px
@@ -4188,12 +4216,6 @@
                (.catch (fn [e]
                          (say! (str "Lettura automatica fallita: " (str e)))))))
          50))
-
-      (< (count picks-by-id) 4)
-      (say!
-       (str "Per leggere la gabbia servono almeno 4 dischetti cliccati su UN anello "
-            "(ne hai " (count picks-by-id) "): arma un mark con 'p' e clicca dov'è nella foto. "
-            "Lo zero-indice, se lo vedi, vale doppio. Con ZERO click, 'a' prova da sola."))
 
       :else
       (do

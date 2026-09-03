@@ -81,6 +81,36 @@ difetto storico nei solve per-foto ('a'/'r') fuori dal restart — valutare
 il budget proporzionale anche lì, con la stessa asimmetria a fare da
 guardiano.
 
+**AGGIORNAMENTO 3/9 notte — due voci di coda CHIUSE (decisione di
+Vincenzo: «parti pure»):**
+
+1. **Budget proporzionale nei solve per-foto.** `outlier-budget` (40% dei
+   pick, pavimento 2 — sotto gli 8 pick NON cambia niente) + `solve-photo`,
+   usati da TUTTI i solve di `solve-and-apply!` (primo tentativo, specchio,
+   seeded, flip di faccia, soli-click-a-mano) e dal rescue a mano; il
+   reseed del multi-start ora usa lo stesso helper. Esclusi di proposito:
+   `cage-relabel-rescue` (lì il solve GIUDICA un'ipotesi di nomi — non deve
+   poterla comprare scartando i pick che la contraddicono), il flusso ad
+   anello del piatto e il live-frame (pick rifatti freschi dall'immagine a
+   ogni giro, l'avvelenamento non si accumula). La guardia è l'asimmetria
+   misurata dalla sonda `CAGE_AUTO_BUDGET`.
+2. **La trappola di 'a' con 1-3 click.** Era il ramo `<4` che (a) flashava
+   solo la status line di 4 secondi, zero log — «'a' non fa niente» era
+   questo messaggio che evaporava — e (b) consigliava di CANCELLARE i click
+   per provare l'automatico. Ora 0-3 click vanno tutti nel ramo zero-click:
+   la macchina prova da sola, i click restano (troppo pochi per seminare ≠
+   avvelenati; se contraddicono la lettura finiscono rossi), il rifiuto va
+   ANCHE nel log col nome della foto, e una proposta non sovrascrive MAI un
+   click a mano sullo stesso mark.
+
+Gate live di entrambe da fare alla prossima sessione di scatti (non
+c'è fretta: battiscopa4 è già registrata).
+
+**Restano in coda** (famiglia R/solve): accettazione senza asticella,
+rinomina prima del solve, riconciliazione di sessione. Famiglia zero-click:
+selezione (foto 3 del bench), recall del detector (foto 2, e foto 6 che
+rifiuta solo per mancanza di indice rilevato).
+
 ---
 
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo
