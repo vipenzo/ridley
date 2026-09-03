@@ -575,6 +575,43 @@
       (is (pos? (:killed (:mounting-veto r)))
           "e il montaggio votato ha contraddetto le riletture specchiate/orbitate"))))
 
+(deftest the-vote-names-its-twin
+  ;; Session reconciliation (3/9 notte): vote-mounting's :contested? says «a
+  ;; twin sits among us» — convict-mounting turns that into a NAME, by
+  ;; leave-one-out. The shape is the measured one (battiscopa truth session,
+  ;; 2026-08-30): foto 1's hand registration reads BOTH visible indices in
+  ;; the exact mirror of what five mutually-consistent photographs read, and
+  ;; its observations were even SHARPER — acuity must convict nobody,
+  ;; majority must convict exactly the mirror.
+  (println "\n=== gabbia: il voto dà un nome al gemello ===")
+  (let [honest (fn [i] [{:axis :x :sense :fwd :k 0 :d (+ 2.0 i)}
+                        {:axis :y :sense :rev :k 0 :d (+ 3.0 i)}])
+        mirror [{:axis :x :sense :rev :k 0 :d 1.9}
+                {:axis :y :sense :fwd :k 0 :d 2.8}]
+        obs (assoc (into {} (for [i (range 5)] [i (honest i)])) 5 mirror)
+        c (mc/convict-mounting obs nil)]
+    (println (str "  condannate: " (pr-str (vec (sort (keys c))))))
+    (is (= #{5} (set (keys c)))
+        "cinque oneste contro una specchiata: condannata la specchiata, e solo lei")
+    (is (= #{:x :y} (set (map :axis (get c 5))))
+        "su entrambi gli anelli che legge al contrario — un gemello li ribalta tutti insieme"))
+
+  ;; a DECLARED cage arms the arbiter from the first photo (votes 2): one
+  ;; registration alone, contradicting the declaration, is already convicted
+  (let [c (mc/convict-mounting
+           {0 [{:axis :y :sense :rev :k 6 :d 2.0}]}
+           {:y {:sense :fwd :k 0 :votes 2 :d 0.0 :declared? true}})]
+    (is (= #{0} (set (keys c)))
+        "contro la dichiarazione della gabbia non serve quorum di foto"))
+
+  ;; one against one, no baseline: nobody holds two votes, nobody is convicted
+  ;; — the contest is real and the caller's :contested? reporting owns it
+  (let [c (mc/convict-mounting
+           {0 [{:axis :y :sense :fwd :k 0 :d 2.0}]
+            1 [{:axis :y :sense :rev :k 0 :d 2.0}]}
+           nil)]
+    (is (empty? c) "uno contro uno non condanna nessuno")))
+
 (deftest a-declared-face-is-not-re-read
   ;; The user matched the physical cage to the photo and declared «on ring X I
   ;; see face m» (the per-ring toggles, Vincenzo 30/8). A reading that flips

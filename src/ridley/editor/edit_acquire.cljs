@@ -37,6 +37,7 @@
    the background) must be up even when the app itself is open in Chrome for
    REPL/hot-reload."
   (:require [clojure.string :as str]
+            [clojure.set :as set]
             [cljs.reader :as reader]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.codemirror :as cm]
@@ -3818,13 +3819,18 @@
   []
   (not (contains? #{:default nil} (:focal-source @session))))
 
+(declare reconcile-cage-mounting!)
+
 (defn- remember-cage-mounting!
   "Store one photo's index observations — every accepted cage reading measures
    the mounting, hand-seeded or machine. Refuses them at an unmeasured lens
-   (`cage-obs-focal-ok?`)."
+   (`cage-obs-focal-ok?`). Every new observation re-runs the session
+   reconciliation: the vote just changed, and a conviction (or an acquittal)
+   it now supports must be said NOW, not at the next R."
   [idx obs]
   (when (and (seq obs) (cage-obs-focal-ok?))
-    (swap! session assoc-in [:cage-mounting-obs idx] obs)))
+    (swap! session assoc-in [:cage-mounting-obs idx] obs)
+    (reconcile-cage-mounting!)))
 
 (defn- declared-cage-mounting
   "The mounting the proxy DECLARATION asserts — {axis entry} for cages with
@@ -3857,12 +3863,69 @@
    arbitrate its re-read). A measured entry displaces the declared one only
    when it outvotes it 3-to-nothing uncontested."
   [idx]
-  (let [measured (match-cage/vote-mounting
-                  (vals (dissoc (or (:cage-mounting-obs @session) {}) idx)))]
-    (merge-with (fn [d m]
-                  (if (and (>= (:votes m 0) 3) (not (:contested? m))) m d))
-                (or (declared-cage-mounting) {})
-                measured)))
+  (match-cage/merge-mounting
+   (declared-cage-mounting)
+   (match-cage/vote-mounting
+    (vals (dissoc (or (:cage-mounting-obs @session) {}) idx)))))
+
+(defn- convicted-mounting-photos
+  "The registrations the session's own vote convicts as twin suspects —
+   match-cage/convict-mounting over the accumulated observations (declaration
+   as baseline), REGISTERED photos only: an unregistered photo's stale obs
+   accuse nobody. {idx [{:axis :seen :voted} …]}."
+  []
+  (into {}
+        (filter (fn [[idx _]]
+                  (and (number? idx)
+                       (registered-result? (get-in @session [:acquire-results idx]))))
+                (match-cage/convict-mounting
+                 (or (:cage-mounting-obs @session) {})
+                 (declared-cage-mounting)))))
+
+(defn- reconcile-cage-mounting!
+  "Session reconciliation — l'ultimo dei «difetti storici di sempre» (via di
+   Vincenzo, 3/9 notte): when the vote matures and CONVICTS an existing
+   registration, the conviction must reach the user and the lens, not just
+   the probe output. Runs after every new observation: newly-convicted photos
+   are announced ONCE (per conviction spell) with the evidence and the cure;
+   a photo re-read into agreement is acquitted out loud — silence is
+   ambiguous, and the acquittal is the reward for redoing it. The photo NEVER
+   loses its place in the film (una foto vale per il pezzo che mostra); it
+   loses its VOTE on the lens, in on-refine-session!, for as long as the
+   conviction stands. Measured motivating case: foto 1 of the battiscopa
+   truth session — a hand registration that mirrors both visible indices,
+   discovered only by the vote of the other five, and until tonight
+   discovered by NOBODY in the app."
+  []
+  (let [convicted (convicted-mounting-photos)
+        now (set (keys convicted))
+        before (or (:twin-flagged @session) #{})]
+    (doseq [idx (sort (set/difference now before))]
+      (let [ev (get convicted idx)]
+        (auto-log!
+         (str "  ⚠ GEMELLO in sessione: la registrazione di foto " (inc idx)
+              " legge "
+              (str/join "; "
+                        (for [{:keys [axis seen voted]} ev]
+                          (str "l'indice di " (str/upper-case (name axis))
+                               " in " (name (:sense seen)) " k" (:k seen)
+                               (when-let [d (:d seen)]
+                                 (str " (" (.toFixed d 1) "px)"))
+                               " contro il " (name (:sense voted)) " k" (:k voted)
+                               " votato da " (:votes voted)
+                               (if (:declared? voted)
+                                 " (dichiarazione della gabbia)" " pose"))))
+              " — (sense, k) è un fatto della POSA: una delle due letture è il "
+              "gemello specchiato, e la maggioranza dice che è questa. Foto "
+              (inc idx) " resta nel film ma NON vota sulla lente finché non la "
+              "rifai: aprila, Azzera, posala a occhio col gizmo e ripremi 'a'. "
+              "Se invece è la gabbia disegnata di foto " (inc idx)
+              " a combaciare e le altre no, il sospetto è rovesciato: "
+              "guardale prima di rifare."))))
+    (doseq [idx (sort (set/difference before now))]
+      (auto-log! (str "  foto " (inc idx) " ASSOLTA: riletta, ora il suo montaggio "
+                      "concorda con la sessione — torna a votare sulla lente")))
+    (swap! session assoc :twin-flagged now)))
 
 (defn- cage-flips-tag
   "A cage's declared flips as sorted NAMES, nil when there are none — the form
@@ -4949,6 +5012,15 @@
                                              (not (registered-result?
                                                    (get-in @session [:acquire-results idx]))))]
                               idx))
+          ;; …and a registration the session's own mounting vote CONVICTS as a
+          ;; twin (reconcile-cage-mounting!) is a pose known-wrong WHOLESALE:
+          ;; its rms can be exemplary (a twin fits its own picks perfectly —
+          ;; foto 1 of the battiscopa truth session sat clean for a week), so
+          ;; the poisoned-bar above never sees it. Vote on the lens: no. Place
+          ;; in the film: untouched, as always. The exclusion lives only while
+          ;; the evidence does — obs die with the lens (cleared after every
+          ;; adopted R), and rebuild as photos are re-read with 'a'.
+          twins (set (keys (convicted-mounting-photos)))
           views (vec (keep (fn [idx]
                              ;; A pick the per-photo solve already REJECTED must not
                              ;; vote here. solve-pnp reports its rms over the
@@ -4965,6 +5037,7 @@
                                    cam (get-in @session [:camera-poses idx])]
                                (when (and cam (>= (count picks) 4)
                                           (not (some #{idx} poisoned))
+                                          (not (contains? twins idx))
                                           (registered-result?
                                            (get-in @session [:acquire-results idx])))
                                  {:idx idx
@@ -5100,6 +5173,12 @@
                         (modal/fmt-number (get-in @session [:acquire-results idx :rms-px]))
                         "px, sopra la soglia di " (modal/fmt-number bar) " — sistemala (Azzera, poi "
                         "4 click + 'a') e rifai R")))
+      (doseq [idx (sort twins)]
+        (auto-log! (str "  foto " (inc idx) " NON vota sulla lente: il suo montaggio "
+                        "contraddice quello votato dalla sessione (gemello sospetto — "
+                        "il residuo non può vederlo: un gemello fitta i SUOI pick "
+                        "benissimo). Resta nel film; rifalla (Azzera, posa a occhio, "
+                        "'a') e ripremi R")))
       (cond
         (:error out)
         (set-status-message! (str "Rifinitura: " (:error out)))

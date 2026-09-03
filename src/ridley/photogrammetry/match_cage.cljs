@@ -764,6 +764,55 @@
                    :d (reduce min (map :d winners))
                    :contested? (pos? against)}]))))
 
+(defn merge-mounting
+  "A declaration's baseline refined by the measured vote — the session's ONE
+   policy for who arbitrates a ring: a measured entry displaces the declared
+   one only when it outvotes it 3-to-nothing uncontested. The rings are glued
+   (the mounting is a property of the CAGE), so the declaration is a fact
+   until the session reads otherwise three times over without a dissenter."
+  [baseline measured]
+  (merge-with (fn [d m]
+                (if (and (>= (:votes m 0) 3) (not (:contested? m))) m d))
+              (or baseline {})
+              measured))
+
+(defn convict-mounting
+  "Which POSES does the session's own evidence convict? For each key of
+   `obs-by-key` ({key [obs …]}, one entry per registered pose), the vote of
+   ALL THE OTHERS is taken (merged over `baseline` by `merge-mounting` — the
+   pose under judgement never arbitrates itself), and the pose is CONVICTED
+   on every axis where its own reading contradicts a winner holding at least
+   two votes. Returns {key [{:axis :seen {:sense :k :d} :voted entry} …]},
+   contradicted keys only.
+
+   (sense, k) is pose-absolute — every true pose of one mounting reads the
+   same pair — so a registration that reads a ring against a ≥2 majority is
+   the reflection/through-plastic twin of SOMETHING: itself, with the
+   majority honest. Leave-one-out is what turns `vote-mounting`'s
+   `:contested?` (a session-level «c'è un gemello fra noi») into a name:
+   measured on the battiscopa truth session (2026-08-30), foto 1's hand
+   registration reads BOTH visible indices in the exact mirror of what five
+   mutually-consistent photographs read — one poisoned pose, as many
+   convictions as it has contradicted rings, and the five honest poses each
+   stay clean because the majority they face (4 + the others) agrees with
+   them."
+  [obs-by-key baseline]
+  (into {}
+        (for [[key obs] obs-by-key
+              :let [others (merge-mounting
+                            baseline
+                            (vote-mounting (vals (dissoc obs-by-key key))))
+                    contra (vec (for [{:keys [axis sense k d]} obs
+                                      :let [e (get others axis)]
+                                      :when (and e (>= (:votes e 0) 2)
+                                                 (or (not= sense (:sense e))
+                                                     (not= k (:k e))))]
+                                  {:axis axis
+                                   :seen {:sense sense :k k :d d}
+                                   :voted e}))]
+              :when (seq contra)]
+          [key contra])))
+
 (def eye-gate-frac
   "How far — as a fraction of the eye camera's own distance to the cage
    centre — an accepted reading's camera may land from the EYE-ALIGNED pose
