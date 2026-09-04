@@ -118,7 +118,7 @@ ring, or to step off the axis and reshoot.
 
 ## Printing and assembling one
 
-The print code lives in **`examples/stampa-gabbia.clj`** — a plain, readable
+The print code lives in **`examples/print-cage.clj`** — a plain, readable
 file, not a library: you print a cage once in a while, and the code that
 produces it deserves to be read and modified. Evaluate the file (its
 definitions produce nothing by themselves), then uncomment the command you
@@ -127,11 +127,11 @@ need at the bottom. Everything in it prints from **this function's own**
 looks for — not a copy of them.
 
 ```clojure
-(register Big  (make-print-ring gabbia :big))    ; flat, ready to print
-(register Cage (make-cage-ring gabbia))          ; assembled, to look at
+(register Big  (make-print-ring cage :big))    ; flat, ready to print
+(register Cage (make-cage-ring cage))          ; assembled, to look at
 ```
 
-`gabbia` is the file's one declaration — diameter, `:gen`, `:rim-marks?` — so
+`cage` is the file's one declaration — diameter, `:gen`, `:rim-marks?` — so
 what you print and what the session declares cannot drift apart.
 
 `make-print-ring` hands you the ring **lying down**, tabs upward — the pose it
@@ -155,7 +155,7 @@ by mistake.
 To skip the scene and write all three files at once:
 
 ```clojure
-(save-3mf gabbia "~/Downloads")      ; three files, one folder dialog
+(save-3mf cage "~/Downloads")      ; three files, one folder dialog
 (save-cradle 176 "~/Downloads")
 ```
 
@@ -230,7 +230,7 @@ marks and fed the detector its false candidates. The slots sit at 60° and 240°
 on each ring — 15° clear of the nearest crown disc, 30° clear of the joints,
 35° from the zero-index — and take no part in the solve.
 
-The kit (from `examples/stampa-gabbia.clj`). Sections **scale with the cage**
+The kit (from `examples/print-cage.clj`). Sections **scale with the cage**
 — (d/176)^0.75, floored at 1: a longer stick too thin snaps — with the 0.4 mm
 clearances absolute at every size, so the quarter-turn keeps its bite. At
 ⌀176 they are the tested ones: stick 4.0×3.6 mm, channel 4.4×4.0. The stick
@@ -238,8 +238,8 @@ reads its section from the cage's own channel, so the cam relation cannot
 drift:
 
 ```clojure
-(register Stick (stick gabbia))       ; 60mm, il collaudato
-(register Lungo (stick gabbia 80))    ; per il centro dall'anello grande
+(register Stick (stick cage))       ; 60mm, il collaudato
+(register Lungo (stick cage 80))    ; per il centro dall'anello grande
 (register Punta (punta-tricuspide))
 ```
 

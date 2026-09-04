@@ -3,7 +3,7 @@
    mutually orthogonal flat rings, each carrying a crown of marks on BOTH faces
    plus its own zero-index, under :anchors. The sibling of `plate`: same frame,
    same anchor shape, same solver, different geometry. The printable two-colour
-   rings and the cradle live in the print file (examples/stampa-gabbia.clj) (fabrication,
+   rings and the cradle live in the print file (examples/print-cage.clj) (fabrication,
    not registration), and they read THIS function's :anchors, so what is printed
    and what the solver looks for cannot drift apart.
 
@@ -487,7 +487,7 @@
 
 ;; --- the stick-slot body, in ONE place --------------------------------------
 ;;
-;; These were the print code's own constants until 2026-09-01 (then the `acquire-cage` library, now examples/stampa-gabbia.clj), the
+;; These were the print code's own constants until 2026-09-01 (then the `acquire-cage` library, now examples/print-cage.clj), the
 ;; last piece of cage fabrication still described outside the proxy. They moved
 ;; here for the reason every other one did: the library must not restate
 ;; geometry, or the printed cage and the model of it drift apart without either
@@ -1074,7 +1074,7 @@
    Returns a three-ring mesh with, under :anchors, six crowns of `marks` plus six
    zero-indices — `:zp00`…, `:zm00`…, `:yp00`…, `:ym00`…, `:xp00`…, `:xm00`…,
    `:zero-zp` … — and `:mark-disc-r`, `:cage-d`, `:cage-marks`, `:cage-h` and
-   `:rings` (each ring's axis and radii, which the print file (examples/stampa-gabbia.clj) prints
+   `:rings` (each ring's axis and radii, which the print file (examples/print-cage.clj) prints
    from). All in the solver's object frame.
 
      (edit-acquire \"/Users/me/scans/testina\" {:proxy (registration-cage :d 176)})
@@ -1164,7 +1164,7 @@
      :cage-gen gen
      :rings rings
      ;; Fabrication rides on the proxy for the same reason the marks do: the
-     ;; print file (examples/stampa-gabbia.clj) must not restate any of this, or the printed cage
+     ;; print file (examples/print-cage.clj) must not restate any of this, or the printed cage
      ;; and the model of it drift apart without either one looking wrong.
      ;; A flipped ring's features flip with it (as-built, not as-designed) —
      ;; the drawn tabs must sit where the glued ones are, or the eye alignment

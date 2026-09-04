@@ -22,6 +22,55 @@ stato dei lavori per ripartire.
 
 ---
 
+## ATTERRAGGIO 4/9 — per la chat nuova, leggi PRIMA questo
+
+**LO STATO, in breve.** battiscopa4: 9/9 foto registrate a 1.55-2.43px,
+lente C922 = 28.15mm (quarta misura concorde), store sano. La maratona
+3/9→4/9 ha chiuso, IN ORDINE (ogni blocco qui sotto ha il dettaglio):
+multi-start della R guarito (briglia-chimera, pick avvelenati, asticella
+sullo store) con GATE LIVE PASSATO; budget outlier proporzionale in tutti
+i solve per-foto; 'a' con 0-3 click prova da sola; ASTICELLA RELATIVA
+(read-crown a frazione, rename-bar a mediana, cage-pose-verdict! come rete
+sull'esito); RICONCILIAZIONE DI SESSIONE (l'ultimo dei «difetti storici» —
+il voto condanna il gemello per nome e gli toglie il voto sulla lente);
+SEGMENTI SUL BORDO (modello+disegno, dietro `:rim-marks?`); GIUNTI GEN 2
+(seconda chiave + tasche d'invito, dietro `:gen 2`); STICK PARAMETRICI
+((d/176)^0.75, giochi assoluti); e la stampa è ora
+**`examples/print-cage.clj`** (in inglese, commenti operativi in fondo —
+la libreria acquire-cage è morta).
+
+**ARCHITETTURA DA TENERE A MENTE** (domanda di Vincenzo, 4/9): il file di
+stampa e la gabbia disegnata in edit-acquire sono due RENDERER della
+stessa fonte (il proxy `registration-cage`): il file non contiene misure,
+le legge. La divergenza possibile è PLASTICA↔MODELLO (un edit geometrico
+nel file stampa una gabbia che il programma non disegna né cerca — stessa
+classe del flip non dichiarato, si scopre allo stesso modo); le uniche
+cose ristatate nel file sono `inlay`, la regola −0.4 dello stick e
+`to-ring-frame`, elencate nell'intestazione del file.
+
+**GATE LIVE PENDENTI**: (1) riconciliazione — serve una sessione dove una
+registrazione vecchia contraddica il voto; (2) asticella relativa su una
+foto storta (metà passata: zitta sulle buone); (3) luce ambiente — 2 punti
+dato (48 candidati ma selezione morta su inquadratura di taglio; il seme
+dell'occhio resta il recovery), prescrizione che si forma: «luce ambiente
+E due anelli di faccia».
+
+**CODA**: geometria di stampa dei segmenti sul bordo (quando Vincenzo
+ristampa — save-3mf oggi AVVISA che mancano); detector dei segmenti
+(ricerca guidata dalla posa); zero-click selezione/recall (forse pagati in
+parte dalla luce — rifar girare il banco su foto ambient prima di scrivere
+codice); punta-tricuspide non parametrica.
+
+**TRAPPOLE nuove di stanotte** (le vecchie nei blocchi sotto): mai
+avvolgere un corpo grosso in una nuova arity coi piccoli edit (parinfer
+ribilancia — firma variadica); se la nREPL si incastra dopo un kill della
+suite, ciclo pulito di shadow (`npx shadow-cljs stop` + `npm run dev`);
+con più tab connessi gli eval del REPL browser atterrano su tab diversi —
+batch atomico in UNA evaluate (il collaudo di print-cage.clj è
+l'esempio); lo smoke di examples/ NON è nella suite, è la tecnica manuale.
+
+---
+
 ## ATTERRAGGIO 3/9 sera — per la chat nuova, leggi PRIMA questo
 
 **LO STATO.** Il run del pomeriggio ha sciolto il filo: il multi-start È
@@ -296,7 +345,7 @@ Prossima stampa: dichiarare `(registration-cage :d … :gen 2
 **4/9 — LA STAMPA DIVENTA UN EXAMPLES E GLI STICK SCALANO (decisioni di
 Vincenzo).** (1) La libreria builtin `acquire-cage` è MORTA: «di uso una
 tantum, ingombra la lista per sempre, e il codice che produce la gabbia
-merita di essere letto e modificato». Ora è `examples/stampa-gabbia.clj` —
+merita di essere letto e modificato». Ora è `examples/print-cage.clj` —
 definizioni in testa, comandi operativi COMMENTATI in fondo (da
 scommentare all'uso), e UNA dichiarazione (`gabbia`, in fondo: diametro +
 :gen + :rim-marks?) così stampa e sessione non possono divergere. Le fn
