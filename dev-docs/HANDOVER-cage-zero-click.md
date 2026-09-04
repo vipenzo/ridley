@@ -293,6 +293,32 @@ quando la sessione nREPL si incastra dopo un kill della suite.
 Prossima stampa: dichiarare `(registration-cage :d … :gen 2
 :rim-marks? true)` e stampare da lì.
 
+**4/9 — LA STAMPA DIVENTA UN EXAMPLES E GLI STICK SCALANO (decisioni di
+Vincenzo).** (1) La libreria builtin `acquire-cage` è MORTA: «di uso una
+tantum, ingombra la lista per sempre, e il codice che produce la gabbia
+merita di essere letto e modificato». Ora è `examples/stampa-gabbia.clj` —
+definizioni in testa, comandi operativi COMMENTATI in fondo (da
+scommentare all'uso), e UNA dichiarazione (`gabbia`, in fondo: diametro +
+:gen + :rim-marks?) così stampa e sessione non possono divergere. Le fn
+prendono la GABBIA, non il diametro (make-print-ring/make-cage-ring/
+save-3mf/measured/stick) — il gen viaggia con la dichiarazione. Manifest
+builtin aggiornato, manuale registration-cage.md riscritto nei punti
+acquire-cage, reference index rigenerato (bb). COLLAUDATO ATOMICO nel
+runtime SCI vero via dev-browser (la trappola dei tab multipli: batch in
+UNA evaluate): anello :big gen2 = [4064 3380] vertici, canale [2 2.2],
+stick 130 — tasche e tacche scavano davvero. Il file NON è auto-testato
+dalla suite: lo smoke è la tecnica manuale in memoria.
+(2) STICK PARAMETRICI: domanda di Vincenzo («più grandi = stick più
+lunghi, troppo fini si spezzano») — sì, da ~⌀220. `stick-scale` =
+(d/176)^0.75 pavimento 1 su TUTTE le sezioni (body-w/len, rise, lift,
+canale via `stick-major` 4.0 — l'unica misura madre), GIOCHI 0.4mm
+ASSOLUTI (tolleranza di stampante: scalarli romperebbe il quarto di
+giro); `stick-section-r` pubblica per lo stick; a 176 numeri collaudati
+alla virgola (test `stick-sections-scale-with-the-cage`). Lo stick nel
+file di stampa legge la sezione dal CANALE della gabbia: camma garantita
+a ogni diametro. Resta fuori: `punta-tricuspide` non parametrica (pezzo
+di collaudo, detto nella docstring).
+
 ---
 
 ## ATTERRAGGIO 3/9 — per la chat nuova, leggi PRIMA questo

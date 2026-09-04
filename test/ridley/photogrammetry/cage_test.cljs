@@ -1154,3 +1154,36 @@
                           [(:owner b) (:along b) (:sign b)])]
         (is (not (every? true? (map #(overlap? (span a %) (span b %)) [0 1 2])))
             "due giunti di gen 2 non devono collidere")))))
+
+(deftest stick-sections-scale-with-the-cage
+  ;; Vincenzo (4/9): «se fossero troppo fini rischiano di spezzarsi» — sì: la
+  ;; rigidezza di un'asta va come d⁴/L³ e la luce libera cresce con l'apertura,
+  ;; quindi la sezione scala con (d/176)^0.75, pavimento 1. I GIOCHI però sono
+  ;; tolleranza di stampante, non fisica: 0.4mm ASSOLUTI a ogni misura, o il
+  ;; quarto di giro smette di mordere.
+  (println "\n=== gabbia: le sezioni degli stick scalano con la gabbia ===")
+  (let [near (fn [a b] (< (Math/abs (- a b)) 1e-9))
+        t176 (first (cage/stick-slots 176 3.0))
+        t140 (first (cage/stick-slots 140 3.0))
+        t300 (first (cage/stick-slots 300 3.0))]
+    (println (str "  ⌀176: canale " (pr-str (:channel-r t176))
+                  " · ⌀300: canale " (pr-str (:channel-r t300))
+                  " (scala " (.toFixed (cage/stick-scale 300) 2) ")"))
+    ;; alla misura collaudata, i numeri collaudati — alla virgola
+    (is (near (first (:channel-r t176)) 2.0))
+    (is (near (second (:channel-r t176)) 2.2))
+    (is (near (:body-w t176) 8.0))
+    (is (near (:body-len t176) 14.0))
+    (is (near (:channel-lift t176) 2.5))
+    ;; una gabbia più piccola li TIENE: stick più corti sono più rigidi
+    (is (= (:channel-r t176) (:channel-r t140)) "pavimento a 1: mai più fini del collaudato")
+    ;; una più grande cresce, e la camma sopravvive a ogni scala
+    (let [[c-across c-up] (:channel-r t300)
+          [s-maj s-min] (cage/stick-section-r 300)]
+      (is (> (cage/stick-scale 300) 1.0))
+      (is (near c-across s-maj)
+          "il canale minore = l'asse maggiore dello stick, esatto: è il morso")
+      (is (near (- (* 2 c-up) (* 2 c-across)) 0.4)
+          "gioco d'inserimento 0.4 ASSOLUTO")
+      (is (near (- (* 2 s-maj) (* 2 s-min)) 0.4)
+          "stick minore = maggiore − 0.4, ASSOLUTO"))))

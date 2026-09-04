@@ -3,7 +3,7 @@
    mutually orthogonal flat rings, each carrying a crown of marks on BOTH faces
    plus its own zero-index, under :anchors. The sibling of `plate`: same frame,
    same anchor shape, same solver, different geometry. The printable two-colour
-   rings and the cradle live in the `acquire-cage` builtin library (fabrication,
+   rings and the cradle live in the print file (examples/stampa-gabbia.clj) (fabrication,
    not registration), and they read THIS function's :anchors, so what is printed
    and what the solver looks for cannot drift apart.
 
@@ -487,7 +487,7 @@
 
 ;; --- the stick-slot body, in ONE place --------------------------------------
 ;;
-;; These were the `acquire-cage` library's own constants until 2026-09-01, the
+;; These were the print code's own constants until 2026-09-01 (then the `acquire-cage` library, now examples/stampa-gabbia.clj), the
 ;; last piece of cage fabrication still described outside the proxy. They moved
 ;; here for the reason every other one did: the library must not restate
 ;; geometry, or the printed cage and the model of it drift apart without either
@@ -496,30 +496,55 @@
 ;; riconoscibili»), so the same numbers must reach a third consumer.
 
 (def ^:private slot-body-w
-  "Width (mm) of the slot body, across the channel — azimuthal on its ring."
+  "Width (mm) of the slot body at d=176, across the channel — azimuthal on its
+   ring. Scales with `stick-scale`."
   8.0)
 
 (def ^:private slot-body-len
-  "Length (mm) of the slot body along the channel — radial on its ring."
+  "Length (mm) of the slot body at d=176, along the channel — radial on its
+   ring. Scales with `stick-scale`: a longer stick wants a longer guide."
   14.0)
 
 (def ^:private slot-rise
-  "How far (mm) the body stands proud of the ring's face. The body spans the
-   band and stands the rest on the print bed, so it prints with no overhang —
-   the tabs' recipe."
+  "How far (mm) the body stands proud of the ring's face at d=176. The body
+   spans the band and stands the rest on the print bed, so it prints with no
+   overhang — the tabs' recipe. Scales with `stick-scale` (the channel grows,
+   the wall above it must keep up)."
   6.0)
 
 (def ^:private slot-channel-lift
-  "Height (mm) of the channel's axis above the ring's face."
+  "Height (mm) of the channel's axis above the ring's face at d=176. Scales
+   with `stick-scale`, or a grown channel would dip below the face."
   2.5)
 
-(def ^:private slot-channel-r
-  "Semi-axes (mm) of the elliptical channel, [across along-up] — the tested
-   4.0×4.4 section. The MAJOR axis lies along the ring's own axis, which is
-   vertical in print: a horizontal hole loses a few tenths there to the sagging
-   bridge, and this puts that loss on the 0.4mm insertion clearance rather than
-   on the minor axis, which is what the quarter-turn locks against."
-  [2.0 2.2])
+(def ^:private stick-major
+  "The stick family's ONE driving size (mm): the stick's MAJOR axis at d=176 —
+   the tested 4.0. Everything else follows with ABSOLUTE clearances, because
+   0.4mm is the printer's tolerance, not physics, and scaling it would break
+   the cam: stick minor = major − 0.4 (insertion), channel minor = major
+   EXACTLY (the quarter-turn bite), channel major = major + 0.4 (the bridge
+   sag falls on the insertion clearance, never on the bite — the tested
+   4.0×3.6 stick in the 4.4×4.0 channel)."
+  4.0)
+
+(defn stick-scale
+  "How much the stick/slot CROSS-SECTIONS grow with the cage: (d/176)^0.75,
+   floored at 1. A cantilever's stiffness goes as d⁴/L³ and the stick's free
+   length grows with the cage's aperture, so equal tip stiffness wants the
+   section ∝ length^0.75 — Vincenzo's question (4/9): «se fossero troppo fini
+   rischiano di spezzarsi», and the answer is yes, from about ⌀220 up. Never
+   below 1: the 176 sizes are the TESTED ones, and a smaller cage keeps them
+   (its sticks are shorter, stiffer, and the slots stay printable)."
+  [d]
+  (max 1.0 (Math/pow (/ (double d) 176.0) 0.75)))
+
+(defn stick-section-r
+  "Semi-axes [across up] (mm) of the STICK for a cage of diameter `d` — what
+   the print file builds sticks from, derived from the same driving size the
+   channels use so the cam relation survives every scale."
+  [d]
+  (let [maj (* stick-major (stick-scale d))]
+    [(/ maj 2.0) (/ (- maj 0.4) 2.0)]))
 
 (defn stick-slots
   "The poses of the STICK-SLOTS on a cage of diameter `d` — the part-holder
@@ -542,14 +567,16 @@
    height (band plus rise) and :body-lift how far its centre sits above
    :position — the four numbers a box needs — and :channel-lift / :channel-r
    for the elliptical hole through it. They live here rather than in the
-   `acquire-cage` library (where they were until 2026-09-01) because they now
+   print file (where they were until 2026-09-01) because they now
    have three consumers — printing, the flat printable ring, and the cage drawn
    over the photograph — and three copies of a number is three chances to drift.
 
    Fabrication data, not registration data: slots carry no marks and take no
    part in the solve, so `:phases` does not move them."
   [d h]
-  (let [body-h (+ h slot-rise)]
+  (let [s (stick-scale d)
+        maj (* stick-major s)
+        body-h (+ h (* slot-rise s))]
     (vec (for [k (range ring-count)
                alpha slot-azimuths]
            (let [axis (ring-axis k)
@@ -560,12 +587,14 @@
               :position (place axis [(* r (Math/cos a)) (* r (Math/sin a)) 0.0])
               :heading (place axis [(- (Math/cos a)) (- (Math/sin a)) 0.0])
               :up (place axis [0.0 0.0 1.0])
-              :body-w slot-body-w
-              :body-len slot-body-len
+              :body-w (* slot-body-w s)
+              :body-len (* slot-body-len s)
               :body-h body-h
               :body-lift (- (/ body-h 2.0) (/ h 2.0))
-              :channel-lift slot-channel-lift
-              :channel-r slot-channel-r})))))
+              :channel-lift (* slot-channel-lift s)
+              ;; [across up]: minor = the stick's major EXACTLY (the bite),
+              ;; major = +0.4 absolute (the insertion, where the bridge sags)
+              :channel-r [(/ maj 2.0) (/ (+ maj 0.4) 2.0)]})))))
 
 ;; --- anchors ----------------------------------------------------------------
 
@@ -1045,7 +1074,7 @@
    Returns a three-ring mesh with, under :anchors, six crowns of `marks` plus six
    zero-indices — `:zp00`…, `:zm00`…, `:yp00`…, `:ym00`…, `:xp00`…, `:xm00`…,
    `:zero-zp` … — and `:mark-disc-r`, `:cage-d`, `:cage-marks`, `:cage-h` and
-   `:rings` (each ring's axis and radii, which the `acquire-cage` library prints
+   `:rings` (each ring's axis and radii, which the print file (examples/stampa-gabbia.clj) prints
    from). All in the solver's object frame.
 
      (edit-acquire \"/Users/me/scans/testina\" {:proxy (registration-cage :d 176)})
@@ -1135,7 +1164,7 @@
      :cage-gen gen
      :rings rings
      ;; Fabrication rides on the proxy for the same reason the marks do: the
-     ;; `acquire-cage` library must not restate any of this, or the printed cage
+     ;; print file (examples/stampa-gabbia.clj) must not restate any of this, or the printed cage
      ;; and the model of it drift apart without either one looking wrong.
      ;; A flipped ring's features flip with it (as-built, not as-designed) —
      ;; the drawn tabs must sit where the glued ones are, or the eye alignment

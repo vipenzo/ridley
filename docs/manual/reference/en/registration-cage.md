@@ -118,14 +118,21 @@ ring, or to step off the axis and reshoot.
 
 ## Printing and assembling one
 
-The `acquire-cage` library prints from **this function's own** `:anchors` and
-`:tabs`, so the discs on the plastic are the marks the solver looks for — not a
-copy of them.
+The print code lives in **`examples/stampa-gabbia.clj`** — a plain, readable
+file, not a library: you print a cage once in a while, and the code that
+produces it deserves to be read and modified. Evaluate the file (its
+definitions produce nothing by themselves), then uncomment the command you
+need at the bottom. Everything in it prints from **this function's own**
+`:anchors` and `:tabs`, so the discs on the plastic are the marks the solver
+looks for — not a copy of them.
 
 ```clojure
-(register Big  (acquire-cage/make-print-ring 176 :big))    ; flat, ready to print
-(register Cage (acquire-cage/make-cage-ring 176))          ; assembled, to look at
+(register Big  (make-print-ring gabbia :big))    ; flat, ready to print
+(register Cage (make-cage-ring gabbia))          ; assembled, to look at
 ```
+
+`gabbia` is the file's one declaration — diameter, `:gen`, `:rim-marks?` — so
+what you print and what the session declares cannot drift apart.
 
 `make-print-ring` hands you the ring **lying down**, tabs upward — the pose it
 prints in. `make-cage-ring` hands you the same ring where it sits in the cage,
@@ -148,8 +155,8 @@ by mistake.
 To skip the scene and write all three files at once:
 
 ```clojure
-(acquire-cage/save-3mf 176 "~/Downloads")   ; three files, one folder dialog
-(acquire-cage/save-cradle 176 "~/Downloads")
+(save-3mf gabbia "~/Downloads")      ; three files, one folder dialog
+(save-cradle 176 "~/Downloads")
 ```
 
 **One ring per file, not one file with six objects.** A ring and its discs stay
@@ -223,12 +230,17 @@ marks and fed the detector its false candidates. The slots sit at 60° and 240°
 on each ring — 15° clear of the nearest crown disc, 30° clear of the joints,
 35° from the zero-index — and take no part in the solve.
 
-The kit, all from the tested sections (stick 4.0×3.6 mm, channel 4.4×4.0):
+The kit (from `examples/stampa-gabbia.clj`). Sections **scale with the cage**
+— (d/176)^0.75, floored at 1: a longer stick too thin snaps — with the 0.4 mm
+clearances absolute at every size, so the quarter-turn keeps its bite. At
+⌀176 they are the tested ones: stick 4.0×3.6 mm, channel 4.4×4.0. The stick
+reads its section from the cage's own channel, so the cam relation cannot
+drift:
 
 ```clojure
-(register Stick (acquire-cage/stick))        ; 60mm, il collaudato
-(register Lungo (acquire-cage/stick 80))     ; per il centro dall'anello grande
-(register Punta (acquire-cage/punta-tricuspide))
+(register Stick (stick gabbia))       ; 60mm, il collaudato
+(register Lungo (stick gabbia 80))    ; per il centro dall'anello grande
+(register Punta (punta-tricuspide))
 ```
 
 `punta-tricuspide` is an optional three-pointed foot that mounts on a stick's
@@ -291,7 +303,7 @@ A **90° error is not one of these** and needs no correction: with marks every
 30°, turning a ring by 90° only changes which mark is number zero, and the
 zero-index says which.
 
-Printing is unaffected — `acquire-cage` always prints the nominal cage. `:phases`
+Printing is unaffected — the print file always prints the nominal cage. `:phases`
 describes the one you built.
 
 ## The ring glued turned over — `:flips`
@@ -332,7 +344,7 @@ housing (this is exactly how the reference cage's Y ring was found). Declare
 the flip, re-measure that ring's phase, and the drawn cage becomes the glued
 one, tabs and all.
 
-Printing is unaffected, same as `:phases`: `acquire-cage` prints the nominal
+Printing is unaffected, same as `:phases`: the print file prints the nominal
 cage, and `printable-ring` must be taken from a model declared **without**
 `:flips`.
 
