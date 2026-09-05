@@ -8389,11 +8389,17 @@
         (.appendChild actions b)
         ;; P4a-3: place named points on a declared face (distinct from the
         ;; blindato 'm' below — that pins the branch, this names object points).
-        (let [mkb (.createElement js/document "button")]
-          (set! (.-type mkb) "button")
-          (set! (.-textContent mkb) "Segna punti (k)")
-          (.addEventListener mkb "click" (fn [_] (start-mark!)))
-          (.appendChild actions mkb))
+        ;; NOT on a cage (Vincenzo 5/9: «non si capisce che box è»): the six
+        ;; planes are the PROXY's bounding-box faces — on the old box proxy
+        ;; they were the object, on a cage they are planes tangent to the
+        ;; rings, nothing the object inside lives on. The cage's own
+        ;; object-marking tool is still to be designed.
+        (when-not (cage-proxy?)
+          (let [mkb (.createElement js/document "button")]
+            (set! (.-type mkb) "button")
+            (set! (.-textContent mkb) "Segna punti (k)")
+            (.addEventListener mkb "click" (fn [_] (start-mark!)))
+            (.appendChild actions mkb)))
         ;; Blindato: mark the physical sign to pin this photo's branch. Camera
         ;; photos only (photo 0's branch is set by the proxy alignment). A green
         ;; tick reminds the user this photo already has its mark.
@@ -8881,7 +8887,7 @@
               (if retrace? (stop-retrace!) (start-retrace!)))
 
         ;; 'k' toggles the named-mark mode from gizmo/mark; inert during pnp/retrace
-          (and (not pnp?) (not retrace?) (not marker?) (= key "k"))
+          (and (not pnp?) (not retrace?) (not marker?) (not (cage-proxy?)) (= key "k"))
           (do (.preventDefault e) (.stopPropagation e)
               (if mark? (stop-mark!) (start-mark!)))
 
