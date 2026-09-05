@@ -494,8 +494,15 @@
                                 {:type :mesh
                                  :data {:vertices (mapv w verts)
                                         :faces faces
+                                        ;; 0.8 like the rim ribbons, NOT the
+                                        ;; tabs' 0.35: under the annulus sits
+                                        ;; the proxy mesh's own BLUE, and at
+                                        ;; 0.35 the mix ate the hue — rosso+blu
+                                        ;; = grigio, misurato da Vincenzo
+                                        ;; («X è grigio e basta»). The photo
+                                        ;; is not behind it, the mesh is.
                                         :material {:color (axis-color-int axis)
-                                                   :opacity 0.35
+                                                   :opacity 0.8
                                                    :double-sided true
                                                    :metalness 0.0 :roughness 0.9}}}))
                             (:rings mesh))))
