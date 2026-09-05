@@ -2517,6 +2517,32 @@ body.resizing-h * {
   transform: rotate(-90deg);
 }
 
+/* Workspaces + Libraries share ONE row (Vincenzo 5/9: lo spazio a sinistra
+   è conteso fra più feature — stessa altezza, divisione orizzontale) */
+#side-lists {
+  display: flex;
+  align-items: flex-start;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+
+#side-lists > #workspace-panel,
+#side-lists > #library-panel {
+  flex: 1 1 50%;
+  min-width: 0;
+  border-bottom: none;
+}
+
+#side-lists > #workspace-panel {
+  border-right: 1px solid #3c3c3c;
+}
+
+#side-lists .library-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Workspaces panel — reuses library-* item styles, own header scoping */
 #workspace-panel {
   display: flex;

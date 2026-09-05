@@ -450,20 +450,60 @@
                                              [[(first lo) (first hi)]
                                               [(peek lo) (peek hi)]]))
                                    rim-pieces)
-            ;; each ring OUTLINED in its identity colour — the same colour as
-            ;; its rotation circle in the pose controls (cage-axis-colors),
-            ;; so «quale cerchio muove quale anello» reads at a glance
-            ;; (Vincenzo 5/9). Two circles per ring, outer radius at both
-            ;; faces; a hair off the wall like the rim ribbons, so they never
-            ;; z-fight the mesh.
+            ;; each ring DRESSED in its identity colour — the same colour as
+            ;; its rotation circle in the pose controls (cage-axis-colors), so
+            ;; «quale cerchio muove quale anello» reads at a glance (Vincenzo
+            ;; 5/9). A thin outline alone was invisible against the proxy
+            ;; mesh's own blue (his report: «sempre tutti blu»), so each ring
+            ;; face carries a translucent ANNULUS fill, tab-style, plus the
+            ;; crisp outline at the outer edge. One mesh item per ring —
+            ;; colours can't share a material.
+            ring-basis (fn [axis]
+                         (case axis
+                           :x [[1.0 0.0 0.0] [0.0 1.0 0.0] [0.0 0.0 1.0]]
+                           :y [[0.0 1.0 0.0] [0.0 0.0 1.0] [1.0 0.0 0.0]]
+                           :z [[0.0 0.0 1.0] [1.0 0.0 0.0] [0.0 1.0 0.0]]))
+            ring-circle (fn [c e1 e2 r n]
+                          (mapv (fn [i]
+                                  (let [t (* 2.0 Math/PI (/ (double i) n))]
+                                    (m/v+ c (m/v+ (m/v* e1 (* r (Math/cos t)))
+                                                  (m/v* e2 (* r (Math/sin t)))))))
+                                (range n)))
+            ring-fills (when (:cage-h mesh)
+                         (let [zoff (+ (/ (:cage-h mesh) 2.0) 0.15)
+                               n 48]
+                           (mapv
+                            (fn [{:keys [axis inner outer]}]
+                              (let [[a e1 e2] (ring-basis axis)
+                                    {:keys [verts faces]}
+                                    (reduce
+                                     (fn [{:keys [verts faces]} s]
+                                       (let [c (m/v* a (* s zoff))
+                                             lo (ring-circle c e1 e2 inner n)
+                                             hi (ring-circle c e1 e2 outer n)
+                                             b (count verts)]
+                                         {:verts (into (into verts lo) hi)
+                                          :faces (into faces
+                                                       (mapcat (fn [i]
+                                                                 (let [j (mod (inc i) n)]
+                                                                   [[(+ b i) (+ b j) (+ b n j)]
+                                                                    [(+ b i) (+ b n j) (+ b n i)]]))
+                                                               (range n)))}))
+                                     {:verts [] :faces []}
+                                     [1.0 -1.0])]
+                                {:type :mesh
+                                 :data {:vertices (mapv w verts)
+                                        :faces faces
+                                        :material {:color (axis-color-int axis)
+                                                   :opacity 0.35
+                                                   :double-sided true
+                                                   :metalness 0.0 :roughness 0.9}}}))
+                            (:rings mesh))))
             ring-outlines (when (:cage-h mesh)
-                            (let [h2 (/ (:cage-h mesh) 2.0)]
+                            (let [h2 (+ (/ (:cage-h mesh) 2.0) 0.15)]
                               (mapcat
                                (fn [{:keys [axis outer]}]
-                                 (let [[a e1 e2] (case axis
-                                                   :x [[1.0 0.0 0.0] [0.0 1.0 0.0] [0.0 0.0 1.0]]
-                                                   :y [[0.0 1.0 0.0] [0.0 0.0 1.0] [1.0 0.0 0.0]]
-                                                   :z [[0.0 0.0 1.0] [1.0 0.0 0.0] [0.0 1.0 0.0]])
+                                 (let [[a e1 e2] (ring-basis axis)
                                        r (+ outer 0.15)
                                        col (axis-color-int axis)]
                                    (mapcat (fn [s]
@@ -472,7 +512,7 @@
                                                    col))
                                            [1.0 -1.0])))
                                (:rings mesh))))]
-        (into []
+        (into (vec ring-fills)
               (remove nil?)
               [(solid tab-corners cage-tab-color 0.55)
                (solid pin-corners cage-key-pin-color 0.85)
@@ -1772,7 +1812,18 @@
   (reset-view-zoom!)
   (let [{:keys [file]} (nth (:photos @session) idx)]
     (viewport/set-camera-pose! (ensure-photo-pose idx))
-    (set-photo-for-current-focal! file)
+    ;; the photo loads ASYNC, and the rotation rings' geometry needs its pixel
+    ;; size (backdrop/image-size): at the session's FIRST photo the sync
+    ;; install below is a silent no-op — misurato da Vincenzo 5/9: cerchi
+    ;; assenti finché non navighi via e torni. Re-install when the texture is
+    ;; in, guarded to the same photo and mode.
+    (some-> (set-photo-for-current-focal! file)
+            (.then (fn [_]
+                     (when (and @session
+                                (= idx (:current-idx @session))
+                                (= :gizmo (:mode @session))
+                                (not (:stage? @session)))
+                       (install-pose-rings!)))))
     ;; In :retrace the filmstrip is the live-reprojection control: keep the mode,
     ;; just move the camera onto this photo and re-show the (unchanged) world-space
     ;; polyline from the new angle — never tear down the retrace to install a gizmo.
