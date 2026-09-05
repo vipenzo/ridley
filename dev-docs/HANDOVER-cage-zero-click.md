@@ -22,6 +22,206 @@ stato dei lavori per ripartire.
 
 ---
 
+## ATTERRAGGIO 5/9 — per la chat nuova, leggi PRIMA questo
+
+**GATE LIVE DEI TRATTINI: PASSATO (5/9 mattina, log di Vincenzo).** Foto 2:
+9/9 trattini, rms 1.21px. Foto 4: 8/8, rms 1.24px — entrambe le foto che i
+dischetti rifiutavano, registrate premendo 'a' col solo seme d'occhio. Sulla
+foto 4 la RICONCILIAZIONE ha fatto il suo primo intervento live: l'indice X
+letto `fwd k7` a 8.4px contro il `fwd k0` votato da 2 pose, con l'alloggio
+NOMINALE vuoto (il più vicino a 210px) — testimone AFFAMATO su frame povero,
+non gemello quasi certamente; la foto resta nel film senza voto sulla lente,
+lo spareggio è il click sul doppio pallino di X in una terza foto (il
+messaggio lo dice). Da valutare in futuro se un testimone su frame affamato
+debba proprio votare.
+
+**OPZIONE (b) SCELTA DA VINCENZO E CABLATA (5/9 sera).** Tre pezzi nuovi,
+suite 1014/0, fixture battiscopa5 invariato:
+
+- **`match-cage/rim-confirm`** — la rete: ogni lettura-macchina dai
+  dischetti (ramo <4 click) su gabbia con rim marks si fa CONFERMARE dai
+  trattini prima dell'adozione. `:confirmed` (copertura ≥ 0.7) e `:silent`
+  (meno di `rim-confirm-min-tried` 6 pezzi di faccia — tacere è onestà)
+  adottano; `:disconfirmed` SCARTA la lettura e cade nel ramo trattini, col
+  log che dice numeri e perché. Al banco: foto 6 (dischetti a 10.96px) è
+  confermata 11/11.
+- **Il normalizzatore È in produzione, dietro il suo arbitro**:
+  `choose-eye-seed` — il seme di 'a' è la posa di Vincenzo O la sua gemella
+  con le traslazioni rifatte dai dischetti, chi delle due ASSEGNA più
+  dischetti (pareggio → l'umano). Il seme normalizzato entra in auto-read;
+  se i trattini dal seme crudo rifiutano e i dischetti avevano promosso il
+  normalizzato, `rim-register` riprova da lì (messaggio: «con le TRASLAZIONI
+  rifatte dai dischetti»). La quiet lie da 54.8mm non passa più: la rete (b)
+  la smentisce.
+- **Rescue verticale del primo giro** (`read-rim :cross-reach-px`, in
+  `rim-register` a 60px con cross multi-azimut ±1.2·hw): un seme oltre il
+  raggio del pre-centraggio leggeva run corte ad alto contrasto (i bordi
+  della barra contro la carta) e moriva `starved` — misurato su foto 5 live:
+  0/9 → 3/9. ATTENZIONE al simbolo: dentro il doseq di read-rim `zero?` è
+  OMBREGGIATO dal flag del pezzo — usare `==`.
+
+**FOTO 5 (live): rifiuto ONESTO, e la diagnosi è la UX.** 18 dischetti, X e
+Z quasi di taglio; la posa a occhio di Vincenzo è oltre il bacino ±12° (metà
+passo del pettine — il muro dell'alias NON si allarga): overlay con
+predizioni a 20-90px dai trattini veri, cross nullo su 7 pezzi su 9, run
+corte = bordi barra. Nessuna scala di profondità la sblocca (sonda
+`CAGE_AUTO_RIMSCALE`: 0-3/9 a ×0.7…×2.2) → non è la distanza, è
+l'allineamento fine. La cura è il CONTROLLO DI POSA nuovo (sotto).
+
+**IL CONTROLLO DI POSA disegnato da Vincenzo (5/9 sera, schizzo): «il proxy
+è già gizmo di se stesso».** Rotazioni = trascinare gli ANELLI DISEGNATI
+della gabbia (drag tangenziale su un anello = rotazione attorno al suo
+asse); traslazioni = TRE CURSORI ai bordi della foto. Aggiustamenti
+concordati («Perfetto»): (1) cursori in assi SCHERMO — sinistra su/giù,
+sopra destra/sinistra, sotto vicino/lontano, col terzo che scala la
+distanza camera↔pivot (pixel del pivot INVARIANTE: la gabbia resta ferma e
+cambia taglia); (2) cursori A MOLLA (drag relativo, il pomello torna al
+centro al rilascio).
+
+**CURSORI COSTRUITI (5/9 sera, `install-pose-sliders!` in edit_acquire),
+gate live pendente.** Vivono SOLO dove vive il gizmo (mai su
+retrace/mark/stage; smontati a ogni cambio foto e alla chiusura). Un drag
+muove il DISEGNO: su foto 0 trasla il proxy (trasporto rigido delle camere
+registrate UNA volta al rilascio, col delta totale — pura traslazione,
+compone), sulle altre muove la CAMERA all'inverso (vivo, è sicuro: un
+cursore non fa raycast attraverso la camera, il feedback-loop di
+on-inv-commit! non esiste qui). Il rilascio è un commit umano: :eye-posed,
+:manual?, derive-faces, save — cioè il seme di 'a'. Mappatura 1:1
+(px-cursore → px-immagine via Z/fx alla distanza del pivot); dolly
+esponenziale, 300px = ×2 (`pose-dolly-k`). GEOMETRIA ANCORATA AL CANVAS in
+px (il genitore contiene anche la toolbar del viewport: le % lo mettevano
+sopra i bottoni — smoke DOM nel dev-browser, screenshot); il cursore alto
+scende 40px per la toolbar in overlay. GATE LIVE DEI CURSORI: PASSATO
+(«vanno molto bene così»).
+
+**CERCHI DI ROTAZIONE COSTRUITI (5/9 notte, `install-pose-rings!`), gate
+live pendente.** Il problema misurato da Vincenzo: sul gizmo 3D un anello
+DI TAGLIO proietta il suo cerchio in una linea e il guadagno esplode
+(«ogni piccolo movimento viene amplificato»). La sua soluzione, dal
+suo schizzo: tre cerchi PLANARI ALLO SCHERMO, concentrici sul
+centro-gabbia proiettato — Z dentro, Y in mezzo, X fuori, coi colori
+degli assi — guadagno angolare COSTANTE 1° di trascinamento = 1° di
+rotazione attorno all'asse MONDO dell'anello (bridge/box-basis), qualunque
+sia il suo orientamento. Segno = il disegno segue il puntatore:
+φ = −Δθ_client·sign(dot(asse, verso-camera)). Il pixel del pivot è
+invariante in un'orbita rigida ⇒ i cerchi non si muovono durante la
+rotazione; le TRASLAZIONI dei cursori invece lo spostano ⇒
+`refresh-pose-rings-geometry!` li riaggancia vivo. SVG con hit sul solo
+tratto (16px), etichette «ruota X/Y/Z»; stesso commit umano dei cursori.
+VISIBILITÀ: cursori+cerchi vivono solo in modalità :gizmo
+(`refresh-pose-controls-visibility!` agli 8 set di :mode) — in
+pnp/retrace/mark/marker i click possiedono il frame. Lo spareggio del
+GEMELLO di foto 4: Vincenzo ha cliccato xp00 a mano su foto 1 e 2 e
+ri-registrato a 3.8/4.5px (il soccorso ha scartato da solo le proposte
+stantie).
+
+**IL GIZMO 3D È MORTO NELLA VISTA FOTO (5/9 notte, decisione di Vincenzo
+dopo il collaudo dei cerchi: «meno intuitivo ma la soluzione migliore —
+toglierei proprio il gizmo, un doppio modo confonde»).** `install-gizmo!`
+eliminata; i 4 stop (pnp/retrace/mark/marker) non la reinstallano più; il
+toggle 'v' ora nasconde/mostra i POSE CONTROLS (la visibilità onora
+:hide-proxy?); on-photo0-commit!/apply-inverted/on-inv-commit! restano NON
+chiamate come riferimento documentato degli invarianti (trasporto rigido,
+inversione proxy↔camera) — da eliminare al gate chiuso. L'Alt-drag della
+sbirciatina in PnP è un meccanismo separato, intatto. COL COLLAUDO DEI
+CONTROLLI, FOTO 5 SI È REGISTRATA: seme d'occhio → 13 dischetti rms 4.6 →
+PnP 3.5px, 17 marker — la foto «che non si riusciva a fargliela prendere».
+NOTA sul GEMELLO di foto 4 (ora k7 contro k0 votato da 3 pose): l'alloggio
+nominale di X in quel frame è VUOTO (il vero indice non è rilevato, lo
+spurio a 8.4px è l'unico candidato) — rifare foto 4 può NON zittire
+l'avviso, perché la rilettura rivede lo stesso spurio. La foto è comunque
+quarantenata dal voto (non vota sulla lente). RISOLTO 5/9 chiusura:
+l'avviso esce già solo alla TRANSIZIONE di condanna (`:twin-flagged`,
+in-memory) — le ripetizioni viste erano i reload della pagina a ogni
+consegna, non un difetto di dedup.
+
+**DIRETTIVA UX di Vincenzo (5/9, chiusura serata): NASCONDERE IL LAVORIO.**
+«Quello che interessa all'utente è se la foto è usabile o no (e semmai se
+partecipa alla determinazione della focale), il resto sono dettagli per
+addetti ai lavori che farei sparire.» → memoria
+`feedback_hide_the_lavorio`. SECONDO GATE LIVE DEI TRATTINI passato in
+serata: foto 7 (sfocata, gabbia mezza fuori inquadratura, 30 dischetti
+rilevati ma rifiutati) registrata dai trattini 10/13, rms 1.04px, dal seme
+dei nuovi controlli («posizionare il proxy coi nuovi controlli è piuttosto
+facile»). La R della serata: 4 foto (le due rim e la condannata escluse),
+28.15 → 27.66mm annotata in memoria camera.
+
+**BADGE + DIETA COSTRUITI (5/9 notte, «sì, mettiamo il badge e rendiamo
+meno loquace l'operatività»).** (1) Filmstrip: quarto stato
+`eaq-badge-nolens` — corpo VERDE (usabile) e bordo ambra TRATTEGGIATO =
+registrata ma NON concorre alla lente (condannata dal voto `:twin-flagged`,
+oppure `:rim?` — i trattini non hanno pick per la R); il PERCHÉ sta nel
+tooltip del bottone, il forense resta nel log. Tooltip anche per gli altri
+stati (prevista dal fit / posata a occhio / da registrare, col gesto).
+`:rim?` ora PERSISTE in acquire-state.json (come `:manual?`) — senza, al
+reload il badge avrebbe mentito e il verdetto-dischetti sarebbe tornato a
+processare i rim. Le foto rim salvate PRIMA di stanotte non hanno il flag
+nel file: si risana da solo al prossimo salvataggio della sessione. (2)
+Dieta: «facce lette dalla posa» esce SOLO quando la lettura CAMBIA la
+dichiarazione della foto o sposta/toglie click — usciva a ogni commit dei
+controlli e dominava il log. Criterio permanente in
+`feedback_hide_the_lavorio`: un messaggio user-facing deve cambiare la
+risposta a «usabile?» o «vota sulla lente?», sennò va nel log.
+
+**CABLAGGIO dei trattini nel ramo di 'a' FATTO.** Tre pezzi, tutti compilati
+puliti (`:app` 16 warning pre-esistenti altrove, `:cage-auto` zero):
+
+- **`match-cage/rim-register`** — la funzione di produzione. Due giri come
+  l'ICP del seme (lettura sotto l'occhio → solve seminato → RILETTURA sotto
+  la posa risolta → solve), e l'accettazione NON è il residuo da solo: (a)
+  `eye-compatible?` — la camera deve atterrare dove l'occhio l'ha messa (gli
+  alias del pettine spediscono la camera a 77-208mm); (b) **asticella di
+  copertura al 2° giro** (`rim-coverage-min` 0.7 — le vere rileggono 8-9/9,
+  gli alias 4-5/9); (c) la barra rms del canale occhio
+  (`eye-accept-rms-px`, 8). Ogni rifiuto torna coi numeri
+  (`:starved | :no-solve | :far-from-eye | :coverage | :rms`).
+- **In `edit_acquire`**: nel ramo <4 click, quando `auto-read` rifiuta E c'è
+  il seme dell'occhio, 'a' prova i trattini. Successo →
+  `apply-rim-registration!`: posa applicata direttamente (nessun pick di
+  dischetti la regge, quindi niente `on-solve-pnp!`), risultato
+  `{:pnp? true :rim? true}`, proposte stantie purgate, testimone dell'indice
+  + voto del montaggio come sempre, log e status coi numeri. Rifiuto → la
+  frase dei trattini coi numeri in coda al messaggio di rifiuto
+  (`rim-refusal-phrase`). **`cage-pose-verdict!` è SPENTO sui risultati
+  `:rim?`**: «dischetti spiegati» lì non ha giurisdizione (misurato 5→3 con
+  posa giusta) — il verdetto è già pagato dall'asticella di copertura.
+- **Banco della funzione di produzione**: sonda `CAGE_AUTO_RIMREG=1` su
+  battiscopa5 — foto 4 (rifiutata dai dischetti, seme a occhio) ACCETTATA
+  8/8 trattini, rms 1.23px, camera a 2.6mm dal seme; foto 2 (il seme CATTIVO
+  congelato nel fixture, 5-7°/24mm) RIFIUTATA onesta (`starved` 0/9), zero
+  falsi agganci; foto 1/3 (registrate) accettate 12/12 e 11/12 a 1.1-1.3px,
+  camera a 3-4mm. **GATE LIVE PENDENTE**: una sessione vera dove una foto
+  rifiutata dai dischetti si registra premendo 'a' col solo seme d'occhio —
+  il banco dice che succede, serve l'occhio di Vincenzo sul disegno.
+
+**AUTOMATISMO TRASLAZIONI — misurato, NON cablato.** Osservazione di
+Vincenzo (5/9): al gizmo le rotazioni vengono facili, la fatica sono le
+TRASLAZIONI (avvicinare/allontanare la gabbia finché è grande quanto quella
+in foto). `match-cage/eye-normalize-translation`: tiene la ROTAZIONE
+dell'occhio e rifà la traslazione dai dischetti rilevati — baricentro
+mediano → spostamento laterale, rapporto delle dispersioni → profondità;
+forma chiusa, due passate, trim anti-spazzatura, scala fuori [⅓,3] → posa
+restituita INTATTA. Sonda `CAGE_AUTO_EYETRANS=1`. NUMERI (battiscopa5):
+sulla foto RICCA (29 dischetti) guarisce OGNI guasto di traslazione
+(profondità ×0.6…×1.8, laterale 40mm, combinati, anche con 3° di rotazione
+sopra): da 100-300px a ~46px, e l'ICP aggancia — 16 corr, rms 2.8px, camera
+a 3.2mm — dove il seme guasto muore o finisce a 48-222mm. Sui frame POVERI
+non aggancia, e va bene così: lì i dischetti non misurano la gabbia
+(territorio dei trattini) e i gate rifiutano. **TRAPPOLA MISURATA prima di
+cablare**: su foto 4, seme 3°+z×1.5 normalizzato → ICP 9 corr rms 6.3px
+camera a **54.8mm** — passerebbe le barre del canale occhio (la bugia
+silenziosa che quel canale teme), MENTRE senza automatismo lo stesso caso
+cade nei trattini e registra a 2.6mm. Quindi NON si cabla davanti ai
+trattini; le opzioni sul tavolo: (a) normalizzatore solo come ULTIMO
+ripiego dopo dischetti+trattini; (b) ogni posa accettata da seme-macchina
+su gabbia con rim marks si fa CONFERMARE dai trattini (read-rim come rete
+di verdetto, la copertura come arbitro) — l'opzione (b) darebbe una rete
+anche al canale occhio di oggi. Decisione a Vincenzo. Nota di banco: la
+VECCHIA battiscopa non fa da banco per questa sonda (dichiarazioni pre-2/9
+avvelenate + scala 4032px).
+
+---
+
 ## ATTERRAGGIO 4/9 — per la chat nuova, leggi PRIMA questo
 
 **LO STATO, in breve.** battiscopa4: 9/9 foto registrate a 1.55-2.43px,
@@ -55,11 +255,65 @@ dato (48 candidati ma selezione morta su inquadratura di taglio; il seme
 dell'occhio resta il recovery), prescrizione che si forma: «luce ambiente
 E due anelli di faccia».
 
-**CODA**: geometria di stampa dei segmenti sul bordo (quando Vincenzo
-ristampa — save-3mf oggi AVVISA che mancano); detector dei segmenti
-(ricerca guidata dalla posa); zero-click selezione/recall (forse pagati in
-parte dalla luce — rifar girare il banco su foto ambient prima di scrivere
-codice); punta-tricuspide non parametrica.
+**CODA**: ~~geometria di stampa dei segmenti sul bordo~~ FATTA (4/9
+pomeriggio): `rim-spans` nel modello è l'unica fonte (la leggono
+`rim-segments` per il disegno E `printable-ring` → `:rim-segments` per la
+stampa); in print-cage.clj le fasce sono settori di guscio incassati a filo
+(`inlay` radiale, metà spessore verso p, zero interrotto), tasca+nastro con
+la regola dell'overshoot; smoke dal vivo: 12 bande, gap dello zero vuoto,
+z=[0,1.5] esatto in posa piatta E assemblata. ATTENZIONE stampa: le fasce
+condividono i layer col corpo — due colori PER OGGETTO (AMS), il
+cambio-colore per altezza non copre più il bordo (save-3mf lo dice).
+Vincolo dichiarato: sotto ⌀≈85 la tasca del bordo morde le tasche dei
+dischetti (inlay assoluto vs corona che scala).
+
+**DETECTOR dei segmenti — fetta-BANCO FATTA (4/9 sera).** Gabbia gen 2
+stampata, incollata, sessione live battiscopa5 (4 foto, congelata in
+`test-assets/cage-battiscopa5`); i segmenti blu disegnati COMBACIANO con la
+plastica (gate visivo passato da Vincenzo). `photogrammetry/rim_detect.cljs`:
+lettura GUIDATA dalla posa (mai unguided: l'identità viene dal seme), per
+pezzo: pre-centraggio TRASVERSALE (la fascia è mezza altezza, l'errore
+verticale della posa ammazza prima di quello tangenziale), profilo in
+azimut a passi da 1px, run scure filtrate PER LUNGHEZZA e poi per
+vicinanza (l'ordine inverso faceva vincere un blip vicino allo 0 sul
+trattino vero a 40px — misurato), contrasto per-run. Sonda
+`CAGE_AUTO_RIM=1|2` (+`CAGE_AUTO_RIM_OVERLAY=<dir>`) in cage_auto_study.
+NUMERI battiscopa5: foto REGISTRATE 11-12/12 letti, mediana 2.9-6.3px
+(plastica=modello al pixel, seconda conferma dopo l'occhio); foto 4
+(RIFIUTATA dai dischetti, posa a occhio) → 8/8 trattini, solve rms
+1.21px, dischetti spiegati 10→15 su 26 — LA FOTO CHE NON SI REGISTRAVA È
+REGISTRATA DAI TRATTINI, al banco. Foto 2, primo giro: posa a occhio
+troppo storta (overlay: predizioni fuori dalla plastica) — ricerca locale
+onestamente muta; Vincenzo RIALLINEA a occhio (coi segmenti blu come guida)
+e il banco aggancia: 8/9 al primo giro, 9/9 al secondo, rms 1.21px, verdi
+sui trattini di ENTRAMBI gli anelli di taglio. ENTRAMBE le foto rifiutate
+dai dischetti si registrano dai trattini con un seme d'occhio decente.
+Caveat misurato: su frame così (14 dischetti rilevati appena) la metrica
+«dischetti spiegati» è affamata e NON fa da arbitro (5→3 a 12px con posa
+palesemente giusta) — l'arbitro lì è il disegno sovrapposto + l'rms dei
+trattini su due anelli. BACINO DI CATTURA misurato (5/9, sonda `CAGE_AUTO_RIM_SWEEP=1`, verità =
+posa dai trattini, perturbazione rigida attorno al centro gabbia):
+riaggancio pulito fino a **3-6° / 26-45px sull'immagine** (foto 2 tiene i
+6°, foto 4 li perde — dipende da quali anelli guardano la camera), morto a
+9°+; le due pose buone di Vincenzo predicevano a 7.7-10.5px mediani, la
+cattiva era a 5-7°/24mm. **TRAPPOLA MISURATA: falsi agganci a 15-20°** —
+il pettine dei trattini è periodico (passo 30°), oltre metà passo la
+lettura aggancia il trattino SBAGLIATO e converge a 77-208mm dalla verità
+con pochi trattini (4-5 su 9): per questo la ricerca resta ±12° (< metà
+passo), e il cablaggio DEVE avere (a) un gate di distanza dal seme (le
+pose vere atterrano a 0.4-3.2mm dal seme, le false a 77+; mc/eye-gate-frac
+esiste già) e (b) un'asticella di copertura al 2° giro (vere: 8-9/9,
+false: ≤5/9); l'arbitro definitivo dell'identità sarà lo ZERO INTERROTTO
+(un alias di un passo mette un trattino intero dove va la coppia corta) —
+da leggere quando serve, non costruito. CODA detector: CABLAGGIO nel ramo
+seminato di 'a' (il caso d'uso è provato; browser = stesso lum-at di
+blob-detect su ImageData; messaggi nel log come il resto di 'a'; su frame
+poveri la metrica «dischetti spiegati» NON fa da arbitro — vedi sopra);
+correlazione a PETTINE declassata a rifinitura zero-click (e va costruita
+con lo zero-check, vista la trappola dell'alias). Fixture con la POSA
+CATTIVA di foto 2 congelata in test-assets/cage-battiscopa5 (banco del
+pettine); la posa buona vive nella sessione viva. Restano anche:
+zero-click selezione/recall (luce); punta non parametrica.
 
 **TRAPPOLE nuove di stanotte** (le vecchie nei blocchi sotto): mai
 avvolgere un corpo grosso in una nuova arity coi piccoli edit (parinfer

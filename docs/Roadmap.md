@@ -199,7 +199,18 @@ alla SELEZIONE (il suo
 anello non si assembla mai in un'ipotesi, nemmeno col concentrico — cablato
 dietro `:concentric?`, misurato identico). Banco `node out/cage-auto.js` su
 `test-assets/cage-battiscopa` (verità = la sessione a mano; `CAGE_AUTO_TEETH`
-/ `CAGE_AUTO_CONC` / `CAGE_AUTO_NOCTX` / `CAGE_AUTO_ZERO`). Entry point
+/ `CAGE_AUTO_CONC` / `CAGE_AUTO_NOCTX` / `CAGE_AUTO_ZERO`). *Segmenti sul
+bordo (disegno di Vincenzo 3/9, per gli anelli visti di taglio dove i
+dischetti si spengono)*: modello+disegno 3/9, e dal 4/9 pomeriggio anche la
+GEOMETRIA DI STAMPA in `examples/print-cage.clj` — `cage/rim-spans` è
+l'unica fonte per disegno e plastica; le fasce condividono i layer col corpo
+(due colori per oggetto, AMS). Il detector guidato dalla posa è FATTO al
+banco (4/9 sera, `rim_detect.cljs`: le due foto che i dischetti rifiutavano
+si registrano dai trattini a rms 1.21px) e dal 5/9 è CABLATO in 'a'
+(`match-cage/rim-register`: gate di distanza dal seme + asticella di
+copertura al 2° giro; gate live pendente); misurato ma NON cablato
+l'automatismo delle traslazioni del seme (`eye-normalize-translation` —
+l'osservazione di Vincenzo sulla fatica del gizmo). Entry point
 `dev-docs/HANDOVER-cage-zero-click.md`; storia in
 `dev-docs/HANDOVER-cage-auto-detect.md`; banchi `node out/cage-study.js` e
 `node out/cage-fit.js`.
