@@ -163,6 +163,19 @@ controlli e dominava il log. Criterio permanente in
 `feedback_hide_the_lavorio`: un messaggio user-facing deve cambiare la
 risposta a «usabile?» o «vota sulla lente?», sennò va nel log.
 
+**PULIZIA UI su segnalazione di Vincenzo (5/9 notte).** (1) TRAPPOLA
+scoperta: `plate-proxy?` è VERO anche per la gabbia (ha :anchors — il
+docstring di cage-proxy? lo dice), quindi i comandi del PIATTO le
+comparivano: «Senza identità (b)» e «Calibra il piatto (C)» ora esigono
+`(and (plate-proxy?) (not (cage-proxy?)))` (bottoni E tasti); «Facing
+marks (F)» sparisce sulla gabbia (superato dalle facce lette dalla posa +
+i tre toggle per-anello). «Segna punti (k)» RESTA: non è del piatto, è la
+fase dopo (punti nominati sull'OGGETTO in gabbia). (2) Gli anelli disegnati
+vestono i colori dei loro cerchi di controllo (`cage-axis-colors`, fonte
+UNICA: X rosso, Y verde, Z blu — idea di Vincenzo): contorni per-anello nel
+disegno (2 circonferenze al raggio esterno, facce ±h/2, 48 lati, +0.15 di
+r-off anti z-fight) e cerchi SVG dalla stessa mappa.
+
 **CABLAGGIO dei trattini nel ramo di 'a' FATTO.** Tre pezzi, tutti compilati
 puliti (`:app` 16 warning pre-esistenti altrove, `:cage-auto` zero):
 

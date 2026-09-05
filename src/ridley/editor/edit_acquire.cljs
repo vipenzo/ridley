@@ -269,6 +269,16 @@
 (def ^:private cage-channel-color 0xe8f0ff) ; quasi bianco: la bocca del canale
 (def ^:private cage-rim-color 0x4455ee)     ; blu: i segmenti sul bordo (rim marks)
 
+(def ^:private cage-axis-colors
+  "Ring-identity colours, ONE source for the drawn cage's ring outlines and
+   for the rotation circles of the pose controls (Vincenzo 5/9: «disegnamo i
+   ring del proxy del colore degli anelli di controllo») — so the circle you
+   grab and the ring it turns read as the same thing."
+  {:x "#ff6b57" :y "#7ec14b" :z "#7986ff"})
+
+(defn- axis-color-int [axis]
+  (js/parseInt (subs (cage-axis-colors axis) 1) 16))
+
 (defn- box-corners
   "The 8 corners of a box: `center`, three orthonormal `axes`, and the
    half-extent along each. Corners are indexed by three bits, one per axis, so
@@ -309,14 +319,15 @@
 
 (defn- ellipse-loop
   "Closed polyline of an ellipse centred at `c`, semi-axis `r1` along `e1` and
-   `r2` along `e2`, as [from to] pairs."
-  [c e1 r1 e2 r2]
-  (let [n 20
-        pt (fn [i] (let [a (* 2.0 Math/PI (/ (double i) n))]
-                     (m/v+ c (m/v+ (m/v* e1 (* r1 (Math/cos a)))
-                                   (m/v* e2 (* r2 (Math/sin a)))))))
-        pts (mapv pt (range n))]
-    (map vector pts (conj (subvec pts 1) (first pts)))))
+   `r2` along `e2`, as [from to] pairs. `n` segments (default 20 — the ring
+   outlines pass 48: a full ring drawn 20-sided reads as a polygon)."
+  ([c e1 r1 e2 r2] (ellipse-loop c e1 r1 e2 r2 20))
+  ([c e1 r1 e2 r2 n]
+   (let [pt (fn [i] (let [a (* 2.0 Math/PI (/ (double i) n))]
+                      (m/v+ c (m/v+ (m/v* e1 (* r1 (Math/cos a)))
+                                    (m/v* e2 (* r2 (Math/sin a)))))))
+         pts (mapv pt (range n))]
+     (map vector pts (conj (subvec pts 1) (first pts))))))
 
 (defn- cage-feature-items*
   "The cage's PRINTED features drawn over the photo, riding the given mesh's
@@ -438,7 +449,29 @@
                                              (map vector hi (rest hi))
                                              [[(first lo) (first hi)]
                                               [(peek lo) (peek hi)]]))
-                                   rim-pieces)]
+                                   rim-pieces)
+            ;; each ring OUTLINED in its identity colour — the same colour as
+            ;; its rotation circle in the pose controls (cage-axis-colors),
+            ;; so «quale cerchio muove quale anello» reads at a glance
+            ;; (Vincenzo 5/9). Two circles per ring, outer radius at both
+            ;; faces; a hair off the wall like the rim ribbons, so they never
+            ;; z-fight the mesh.
+            ring-outlines (when (:cage-h mesh)
+                            (let [h2 (/ (:cage-h mesh) 2.0)]
+                              (mapcat
+                               (fn [{:keys [axis outer]}]
+                                 (let [[a e1 e2] (case axis
+                                                   :x [[1.0 0.0 0.0] [0.0 1.0 0.0] [0.0 0.0 1.0]]
+                                                   :y [[0.0 1.0 0.0] [0.0 0.0 1.0] [1.0 0.0 0.0]]
+                                                   :z [[0.0 0.0 1.0] [1.0 0.0 0.0] [0.0 1.0 0.0]])
+                                       r (+ outer 0.15)
+                                       col (axis-color-int axis)]
+                                   (mapcat (fn [s]
+                                             (segs (ellipse-loop (m/v* a (* s h2))
+                                                                 e1 r e2 r 48)
+                                                   col))
+                                           [1.0 -1.0])))
+                               (:rings mesh))))]
         (into []
               (remove nil?)
               [(solid tab-corners cage-tab-color 0.55)
@@ -450,7 +483,8 @@
                                    (segs (mapcat box-edges pin-corners) cage-key-pin-color)
                                    (segs (mapcat box-edges slot-boxes) cage-slot-color)
                                    (segs channel-segs cage-channel-color)
-                                   (segs rim-edge-pairs cage-rim-color)))}])))))
+                                   (segs rim-edge-pairs cage-rim-color)
+                                   ring-outlines))}])))))
 
 (defn- cage-feature-items [] (cage-feature-items* (:proxy-mesh @session)))
 
@@ -1507,8 +1541,9 @@
 
 (def ^:private pose-ring-order
   "Inner→outer, come nel disegno di Vincenzo: RING Z dentro, Y, X fuori.
-   Colori = gli assi del viewport."
-  [[:z 1.10 "#7986ff"] [:y 1.24 "#7ec14b"] [:x 1.38 "#ff6b57"]])
+   I colori vengono da cage-axis-colors — la stessa fonte che tinge i
+   contorni degli anelli DISEGNATI, così cerchio e anello si riconoscono."
+  [[:z 1.10] [:y 1.24] [:x 1.38]])
 
 (defn- remove-pose-rings! []
   (when-let [{:keys [^js svg]} @pose-rings-state]
@@ -1605,8 +1640,9 @@
                 "position:absolute;left:0;top:0;width:100%;height:100%;z-index:29;pointer-events:none;")
           (let [circles
                 (doall
-                 (for [[axis mult color] pose-ring-order]
-                   (let [r (* radius mult)
+                 (for [[axis mult] pose-ring-order]
+                   (let [color (cage-axis-colors axis)
+                         r (* radius mult)
                          ^js el (js/document.createElementNS ns "circle")
                          ^js hit (js/document.createElementNS ns "circle")
                          ^js label (js/document.createElementNS ns "text")
@@ -8049,7 +8085,7 @@
             ;; Calibration reads the poses, so it is only worth offering once
             ;; there are enough of them to be worth reading — three is the
             ;; minimum plate-calib will accept, and three is already thin.
-            (when (and (plate-proxy?)
+            (when (and (plate-proxy?) (not (cage-proxy?))
                        (>= (count (filter #(>= (count (second %)) 6) (:pnp-picks @session))) 3))
               (let [c (.createElement js/document "button")]
                 (set! (.-type c) "button")
@@ -8221,8 +8257,13 @@
         (let [solve (.createElement js/document "button")
               clr (.createElement js/document "button")
               names (.createElement js/document "button")
-              faces (.createElement js/document "button")
-              batchb (when (plate-proxy?) (.createElement js/document "button"))
+              ;; not on a cage: since the faces are READ from the pose
+              ;; (31/8) with the three per-ring toggles as override, offering
+              ;; the turned-away faces wholesale only re-opens the door the
+              ;; face machinery closed (direttiva 5/9: via il lavorio)
+              faces (when-not (cage-proxy?) (.createElement js/document "button"))
+              batchb (when (and (plate-proxy?) (not (cage-proxy?)))
+                       (.createElement js/document "button"))
               exit (.createElement js/document "button")]
           (set! (.-type solve) "button")
           (set! (.-textContent solve) "Risolvi PnP (r)")
@@ -8234,12 +8275,13 @@
           (set! (.-type names) "button")
           (set! (.-textContent names) (if (:show-names? @session) "Names: on (n)" "Names (n)"))
           (.addEventListener names "click" (fn [_] (toggle-mark-names!)))
-          (set! (.-type faces) "button")
-          (set! (.-textContent faces) (if (:show-all-marks? @session)
-                                        "Both faces (F)" "Facing marks (F)"))
-          (set! (.-title faces)
-                "Offer every mark, including the ones the current pose believes are turned away")
-          (.addEventListener faces "click" (fn [_] (toggle-all-marks!)))
+          (when faces
+            (set! (.-type faces) "button")
+            (set! (.-textContent faces) (if (:show-all-marks? @session)
+                                          "Both faces (F)" "Facing marks (F)"))
+            (set! (.-title faces)
+                  "Offer every mark, including the ones the current pose believes are turned away")
+            (.addEventListener faces "click" (fn [_] (toggle-all-marks!))))
           ;; a plate can register identity-free (fetta B) — offer the toggle
           (when batchb
             (set! (.-type batchb) "button")
@@ -8251,7 +8293,7 @@
           (.appendChild actions solve)
           (.appendChild actions clr)
           (.appendChild actions names)
-          (.appendChild actions faces)
+          (when faces (.appendChild actions faces))
           (when batchb (.appendChild actions batchb))
           (.appendChild actions exit)
           ;; the eraser's one line of discoverability — a gesture with no button
@@ -8811,7 +8853,7 @@
 
         ;; 'b' (plate only) toggles the identity-free batch flow (fetta B) vs the
         ;; armed flow (fetta A) while in PnP.
-          (and pnp? (plate-proxy?) (= key "b"))
+          (and pnp? (plate-proxy?) (not (cage-proxy?)) (= key "b"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-batch-mode!))
 
         ;; 'r' registers: in batch mode it assigns the identity-free clicks first
@@ -8839,7 +8881,7 @@
           (and pnp? (not (batch-mode?)) (= key "o"))
           (do (.preventDefault e) (.stopPropagation e) (skip-armed-corner!))
 
-          (and pnp? (= key "F"))
+          (and pnp? (not (cage-proxy?)) (= key "F"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-all-marks!))
 
           (and (#{:pnp :retrace :gizmo} (:mode @session)) (= key "n"))
@@ -8902,7 +8944,7 @@
           ;; capital C for the same reason as R: calibrating the plate rewrites
           ;; the reference every measurement in the session is against, so it is
           ;; not something to trip into while reaching for a lowercase key
-          (and (not retrace?) (not mark?) (= key "C"))
+          (and (not retrace?) (not mark?) (not (cage-proxy?)) (= key "C"))
           (do (.preventDefault e) (.stopPropagation e)
               (on-calibrate-plate!))
 
