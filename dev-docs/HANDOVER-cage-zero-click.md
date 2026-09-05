@@ -169,8 +169,17 @@ docstring di cage-proxy? lo dice), quindi i comandi del PIATTO le
 comparivano: «Senza identità (b)» e «Calibra il piatto (C)» ora esigono
 `(and (plate-proxy?) (not (cage-proxy?)))` (bottoni E tasti); «Facing
 marks (F)» sparisce sulla gabbia (superato dalle facce lette dalla posa +
-i tre toggle per-anello). «Segna punti (k)» RESTA: non è del piatto, è la
-fase dopo (punti nominati sull'OGGETTO in gabbia). (2) Gli anelli disegnati
+i tre toggle per-anello). «Segna punti (k)» — prima
+detto «resta», poi Vincenzo ha visto le sei facce: il modo interseca i
+click col BOUNDING-BOX del proxy (era-box: sul proxy-scatola quelle facce
+ERANO l'oggetto; sulla gabbia sono piani tangenti agli anelli) → NASCOSTO
+sulla gabbia, bottone e tasto. Idem «Marca il segno (m)» (il blindato di
+Klein è l'arbitro del gemello del BOX; la gabbia ha i suoi: voto del
+montaggio, alette chirali). «Add anchor (d)» RESTA per decisione di
+Vincenzo: è l'unica via per segnare gli anchor su cui lavorare poi nel
+palcoscenico. Lo strumento vero per segnare punti sull'OGGETTO in gabbia è
+DA DISEGNARE (strada naturale: due click sullo stesso punto da due foto
+registrate → triangolazione, nessun piano dichiarato). (2) Gli anelli disegnati
 vestono i colori dei loro cerchi di controllo (`cage-axis-colors`, fonte
 UNICA: X rosso, Y verde, Z blu — idea di Vincenzo): contorni per-anello nel
 disegno (2 circonferenze al raggio esterno, facce ±h/2, 48 lati, +0.15 di

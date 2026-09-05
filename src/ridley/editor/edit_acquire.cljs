@@ -8401,9 +8401,11 @@
             (.addEventListener mkb "click" (fn [_] (start-mark!)))
             (.appendChild actions mkb)))
         ;; Blindato: mark the physical sign to pin this photo's branch. Camera
-        ;; photos only (photo 0's branch is set by the proxy alignment). A green
-        ;; tick reminds the user this photo already has its mark.
-        (when (pos? (:current-idx @session))
+        ;; photos only (photo 0's branch is set by the proxy alignment). NOT
+        ;; on a cage (Vincenzo 5/9: anacronistico lì): the Klein-branch pin
+        ;; is the BOX's twin arbiter — the cage has its own (mounting vote,
+        ;; chiral tabs), and a pen mark on the part has no box corner to pin.
+        (when (and (pos? (:current-idx @session)) (not (cage-proxy?)))
           (let [mk (.createElement js/document "button")
                 marked? (get-in @session [:marker-picks (:current-idx @session)])]
             (set! (.-type mk) "button")
@@ -8911,7 +8913,7 @@
 
         ;; 'm' arms the blindato marker-click (pin the Klein branch by the
         ;; physical mark). Toggles from gizmo/marker; inert during pnp/retrace/mark.
-          (and (not pnp?) (not retrace?) (not mark?) (= key "m"))
+          (and (not pnp?) (not retrace?) (not mark?) (not (cage-proxy?)) (= key "m"))
           (do (.preventDefault e) (.stopPropagation e)
               (if marker? (stop-marker!) (start-marker!)))
 
