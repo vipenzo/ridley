@@ -42,7 +42,8 @@
             [ridley.photogrammetry.linalg :as la]
             [ridley.photogrammetry.ellipse :as ellipse]
             [ridley.photogrammetry.match-plate :as mp]
-            [ridley.photogrammetry.pnp :as pnp]))
+            [ridley.photogrammetry.pnp :as pnp]
+            [ridley.photogrammetry.rim-detect :as rim]))
 
 (def default-opts
   "`:tol-px` is the one number worth arguing about, and it is set by the CAGE, not
@@ -856,6 +857,126 @@
         d (la/v-norm (la/v-sub (cam/camera-center pose) ec))]
     (<= d (* eye-gate-frac (la/v-norm ec)))))
 
+(defn eye-normalize-translation
+  "The TRANSLATION half of the eye alignment, done by the machine: keep the
+   pose's ROTATION — the part Vincenzo says comes easy at the gizmo — and
+   refit its translation so the projected cage sits ON the detected discs.
+   The costly gesture at the gizmo is the other part (his own report, 4/9):
+   walking the cage back and forth until it is as big as the one in the
+   photograph. But apparent size is nothing but depth, and the photo already
+   measures it: the candidates' robust centroid gives the lateral shift, the
+   ratio of predicted to detected spread gives the depth, in closed form.
+
+   Medians throughout (centroid, spread) with one trim pass at 3× spread:
+   the candidate list carries junk blobs and a mean would follow them.
+   Applied twice — the first correction changes which faces project where,
+   the second settles. When the spread ratio is outside [⅓, 3] the frame is
+   not measuring what we think (junk-dominated candidates, or a pose aimed
+   somewhere else entirely): return the pose UNCHANGED rather than ship a
+   confident wrong seed.
+
+   BENCH-ONLY for now (sonda CAGE_AUTO_EYETRANS): the candidate automatism
+   for the gizmo fatigue, measured before it is wired into 'a''s eye path."
+  [targets candidates intrinsics eye-pose]
+  (let [med (fn [xs] (let [v (vec (sort xs))] (nth v (quot (count v) 2))))
+        spr (fn [pts [cx cy]]
+              (med (map (fn [[u v]] (Math/hypot (- u cx) (- v cy))) pts)))
+        step
+        (fn [{:keys [t] :as pose}]
+          (let [pred (keep #(cam/project intrinsics pose (:obj %))
+                           (front-facing targets pose))]
+            (when (and (>= (count pred) 6) (>= (count candidates) 6))
+              (let [pc [(med (map first pred)) (med (map second pred))]
+                    cc0 [(med (map first candidates)) (med (map second candidates))]
+                    sc0 (spr candidates cc0)
+                    kept (filterv (fn [[u v]]
+                                    (< (Math/hypot (- u (nth cc0 0))
+                                                   (- v (nth cc0 1)))
+                                       (* 3.0 sc0)))
+                                  candidates)
+                    cand (if (>= (count kept) 6) kept candidates)
+                    cc [(med (map first cand)) (med (map second cand))]
+                    sp (spr pred pc)
+                    sc (spr cand cc)]
+                (when (and (> sp 2.0) (> sc 2.0))
+                  (let [s (/ sp sc)]
+                    (when (< (/ 1.0 3.0) s 3.0)
+                      ;; keep R, refit t: scaling t by s is exactly the walk
+                      ;; along the ray through the cage centre (the centre's
+                      ;; pixel is invariant under it), and the lateral shift
+                      ;; rides the SCALED depth so both land in one step
+                      (let [[tx ty tz] t
+                            {:keys [fx fy]} intrinsics
+                            du (- (nth cc 0) (nth pc 0))
+                            dv (- (nth cc 1) (nth pc 1))]
+                        (assoc pose :t
+                               [(* s (+ tx (* tz (/ du fx))))
+                                (* s (+ ty (* tz (/ dv fy))))
+                                (* s tz)])))))))))
+        p1 (step eye-pose)
+        p2 (when p1 (step p1))]
+    (or p2 p1 eye-pose)))
+
+(defn choose-eye-seed
+  "The eye seed 'a' should actually use: the user's pose, or its
+   translation-normalized twin — whichever puts more cage marks on detected
+   discs (mutual-nearest at the session tolerance). Self-arbitrating and
+   cheap: on a rich frame the normalizer wins by a mile (misurato: da
+   100-300px a 46, l'ICP aggancia dove il seme crudo muore); on a starved
+   frame its fixed point is biased and the RAW eye wins — ties go to the
+   human. Returns {:pose :normalized? :raw :norm} so the caller can name the
+   mechanism and keep BOTH seeds for the rim fallback."
+  [targets candidates intrinsics eye-pose]
+  (let [norm (eye-normalize-translation targets candidates intrinsics eye-pose)
+        n-raw (count (assign targets candidates intrinsics eye-pose
+                             (:tol-px default-opts)))
+        n-norm (if (identical? norm eye-pose)
+                 0
+                 (count (assign targets candidates intrinsics norm
+                                (:tol-px default-opts))))]
+    {:pose (if (> n-norm n-raw) norm eye-pose)
+     :normalized? (> n-norm n-raw)
+     :raw eye-pose
+     :norm norm}))
+
+(def rim-coverage-min
+  "Fraction of the ATTEMPTED rim pieces a dash reading must read back before
+   it is believed — the bar of rim-register's second pass AND of the
+   rim-confirm net. The dash comb is periodic (30° pitch), so a seed more
+   than half a pitch out locks onto the WRONG dash and converges 77-208mm
+   from the truth — but it does so starved, on 4-5 dashes of 9, while a true
+   pose reads back 8-9 of 9 (misurato 5/9, sonda CAGE_AUTO_RIM_SWEEP su
+   battiscopa5). 0.7 splits the two populations with margin on both sides."
+  0.7)
+
+(def rim-confirm-min-tried
+  "Rim pieces the confirmation net needs before it may speak. On a frame
+   whose rings face the camera the rims are edge-on and read-rim attempts
+   almost nothing — silence there is honesty, not approval."
+  6)
+
+(defn rim-confirm
+  "Option (b), Vincenzo 5/9: every MACHINE-accepted disc pose on a cage with
+   rim marks must be confirmed by the dashes before it is adopted. Read the
+   rim under `pose`; the fraction read back is the verdict the residual
+   cannot fake (the quiet lie this net exists for: 9 corr at rms 6.3px with
+   the camera 54.8mm out — under the disc bars, smentita dai trattini).
+
+   Returns nil when the proxy declares no rim marks; else
+   {:tried :hits :coverage :verdict} with :verdict one of :confirmed
+   (coverage ≥ rim-coverage-min), :disconfirmed, or :silent (tried <
+   rim-confirm-min-tried — too few pieces face the camera to judge)."
+  [lum-at proxy intrinsics pose]
+  (when-let [r (rim/read-rim lum-at proxy intrinsics pose)]
+    (let [tried (:tried r)
+          hits (count (:hits r))
+          cov (/ hits (max 1 tried))]
+      {:tried tried :hits hits :coverage cov
+       :verdict (cond
+                  (< tried rim-confirm-min-tried) :silent
+                  (>= cov rim-coverage-min) :confirmed
+                  :else :disconfirmed)})))
+
 (defn auto-read
   "Read the cage from a frame with NO clicks at all: `candidates` from
    blob-detect, `targets` from pnp-target-points, `judge` a disc-presence test
@@ -1313,3 +1434,105 @@
           ;; against the true reading's 1.4)
               (sort-by (juxt :endorse-d (comp - :explained) (comp - :off-ring) :rms-px))
               first)))))
+
+;; ── registration from the rim dashes (recovery for the frames the discs refuse) ─
+
+(def rim-min-solve
+  "Dashes needed before a pose is attempted from them. Below DLT's own floor
+   (pnp/min-correspondences, 6) the solve leans on the eye seed — which is
+   exactly this channel's design — but under four points even the seeded LM is
+   fitting noise (the bench's own refusal line: «ne servono 4»)."
+  4)
+
+(defn rim-register
+  "Register a photo from the RIM DASHES alone, seeded by the user's eye-aligned
+   pose: the recovery for the frame the discs refuse — a ring seen edge-on
+   shows no disc worth detecting, but its rim paints a band across the image
+   and the dashes on it are ~10× a disc. Misurato (battiscopa5, 4-5/9): BOTH
+   photos the discs rejected register from the dashes at rms 1.21px given a
+   decent eye seed; capture basin 3-6° / 26-45px on the image.
+
+   Two passes, the eye-seed ICP's own shape: read the dashes under `eye-pose`
+   (read-rim's search stays ±12°, under half the comb pitch), solve PnP on them
+   seeded by the eye, then read AGAIN under the solved pose — a coarse eye
+   finds few dashes, the solved pose finds nearly all — and solve once more.
+
+   Acceptance is NOT the residual alone: the comb's alias twin fits its wrong
+   dashes cleanly (misurato: 15-20° of seed error converge at 77-208mm from
+   truth). Three gates: (a) the camera must land where the eye put it
+   (eye-compatible?, same gate as the disc eye-seed — aliases ship the camera
+   away, true poses land mm from it); (b) the second pass must read back at
+   least rim-coverage-min of what it attempts (aliases starve); (c) the final
+   rms clears eye-accept-rms-px — this channel, like the disc eye-seed,
+   carries nothing but its fit and the human's own alignment.
+
+   On these frames «dischetti spiegati» is NOT an arbiter — misurato 5→3 with
+   a visibly right pose (battiscopa5 foto 2, 14 starved detections): the
+   caller must not hold the result to it. The arbiters are the drawn cage on
+   the plastic and the dash rms on two rings.
+
+   Returns {:pose :rms-px :hits :tried :coverage :first-pass :corr :outliers}
+   on acceptance; {:refused why …} with the evidence when a gate refuses (the
+   caller's log — a 4-second status line is not a record); nil when `proxy`
+   declares no rim marks (nothing to read, nothing to say)."
+  [lum-at proxy intrinsics eye-pose]
+  (when-let [r1 (rim/read-rim lum-at proxy intrinsics eye-pose)]
+    (let [;; the VERTICAL rescue on a starved first pass: a seed beyond the
+          ;; cross pre-centring's reach reads short high-contrast runs (the
+          ;; bar's own edges against the paper) and starves — misurato su
+          ;; battiscopa5 foto 5: 0/9 con cross nullo su 7 pezzi. Retry the
+          ;; first pass with the wide multi-azimuth cross; the gates
+          ;; downstream are unchanged, so a rescue that grabbed junk still
+          ;; dies at coverage/eye/rms.
+          r1 (if (>= (count (:hits r1)) rim-min-solve)
+               r1
+               (let [rw (rim/read-rim lum-at proxy intrinsics eye-pose
+                                      {:cross-reach-px 60.0})]
+                 (if (> (count (:hits rw)) (count (:hits r1))) rw r1)))
+          h1 (:hits r1)
+          dist-mm (fn [pose]
+                    (la/v-norm (la/v-sub (cam/camera-center pose)
+                                         (cam/camera-center eye-pose))))
+          s1 (when (>= (count h1) rim-min-solve)
+               (pnp/solve-pnp (mapv #(select-keys % [:world :px]) h1)
+                              intrinsics {:seed eye-pose}))]
+      (cond
+        (< (count h1) rim-min-solve)
+        {:refused :starved :hits (count h1) :tried (:tried r1)}
+
+        (nil? (:pose s1))
+        {:refused :no-solve :hits (count h1) :tried (:tried r1)}
+
+        (not (eye-compatible? eye-pose (:pose s1)))
+        {:refused :far-from-eye :hits (count h1) :tried (:tried r1)
+         :dist-mm (dist-mm (:pose s1))}
+
+        :else
+        (let [r2 (rim/read-rim lum-at proxy intrinsics (:pose s1))
+              h2 (:hits r2)
+              coverage (/ (count h2) (max 1 (:tried r2)))
+              s2 (when (>= (count h2) rim-min-solve)
+                   (pnp/solve-pnp (mapv #(select-keys % [:world :px]) h2)
+                                  intrinsics {:seed (:pose s1)}))]
+          (cond
+            (or (< (count h2) rim-min-solve) (< coverage rim-coverage-min))
+            {:refused :coverage :hits (count h2) :tried (:tried r2)
+             :first-pass (count h1)}
+
+            (nil? (:pose s2))
+            {:refused :no-solve :hits (count h2) :tried (:tried r2)}
+
+            (not (eye-compatible? eye-pose (:pose s2)))
+            {:refused :far-from-eye :hits (count h2) :tried (:tried r2)
+             :dist-mm (dist-mm (:pose s2))}
+
+            (> (:rms-px s2) eye-accept-rms-px)
+            {:refused :rms :rms-px (:rms-px s2)
+             :hits (count h2) :tried (:tried r2)}
+
+            :else
+            {:pose (:pose s2) :rms-px (:rms-px s2)
+             :hits (count h2) :tried (:tried r2) :coverage coverage
+             :first-pass (count h1)
+             :corr (mapv #(select-keys % [:world :px]) h2)
+             :outliers (count (:outliers s2))}))))))
