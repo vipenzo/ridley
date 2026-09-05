@@ -30,14 +30,15 @@
 ;; Geometry changes belong in the model (ridley.photogrammetry.cage) or in
 ;; the declaration below; here you only decide how it prints. The few things
 ;; this file does restate, so you know where the boundary runs: `inlay` (the
-;; disc pocket depth — print-only, it never moves the centres the solver
-;; looks for), the stick's −0.4 rule (derived from the cage's own channel,
-;; but the constant is repeated), and the `to-ring-frame` permutation
-;; (verified against the matrices).
+;; pocket depth of discs AND rim ribbons — print-only, it never moves the
+;; centres the solver looks for), the stick's −0.4 rule (derived from the
+;; cage's own channel, but the constant is repeated), and the
+;; `to-ring-frame`/`ring-vec` permutation (verified against the matrices).
 ;;
-;; NOTE (4/9): the rim segments (:rim-marks?) are not in the print geometry
-;; yet — the model draws them over the photos, but the two-colour ribbons are
-;; missing here. Ask for them when you decide to reprint.
+;; NOTE (4/9, later): the rim segments (:rim-marks?) ARE in the print
+;; geometry — see "The rim segments" below. A cage declared with them prints
+;; the ribbons and their pockets; one declared without prints without — the
+;; drawn cage matches either way.
 
 ;; --- Material ----------------------------------------------------------------
 
@@ -161,6 +162,18 @@
     (= axis :x) (rotate (rotate m :x 90) :z 90)
     :else       (rotate (rotate m :z -90) :x -90)))
 
+(defn ring-vec
+  "The same permutation as `to-ring-frame`, applied to a point (or direction)
+   instead of a mesh: for :x, (u,v,n)→(n,u,v); for :y, (u,v,n)→(v,n,u).
+   It exists because rotations act about a mesh's CREATION pose, so a piece
+   must be oriented first and translated after — which means the translation
+   has to be spoken in the cage's coordinates, not the flat frame's."
+  [[u v n] axis]
+  (cond
+    (= axis :z) [u v n]
+    (= axis :x) [n u v]
+    :else       [v n u]))
+
 (defn slot-pieces
   "[bodies cuts] of one ring's slots — bodies to UNION onto the band, channels
    to SUBTRACT. Each slot arrives with its own pose data (from the printable's
@@ -183,6 +196,65 @@
      (one (fn [sl] (let [[across up] (:channel-r sl)]
                      (scale (cyl across 80) 1 1.0 (/ up across))))
           (fn [sl] (+ (/ h 2.0) (:channel-lift sl))))]))
+
+;; --- The rim segments ---------------------------------------------------------
+;;
+;; Vincenzo's design (3/9): twelve dark ribbons inlaid on each ring's OUTER
+;; rim, at the crown's own azimuths, hugging the half thickness toward the p
+;; face — the TOP half, as the ring prints. The rim is maximally visible
+;; exactly when the face vanishes (a ring seen edge-on), which is where the
+;; face discs go blind; and the half-band is the cage's first face-asymmetric
+;; feature — a through-pocket disc looks the same from both sides, a
+;; half-band shows which face it hugs. The zero ribbon is broken at 2/3 of
+;; its length: the rim's own zero-index, and a chirality witness (on a ring
+;; glued flipped it reads at 1/3). WHERE they run is READ from the proxy
+;; (`:rim-segments` — the same spans edit-acquire draws in blue over the
+;; photos); here, as with the discs, we only decide how they print: inlaid
+;; flush, `inlay` deep radially. One constraint of the DEPTH (print-only, so
+;; it lives here): the crown scales with the cage but `inlay` does not, so
+;; below ⌀≈85 the rim pocket would reach the disc pockets — at 176 the
+;; clearance is 0.65mm.
+
+(defn rim-pieces
+  "[ribbons pockets] of one ring's rim segments — ribbons to join the dark
+   object, pockets to SUBTRACT from the light ring. `segs` are the proxy's
+   azimuth spans (nil for a cage without :rim-marks? — then both lists are
+   empty); `orient`/`placev` carry a mesh/a point from the flat frame into
+   the target frame (identity when printing flat). Each sector's curved faces
+   come from cylinders and its flat ones from a box turned to the span's mid
+   azimuth: the box's tangential faces cut the OUTER surface exactly at the
+   span's ends (half-chord R·sin(Δ/2)), and the sliver it over-covers at the
+   inner radius is buried in plastic."
+  [segs outer h ax orient placev]
+  (let [over 2.0
+        spans (mapcat :spans segs)
+        shell (when (seq spans)
+                (mesh-difference (ax-cyl ax outer (+ h 2))
+                                 (ax-cyl ax (- outer inlay) (+ h 4))))
+        wedge (fn [[a0 a1] rc rlen zc zh]
+                (let [am (/ (+ a0 a1) 2.0)
+                      tang (* 2.0 outer (sin (/ (- a1 a0) 2.0)))]
+                  (mesh-translate (orient (rotate (box tang zh rlen)
+                                                  :z (to-degrees am)))
+                                  (placev [(* rc (cos am)) (* rc (sin am)) zc]))))]
+    ;; ribbon: shell ∩ box, radially [outer−inlay, outer], z [0, h/2] — the
+    ;; box overshoots both radial faces so they come out curved, the shell
+    ;; overshoots both z faces so they come out flat and exact.
+    ;; pocket: box − inner cylinder, overshooting outward and past the top
+    ;; face by `over` (the clean-cut rule, no coplanar faces with the ring).
+    [(mapv (fn [sp]
+             (mesh-intersection shell
+                                (wedge sp (- outer (/ inlay 2.0)) (+ inlay 2.0)
+                                       (/ h 4.0) (/ h 2.0))))
+           spans)
+     (mapv (fn [sp]
+             (mesh-difference (wedge sp
+                                     (+ outer (/ (- over inlay 1.0) 2.0))
+                                     (+ inlay over 1.0)
+                                     (/ (+ (/ h 2.0) over) 2.0)
+                                     (+ (/ h 2.0) over))
+                              (ax-cyl ax (- outer inlay) (+ h 8))))
+           spans)]))
 
 ;; --- One ring, base + discs ---------------------------------------------------
 
@@ -207,6 +279,12 @@
                 (:slots p)
                 (filter (fn [sl] (= axis (:axis sl))) (:stick-slots c)))
         [slot-bodies slot-cuts] (slot-pieces slots h axis flat?)
+        ;; rim ribbons in NOMINAL mounting: a print declaration carries no
+        ;; :flips/:phases (those describe how an existing assembly was glued),
+        ;; so the assembled view and the print agree
+        [rim-ribbons rim-pockets] (rim-pieces (:rim-segments p) (:outer r) h ax
+                                              (fn [m] (if flat? m (to-ring-frame m axis)))
+                                              (fn [v] (if flat? v (ring-vec v axis))))
         ;; the cutter overshoots the face by 2mm: a clean cut, no coplanar
         ;; faces (the known CSG-artifact recipe)
         over 2.0
@@ -232,7 +310,8 @@
         ;; seat pockets the partner's tabs sink into
         cut? (fn [t] (contains? #{:key-notch :seat} (:kind t)))
         cuts (concat (map as-box (filter cut? tabs-boxes))
-                     slot-cuts)
+                     slot-cuts
+                     rim-pockets)
         tabs (concat (map as-box (remove cut? tabs-boxes))
                      slot-bodies)
         solid (as-> annulus m
@@ -244,7 +323,7 @@
       [(-> (mesh-difference (cons solid (map pocket marks)))
            (color base-color)
            (assoc :export-group g :export-name "anello"))
-       (-> (mesh-union (map disc marks))
+       (-> (mesh-union (concat (map disc marks) rim-ribbons))
            (color mark-color)
            (assoc :export-group g :export-name "dischetti"))])))
 
@@ -303,10 +382,13 @@
   "Saves cage `c` as THREE two-colour 3MF files into folder `dir` — one ring
    per file, with its two crowns.
 
-   HOW TO PRINT: one ring at a time, or all three on one plate (the colour
-   changes then happen by HEIGHT: bottom discs, body, top discs). Always use
-   a BRIM: a thin wide ring curls as it cools. MATTE filaments. If you move a
-   ring in the slicer, move its discs with it.
+   HOW TO PRINT: one ring at a time, or all three on one plate. WITHOUT rim
+   segments the colour changes can happen by HEIGHT (bottom discs, body, top
+   discs); WITH them the dark ribbons share layers with the body, so the two
+   colours must be assigned PER OBJECT (AMS/dual extruder) — height swaps
+   cannot paint the rim. Always use a BRIM: a thin wide ring curls as it
+   cools. MATTE filaments. If you move a ring in the slicer, move its discs
+   with it.
 
    HOW TO ASSEMBLE (gen 2): each tab DROPS into its seat pocket — that is the
    azimuth, no eyeballing — and the two keys refuse wrong rotations and
@@ -326,7 +408,9 @@
     (println (str "  Dischetti ⌀" (* 2 (:mark-disc-r c))
                   " incassati a filo, spessore anelli " (:cage-h c) " mm."))
     (when (:rim-marks? c)
-      (println "  ATTENZIONE: i segmenti sul bordo NON sono ancora nella geometria di stampa."))
+      (println (str "  Segmenti sul bordo: 12 per anello sulla metà superiore, zero"
+                    " interrotto a 2/3. Due colori PER OGGETTO (AMS/doppio estrusore):"
+                    " il cambio-colore per altezza non copre il bordo.")))
     (println "  Stampa col BRIM e filamenti OPACHI.")))
 
 ;; --- The cradle ---------------------------------------------------------------

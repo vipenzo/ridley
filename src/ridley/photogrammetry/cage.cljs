@@ -755,55 +755,69 @@
    distinguishes the two mountings the crown's through-holes cannot."
   {:at (/ 2.0 3.0) :width (/ 1.0 6.0)})
 
+(defn rim-spans
+  "One crown's rim segments as azimuth spans in the ring's OWN frame: `n`
+   entries {:k :zero? :spans [[a0 a1] …]} (rad), each segment `rim-seg-deg`
+   wide and centred on its mark's azimuth (crown-phase — the same clearing
+   of the tabs the marks get), the zero segment split in two by
+   `rim-zero-break`. The single source both renderers read: `rim-segments`
+   mounts these onto the cage for the drawing over the photographs, and
+   `printable-ring` hands them to the print file for the plastic — so the
+   drawn ribbons and the printed ones cannot disagree on where they run."
+  [n]
+  (let [step (/ (* 2.0 Math/PI) n)
+        phase (crown-phase n)
+        w (deg->rad rim-seg-deg)
+        {:keys [at width]} rim-zero-break]
+    (vec (for [i (range n)
+               :let [a0 (- (+ phase (* i step)) (/ w 2.0))
+                     ts (if (zero? i)
+                          [[0.0 (- at (/ width 2.0))]
+                           [(+ at (/ width 2.0)) 1.0]]
+                          [[0.0 1.0]])]]
+           {:k i :zero? (zero? i)
+            :spans (mapv (fn [[t0 t1]]
+                           [(+ a0 (* w t0)) (+ a0 (* w t1))])
+                         ts)}))))
+
 (defn rim-segments
   "The rim marks of a cage that DECLARES them (`:rim-marks?` on
-   registration-cage), as-built: crown azimuths, phases and flips applied
-   exactly as the anchors take them (flip first, then the measured turn), the
-   band spanning the half thickness toward the PRINT face p — on a flipped
-   ring the drawn segments land on the cage's other side, like the glued
-   plastic does. Returns [{:axis :k :zero? :pieces [{:lo pts :hi pts}]} …]
+   registration-cage), as-built: `rim-spans`' azimuths, phases and flips
+   applied exactly as the anchors take them (flip first, then the measured
+   turn), the band spanning the half thickness toward the PRINT face p — on
+   a flipped ring the drawn segments land on the cage's other side, like the
+   glued plastic does. Returns [{:axis :k :zero? :pieces [{:lo pts :hi pts}]} …]
    in cage coordinates — :lo the arc at the ring's mid-plane, :hi at the p
    edge, `samples` points each, radius = ring outer + `r-off`. nil when the
-   mesh does not declare rim marks: today's printed cages do not have them,
-   and a drawn feature the plastic does not have is worse than none."
-  [mesh & {:keys [r-off samples seg-deg]
-           :or {r-off 0.0 samples 7 seg-deg rim-seg-deg}}]
+   mesh does not declare rim marks: cages printed before 4/9 do not have
+   them, and a drawn feature the plastic does not have is worse than none."
+  [mesh & {:keys [r-off samples] :or {r-off 0.0 samples 7}}]
   (when (:rim-marks? mesh)
-    (let [n (:cage-marks mesh)
-          h (:cage-h mesh)
+    (let [h (:cage-h mesh)
           phases (:cage-phases mesh)
           flips (or (:cage-flips mesh) #{})
-          step (/ (* 2.0 Math/PI) n)
-          phase (crown-phase n)
-          w (deg->rad seg-deg)
-          {:keys [at width]} rim-zero-break]
+          segs (rim-spans (:cage-marks mesh))]
       (vec
        (for [{:keys [axis outer]} (:rings mesh)
-             i (range n)
-             :let [a0 (- (+ phase (* i step)) (/ w 2.0))
-                   po (or (get phases axis) 0.0)
+             {:keys [k zero? spans]} segs
+             :let [po (or (get phases axis) 0.0)
                    flip? (contains? flips axis)
                    mount (fn [p]
                            (turn-about-axis axis
                                             (if flip? (flip-in-ring axis p) p)
                                             po))
                    r (+ outer r-off)
-                   arc (fn [t0 t1 z]
+                   arc (fn [[s0 s1] z]
                          (vec (for [s (range samples)
-                                    :let [t (+ t0 (* (- t1 t0)
-                                                     (/ s (dec samples))))
-                                          a (+ a0 (* w t))]]
+                                    :let [a (+ s0 (* (- s1 s0)
+                                                     (/ s (dec samples))))]]
                                 (mount (place axis [(* r (Math/cos a))
                                                     (* r (Math/sin a))
-                                                    z])))))
-                   spans (if (zero? i)
-                           [[0.0 (- at (/ width 2.0))]
-                            [(+ at (/ width 2.0)) 1.0]]
-                           [[0.0 1.0]])]]
-         {:axis axis :k i :zero? (zero? i)
-          :pieces (mapv (fn [[t0 t1]]
-                          {:lo (arc t0 t1 0.0)
-                           :hi (arc t0 t1 (/ h 2.0))})
+                                                    z])))))]]
+         {:axis axis :k k :zero? zero?
+          :pieces (mapv (fn [sp]
+                          {:lo (arc sp 0.0)
+                           :hi (arc sp (/ h 2.0))})
                         spans)})))))
 
 (defn- ring-radius [{:keys [axis obj]}]
@@ -1201,11 +1215,15 @@
   "Ring `which` (:x/:y/:z, or an index) of an already-built `cage`, described in
    ITS OWN frame: flat in XY, marks on the ±Z faces, tabs rising in +Z.
 
-   {:axis :inner :outer :crown :index :h :marks [{:id :position :heading}] :tabs [{:center :size}]}
+   {:axis :inner :outer :crown :index :h :marks [{:id :position :heading}]
+    :tabs [{:kind :center :size}] :slots […] :rim-segments […]}
 
    Same numbers as the cage — they are the cage's own anchors and tabs put
    through `unplace`, not a second computation — only turned the way a printer
-   wants them.
+   wants them. `:rim-segments` is `rim-spans` (azimuths are already per-ring
+   local, so there is nothing to unplace), present only when the cage
+   declares `:rim-marks?` — a print must not carry ribbons the model does
+   not draw, nor the other way round.
 
    Print from a cage declared WITHOUT :flips: a flip describes how an existing
    assembly was GLUED, and a printable-ring taken from a flipped model would
@@ -1237,4 +1255,6 @@
                          (-> sl
                              (update :position (partial unplace axis))
                              (update :heading (partial unplace axis))
-                             (update :up (partial unplace axis))))))))
+                             (update :up (partial unplace axis)))))
+           :rim-segments (when (:rim-marks? cage)
+                           (rim-spans (:cage-marks cage))))))
