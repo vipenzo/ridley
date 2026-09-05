@@ -457,8 +457,19 @@ html, body {
   color: #d4d4d4;
 }
 
+/* registered but NOT voting on the lens (twin-suspect quarantine, or a
+   rim-dash registration with no disc picks for the joint refinement):
+   green body — the photo is USABLE — amber dashed border for the lens flag.
+   The why lives in the tooltip (direttiva 5/9: il lavorio nel log). */
+.modal-panel .eaq-badge-nolens {
+  background: #264f2e;
+  border: 1px dashed #a67c3d;
+  color: #d4d4d4;
+}
+
 .modal-panel .eaq-badge-none.current,
 .modal-panel .eaq-badge-predicted.current,
+.modal-panel .eaq-badge-nolens.current,
 .modal-panel .eaq-badge-ok.current {
   outline: 2px solid #6f9ce0;
   outline-offset: -1px;

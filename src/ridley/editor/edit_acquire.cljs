@@ -1300,6 +1300,393 @@
     (save-acquire-state!)))
 
 ;; ============================================================
+;; Cursori di posa — il controllo disegnato da Vincenzo (5/9)
+;; ------------------------------------------------------------
+;; «Il proxy è già gizmo di se stesso»: le rotazioni si fanno sul disegno
+;; (fetta successiva), le TRASLAZIONI con tre cursori ai bordi della foto —
+;; in assi SCHERMO, non assi gabbia (concordato 5/9 sera): sinistra = su/giù,
+;; sopra = destra/sinistra, sotto = vicino/lontano. Il vicino/lontano scala
+;; la distanza camera↔pivot lungo la loro congiungente, quindi il pixel del
+;; pivot è INVARIANTE: la gabbia resta ferma sullo schermo e cambia taglia —
+;; la fatica che questo controllo esiste per togliere (misurato su foto 5:
+;; l'allineamento a mano muore oltre il bacino ±12° dei trattini, e i
+;; cursori sono la via per rientrarci). I cursori sono A MOLLA: il drag è
+;; relativo, al rilascio il pomello torna al centro. Un drag muove il
+;; DISEGNO della gabbia: su foto 0 trasla il proxy (le camere registrate
+;; trasportate rigidamente al rilascio, come on-photo0-commit!), sulle
+;; altre muove la CAMERA all'inverso (come apply-inverted). Il rilascio è
+;; un commit umano: :eye-posed, :manual?, save — il seme di 'a'.
+;; ============================================================
+
+(def ^:private pose-sliders-state (atom nil))
+
+(declare refresh-pose-rings-geometry!)
+
+(def ^:private pose-dolly-k
+  "Dolly sensitivity: 300px of drag = ×2 (or ÷2) on the camera↔cage
+   distance. Repeated drags compound, so the full range stays reachable."
+  (/ (js/Math.log 2.0) 300.0))
+
+(defn- remove-pose-sliders! []
+  (when-let [{:keys [els]} @pose-sliders-state]
+    (doseq [^js el els]
+      (some-> (.-parentElement el) (.removeChild el))))
+  (reset! pose-sliders-state nil))
+
+(defn- pose-nudge-world
+  "World-space translation of the PROXY for a screen-frame nudge on the
+   current photo: `dx`/`dy` in IMAGE px (right/up on screen), `dolly`
+   multiplicative on the camera↔pivot distance (1.0 = none). The camera
+   application is the exact inverse (negated), same convention as
+   apply-inverted. nil without an image or a camera."
+  [dx dy dolly]
+  (when-let [[iw ih] (backdrop/image-size)]
+    (when-let [cam (or (get-in @session [:camera-poses (:current-idx @session)])
+                       (current-camera-pose))]
+      (let [{:keys [r u]} (pose-basis cam)
+            fx (:fx (session-intrinsics iw ih))
+            piv (pivot)
+            to-cam (m/v- (:position cam) piv)
+            z (m/magnitude to-cam)
+            mm-per-px (/ z (max 1.0 fx))]
+        (m/v+ (m/v+ (m/v* r (* dx mm-per-px))
+                    (m/v* u (* dy mm-per-px)))
+              (m/v* to-cam (- 1.0 dolly)))))))
+
+(defn- apply-pose-slider-move!
+  "One LIVE drag step. Photo 0 translates the proxy (preview + gizmo follow,
+   transport deferred to the release); photos 1..N move the camera inversely
+   — safe to do live: unlike the gizmo, a slider drag never raycasts through
+   the camera, so there is no feedback loop to break (cf. on-inv-commit!)."
+  [dx dy dolly]
+  (when-let [w (pose-nudge-world dx dy dolly)]
+    (let [idx (:current-idx @session)]
+      (if (zero? idx)
+        (do (swap! session update :proxy-mesh
+                   #(attachment/translate-mesh % w))
+            (viewport/show-preview! (proxy-preview-items)))
+        (let [p (update (camera-pose-for idx) :position #(m/v- % w))]
+          (swap! session assoc-in [:camera-poses idx] p)
+          (viewport/set-camera-pose! p)))
+      ;; a translation moves the projected cage centre: the rotation rings
+      ;; ride it live
+      (refresh-pose-rings-geometry!))))
+
+(defn- commit-pose-slider!
+  "The release of a slider drag — the same human commit as the gizmo's:
+   faces re-read, :eye-posed stamped (the seed of 'a'), state saved. On
+   photo 0 the registered cameras ride along rigidly, transported ONCE with
+   the drag's total delta (pure translation composes)."
+  [proxy-pose-at-start]
+  (when-let [idx (:current-idx @session)]
+    (if (zero? idx)
+      (transport-registered-cameras!
+       proxy-pose-at-start (get-in @session [:proxy-mesh :creation-pose]))
+      (swap! session update-in [:acquire-results idx] merge {:manual? true}))
+    (derive-faces-from-pose! idx)
+    (swap! session update :eye-posed (fnil conj #{}) idx)
+    (refresh-pose-rings-geometry!)
+    (save-acquire-state!)))
+
+(defn- install-pose-sliders!
+  "The three edge sliders over the viewport. Spring-loaded: the thumb
+   follows the drag (clamped to the track) and snaps back on release."
+  []
+  (remove-pose-sliders!)
+  (when-let [^js canvas (viewport/get-canvas)]
+    (when-let [^js parent (.-parentElement canvas)]
+      (when (= "" (.. parent -style -position))
+        (set! (.. parent -style -position) "relative"))
+      (let [mk-el (fn [tag css]
+                    (let [^js el (js/document.createElement tag)]
+                      (set! (.-cssText (.-style el)) css)
+                      el))
+            track-css "position:absolute;z-index:30;background:rgba(20,24,40,0.45);border-radius:10px;touch-action:none;"
+            thumb-css "position:absolute;background:#4455ee;border:2px solid rgba(255,255,255,0.85);border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,0.4);transition:none;pointer-events:none;"
+            ;; anchored to the CANVAS box, in px — the parent also holds the
+            ;; viewport toolbar, so %-of-parent put the top slider over its
+            ;; buttons (smoke 5/9); the top track drops a further 40px to
+            ;; clear the overlay toolbar row
+            cx (.-offsetLeft canvas)
+            cy (.-offsetTop canvas)
+            cw (.-clientWidth canvas)
+            ch (.-clientHeight canvas)
+            sliders
+            [{:title "Sposta la gabbia su/giù"
+              :track (str track-css "left:" (+ cx 6) "px;top:" (+ cy (* 0.16 ch))
+                          "px;height:" (* 0.68 ch) "px;width:20px;")
+              :thumb (str thumb-css "left:-2px;width:20px;height:44px;top:calc(50% - 22px);")
+              :vertical? true
+              :step (fn [d px->img] (apply-pose-slider-move! 0.0 (* (- d) px->img) 1.0))}
+             {:title "Sposta la gabbia a destra/sinistra"
+              :track (str track-css "top:" (+ cy 40) "px;left:" (+ cx (* 0.16 cw))
+                          "px;width:" (* 0.68 cw) "px;height:20px;")
+              :thumb (str thumb-css "top:-2px;height:20px;width:44px;left:calc(50% - 22px);")
+              :vertical? false
+              :step (fn [d px->img] (apply-pose-slider-move! (* d px->img) 0.0 1.0))}
+             {:title "Avvicina/allontana (la gabbia resta al centro e cambia taglia)"
+              :track (str track-css "top:" (+ cy ch -30) "px;left:" (+ cx (* 0.16 cw))
+                          "px;width:" (* 0.68 cw) "px;height:20px;")
+              :thumb (str thumb-css "top:-2px;height:20px;width:44px;left:calc(50% - 22px);")
+              :vertical? false
+              :step (fn [d _] (apply-pose-slider-move!
+                               0.0 0.0 (js/Math.exp (* (- d) pose-dolly-k))))}]
+            els
+            (doall
+             (for [{:keys [title track thumb vertical? step]} sliders]
+               (let [^js tr (mk-el "div" track)
+                     ^js th (mk-el "div" thumb)
+                     last-pos (atom nil)
+                     total (atom 0.0)]
+                 (set! (.-title tr) title)
+                 (.appendChild tr th)
+                 (.addEventListener
+                  tr "pointerdown"
+                  (fn [^js e]
+                    (.preventDefault e) (.stopPropagation e)
+                    (.setPointerCapture tr (.-pointerId e))
+                    (reset! last-pos (if vertical? (.-clientY e) (.-clientX e)))
+                    (reset! total 0.0)
+                    (swap! pose-sliders-state assoc :start-proxy-pose
+                           (get-in @session [:proxy-mesh :creation-pose]))
+                    (set! (.. th -style -transition) "none")))
+                 (.addEventListener
+                  tr "pointermove"
+                  (fn [^js e]
+                    (when (some? @last-pos)
+                      (let [pos (if vertical? (.-clientY e) (.-clientX e))
+                            d (- pos @last-pos)]
+                        (when-not (zero? d)
+                          (reset! last-pos pos)
+                          (swap! total + d)
+                          ;; thumb follows, clamped to the track
+                          (let [len (if vertical? (.-clientHeight tr) (.-clientWidth tr))
+                                lim (* 0.42 len)
+                                off (max (- lim) (min lim @total))]
+                            (set! (.. th -style -transform)
+                                  (if vertical?
+                                    (str "translateY(" off "px)")
+                                    (str "translateX(" off "px)"))))
+                          (let [px->img
+                                (let [[iw _] (backdrop/image-size)]
+                                  (if (and iw (pos? (.-clientWidth canvas)))
+                                    (/ iw (.-clientWidth canvas))
+                                    1.0))]
+                            (step d px->img)))))))
+                 (doseq [ev ["pointerup" "pointercancel"]]
+                   (.addEventListener
+                    tr ev
+                    (fn [^js _e]
+                      (when (some? @last-pos)
+                        (reset! last-pos nil)
+                        ;; the spring: back to centre, softly
+                        (set! (.. th -style -transition) "transform 140ms ease-out")
+                        (set! (.. th -style -transform) "translate(0,0)")
+                        (commit-pose-slider!
+                         (:start-proxy-pose @pose-sliders-state))))))
+                 (.appendChild parent tr)
+                 tr)))]
+        (swap! pose-sliders-state assoc :els (vec els))))))
+
+;; ── Cerchi di rotazione — la seconda metà dello schizzo (5/9 sera) ──────────
+;; Il gizmo 3D proiettato degenera quando un anello è DI TAGLIO: il suo
+;; cerchio diventa una linea e il guadagno esplode (Vincenzo: «ogni piccolo
+;; movimento viene amplificato»). Questi tre cerchi sono PLANARI ALLO
+;; SCHERMO, concentrici sul centro-gabbia proiettato (Z dentro, Y in mezzo,
+;; X fuori — l'ordine del suo disegno): trascinare lungo un cerchio ruota la
+;; gabbia attorno all'asse MONDO di quell'anello, un grado di trascinamento
+;; = un grado di rotazione, qualunque sia l'orientamento dell'anello. Il
+;; segno segue il puntatore: l'asse può puntare verso o via dalla camera, e
+;; il verso visivo si inverte con lui (sign(dot(asse, verso-camera))).
+;; Stessa applicazione dei cursori: foto 0 ruota il PROXY attorno al pivot,
+;; le altre orbitano la CAMERA all'inverso (il pixel del pivot è invariante
+;; in un'orbita rigida, quindi i cerchi non si muovono durante il drag);
+;; il rilascio è lo stesso commit umano (:eye-posed, save).
+
+(def ^:private pose-rings-state (atom nil))
+
+(def ^:private pose-ring-order
+  "Inner→outer, come nel disegno di Vincenzo: RING Z dentro, Y, X fuori.
+   Colori = gli assi del viewport."
+  [[:z 1.10 "#7986ff"] [:y 1.24 "#7ec14b"] [:x 1.38 "#ff6b57"]])
+
+(defn- remove-pose-rings! []
+  (when-let [{:keys [^js svg]} @pose-rings-state]
+    (some-> (.-parentElement svg) (.removeChild svg)))
+  (reset! pose-rings-state nil))
+
+(defn- pose-rings-geometry
+  "Centre (client px + parent-relative px) and base screen radius of the
+   rotation rings: the cage centre projected through the live camera, the
+   radius from the cage's own apparent size. nil without photo/camera or
+   with the pivot outside the frame."
+  []
+  (when-let [^js canvas (viewport/get-canvas)]
+    (when-let [[iw ih] (backdrop/image-size)]
+      (when-let [cam (or (get-in @session [:camera-poses (:current-idx @session)])
+                         (current-camera-pose))]
+        (let [k (session-intrinsics iw ih)
+              pp (get-in @session [:proxy-mesh :creation-pose])
+              sp (bridge/editor->solver-pose cam pp)
+              c-img (pcamera/project k sp [0.0 0.0 0.0])
+              r-cage (* 0.5 (or (:cage-d (:proxy-mesh @session)) 176.0))
+              z (m/magnitude (m/v- (:position cam) (pivot)))
+              r-img (* (:fx k) (/ r-cage (max 1.0 z)))]
+          (when c-img
+            (let [^js three-cam (viewport/get-camera)
+                  c-scr (backdrop/screen-of-pixel canvas three-cam c-img)
+                  e-scr (backdrop/screen-of-pixel
+                         canvas three-cam [(+ (nth c-img 0) r-img) (nth c-img 1)])]
+              (when (and c-scr e-scr)
+                (let [^js parent (.-parentElement canvas)
+                      rect (.getBoundingClientRect parent)
+                      [cx cy] c-scr
+                      radius (js/Math.hypot (- (nth e-scr 0) cx)
+                                            (- (nth e-scr 1) cy))]
+                  {:client [cx cy]
+                   :local [(- cx (.-left rect)) (- cy (.-top rect))]
+                   :radius (max 40.0 radius)})))))))))
+
+(defn- refresh-pose-rings-geometry!
+  "Move the rings onto the CURRENT projected cage centre — after a slider
+   translation (which moves it), live and on commit. Rotation never moves it
+   (rigid orbit about the pivot), but refreshing is cheap and honest."
+  []
+  (when-let [{:keys [circles]} @pose-rings-state]
+    (when-let [{:keys [client local radius]} (pose-rings-geometry)]
+      (swap! pose-rings-state assoc :centre-client client)
+      (let [[lx ly] local]
+        (doseq [{:keys [^js el ^js hit ^js label mult]} circles]
+          (let [r (* radius mult)]
+            (doseq [^js c [el hit]]
+              (.setAttribute c "cx" lx)
+              (.setAttribute c "cy" ly)
+              (.setAttribute c "r" r))
+            (when label
+              (.setAttribute label "x" lx)
+              (.setAttribute label "y" (- ly r 5)))))))))
+
+(defn- pose-ring-rotate!
+  "One LIVE rotation step of `dth` (client-angle rad, clockwise-visual
+   positive) about ring `axis`. The object follows the pointer:
+   φ = −Δθ·sign(dot(asse, verso-camera)) — right-hand rotation about the
+   axis pointing AT the viewer reads counterclockwise on screen, and client
+   angles grow clockwise (y down)."
+  [axis dth]
+  (when-let [cam (or (get-in @session [:camera-poses (:current-idx @session)])
+                     (current-camera-pose))]
+    (let [pp (get-in @session [:proxy-mesh :creation-pose])
+          a (get (bridge/box-basis pp) (case axis :x :ex :y :ey :z :ez))
+          to-cam (m/normalize (m/v- (:position cam) (pivot)))
+          phi (* (- dth) (if (neg? (m/dot a to-cam)) -1.0 1.0))
+          idx (:current-idx @session)]
+      (if (zero? idx)
+        (do (swap! session update :proxy-mesh
+                   #(attachment/rotate-mesh % a phi))
+            (viewport/show-preview! (proxy-preview-items)))
+        (let [p (m/pose-around-axis (camera-pose-for idx) (pivot) a (- phi))]
+          (swap! session assoc-in [:camera-poses idx] p)
+          (viewport/set-camera-pose! p))))))
+
+(defn- install-pose-rings!
+  "The three screen-planar rotation circles over the viewport, centred on
+   the projected cage centre. Visible (with the sliders) only in :gizmo
+   mode — refresh-pose-controls-visibility! hides them under pnp/retrace/
+   mark/marker, whose clicks own the frame."
+  []
+  (remove-pose-rings!)
+  (when-let [^js canvas (viewport/get-canvas)]
+    (when-let [^js parent (.-parentElement canvas)]
+      (when-let [{:keys [client local radius]} (pose-rings-geometry)]
+        (let [ns "http://www.w3.org/2000/svg"
+              ^js svg (js/document.createElementNS ns "svg")
+              [lx ly] local]
+          (set! (.-cssText (.-style svg))
+                "position:absolute;left:0;top:0;width:100%;height:100%;z-index:29;pointer-events:none;")
+          (let [circles
+                (doall
+                 (for [[axis mult color] pose-ring-order]
+                   (let [r (* radius mult)
+                         ^js el (js/document.createElementNS ns "circle")
+                         ^js hit (js/document.createElementNS ns "circle")
+                         ^js label (js/document.createElementNS ns "text")
+                         last-th (atom nil)]
+                     (doseq [[^js c w po] [[el 3.5 "none"]
+                                           [hit 16 "visibleStroke"]]]
+                       (.setAttribute c "cx" lx) (.setAttribute c "cy" ly)
+                       (.setAttribute c "r" r)
+                       (.setAttribute c "fill" "none")
+                       (.setAttribute c "stroke" (if (identical? c el) color "rgba(0,0,0,0)"))
+                       (.setAttribute c "stroke-width" w)
+                       (set! (.-cssText (.-style c))
+                             (str "pointer-events:" po ";"
+                                  (when (identical? c hit) "cursor:grab;"))))
+                     (.setAttribute el "opacity" "0.75")
+                     (.setAttribute label "x" lx)
+                     (.setAttribute label "y" (- ly r 5))
+                     (.setAttribute label "fill" color)
+                     (.setAttribute label "text-anchor" "middle")
+                     (set! (.-cssText (.-style label))
+                           "font:600 12px sans-serif;pointer-events:none;")
+                     (set! (.-textContent label)
+                           (str "ruota " (.toUpperCase (name axis))))
+                     (.addEventListener
+                      hit "pointerdown"
+                      (fn [^js e]
+                        (when (= :gizmo (:mode @session))
+                          (.preventDefault e) (.stopPropagation e)
+                          (.setPointerCapture hit (.-pointerId e))
+                          (let [[cx cy] (:centre-client @pose-rings-state client)]
+                            (reset! last-th (js/Math.atan2 (- (.-clientY e) cy)
+                                                           (- (.-clientX e) cx))))
+                          (swap! pose-rings-state assoc :start-proxy-pose
+                                 (get-in @session [:proxy-mesh :creation-pose]))
+                          (.setAttribute el "stroke-width" 5))))
+                     (.addEventListener
+                      hit "pointermove"
+                      (fn [^js e]
+                        (when (some? @last-th)
+                          (let [[cx cy] (:centre-client @pose-rings-state client)
+                                th (js/Math.atan2 (- (.-clientY e) cy)
+                                                  (- (.-clientX e) cx))
+                                d (- th @last-th)
+                                d (cond (> d js/Math.PI) (- d (* 2 js/Math.PI))
+                                        (< d (- js/Math.PI)) (+ d (* 2 js/Math.PI))
+                                        :else d)]
+                            (when-not (zero? d)
+                              (reset! last-th th)
+                              (pose-ring-rotate! axis d))))))
+                     (doseq [ev ["pointerup" "pointercancel"]]
+                       (.addEventListener
+                        hit ev
+                        (fn [^js _e]
+                          (when (some? @last-th)
+                            (reset! last-th nil)
+                            (.setAttribute el "stroke-width" 3.5)
+                            (commit-pose-slider!
+                             (:start-proxy-pose @pose-rings-state))))))
+                     (.appendChild svg hit)
+                     (.appendChild svg el)
+                     (.appendChild svg label)
+                     {:el el :hit hit :label label :mult mult :axis axis})))]
+            (.appendChild parent svg)
+            (reset! pose-rings-state
+                    {:svg svg :circles (vec circles) :centre-client client})))))))
+
+(defn- refresh-pose-controls-visibility!
+  "Sliders and rotation rings live only in :gizmo mode with the proxy ON
+   SCREEN — every other mode's clicks (pnp discs, retrace, marks, marker)
+   own the frame, and a hidden proxy ('v') leaves nothing to align."
+  []
+  (let [d (if (and (= :gizmo (:mode @session))
+                   (not (:hide-proxy? @session)))
+            "" "none")]
+    (when-let [{:keys [els]} @pose-sliders-state]
+      (doseq [^js el els] (set! (.. el -style -display) d)))
+    (when-let [{:keys [^js svg]} @pose-rings-state]
+      (set! (.. svg -style -display) d))))
+
+;; ============================================================
 ;; Filmstrip navigation
 ;; ============================================================
 
@@ -1310,19 +1697,13 @@
 (declare redraw-retrace!)
 (declare redraw-marks!)
 
-(defn- install-gizmo!
-  "Open the gizmo for photo `idx`. Photo 0's gizmo commits move the PROXY
-   (on-photo0-commit!); photos 1..N-1's commits invert onto the CAMERA
-   (on-inv-commit!). Extracted so PnP mode can tear the gizmo down and put it
-   back without re-loading the photo. Skipped while the proxy is HIDDEN ('v') —
-   the rings would otherwise float over the bare photo with nothing to grab
-   (Vincenzo 2026-07-24); the single guard here covers every install site
-   (enter-photo!, stop-pnp!/retrace!/mark!), so navigation keeps it hidden too."
-  [idx]
-  (when-not (:hide-proxy? @session)
-    (gizmo/enter! (get-in @session [:proxy-mesh :creation-pose])
-                  {:mode :object :handles #{:translate :rotate}}
-                  {:on-commit (if (zero? idx) on-photo0-commit! on-inv-commit!)})))
+;; install-gizmo! è MORTA il 5/9 (decisione di Vincenzo: «toglierei proprio
+;; il gizmo — un doppio modo di fare la stessa cosa rischia di confondere»):
+;; nella vista foto l'allineamento è dei POSE CONTROLS (cursori + cerchi,
+;; sopra). on-photo0-commit!/apply-inverted/on-inv-commit! restano come
+;; riferimento documentato degli invarianti (trasporto rigido, inversione
+;; proxy↔camera) che commit-pose-slider! e pose-ring-rotate! rispettano —
+;; da eliminare quando il gate live dei controlli chiude.
 
 (defn- ensure-photo-pose
   "Camera world-pose for photo `idx`. Photo 0's default vantage is computed ONCE,
@@ -1341,13 +1722,16 @@
 (declare install-retrace-gizmo! reset-view-zoom! refresh-retrace-gizmo! redraw-mark-names!)
 
 (defn- enter-photo!
-  "Close/reopen the gizmo for photo `idx` — simpler to reason about than
-   special-casing the 0↔1+ boundary, since :nudge-mesh? can only be set at
-   gizmo/enter! time, there's no mutator for it."
+  "Tear down and reinstall the photo-local controls for photo `idx` — the
+   pose controls (sliders + rotation rings) in the aligning mode, the plane
+   gizmo in :retrace — simpler to reason about than special-casing the
+   0↔1+ boundary."
   [idx]
   (stop-pnp!) ; leaving a photo cancels any half-collected PnP session on it
   (stop-marker!) ; and any open marker-click mode (its listener is photo-specific)
   (gizmo/close!)
+  (remove-pose-sliders!)
+  (remove-pose-rings!)
   (swap! session assoc :current-idx idx)
   (reset-view-zoom!)
   (let [{:keys [file]} (nth (:photos @session) idx)]
@@ -1366,7 +1750,12 @@
       ;; space, so navigating just re-shows them (and their labels) from this
       ;; photo's camera; never tear it down to install a gizmo.
       :mark (redraw-marks!)
-      (install-gizmo! idx))
+      ;; the aligning context: Vincenzo's pose controls (edge sliders +
+      ;; screen-planar rotation rings) — the 3D gizmo is GONE from the photo
+      ;; view (his call, 5/9: one way to do one thing); the controls never
+      ;; live over retrace/mark, whose clicks own the frame
+      (do (install-pose-sliders!)
+          (install-pose-rings!)))
     ;; the names follow the photo in every mode — checking a cage against a view
     ;; means stepping through the views with them on
     (redraw-mark-names!))
@@ -1397,6 +1786,8 @@
   []
   (stop-pnp!) (stop-marker!) (stop-mark!) (teardown-retrace-listeners!)
   (gizmo/close!)
+  (remove-pose-sliders!)
+  (remove-pose-rings!)
   (swap! session assoc :stage? true :in-pose? false :mode :gizmo)
   ;; Release the per-frame lock so OrbitControls can drive the camera again;
   ;; there's no gizmo in the stage to re-enable controls behind our back, so
@@ -2041,6 +2432,7 @@
     (when-let [cam (get-in @session [:camera-poses idx])]
       (let [faces (bridge/cage-faces-from-pose (:proxy-mesh @session) cam)
             derived (into {} (keep (fn [[a {:keys [sign]}]] (when sign [a sign])) faces))
+            prev (get-in @session [:cage-face-choice idx])
             profile (sort-by (comp str first)
                              (keep (fn [[a {:keys [sign geo-sign elev-deg]}]]
                                      (when-not sign [a elev-deg geo-sign]))
@@ -2061,28 +2453,35 @@
           (redraw-pnp-preview!)
           (redraw-overlay-dots!))
         (update-panel!)
-        (set-status-message!
-         (str "facce lette dalla posa: "
-              (if (seq derived)
-                (str/join " " (for [[a s] (sort-by (comp str key) derived)]
-                                (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
-                "nessuna")
-              (when (seq profile)
-                (str " · " (str/join " · "
-                                     (for [[a e s] profile
-                                           :let [nm (str/upper-case (name a))]]
-                                       (str nm " quasi di taglio (" (.toFixed e 0)
-                                            "°): non la dichiaro io — direbbe "
-                                            nm (if (pos? s) "p" "m")
-                                            ", premilo tu se lo confermi")))))
-              (when (pos? moved)
-                (str " · " moved " click che avevi sull'altra faccia "
-                     (if (> moved 1) "sono passati" "è passato")
-                     " su questa: stesso dischetto attraverso la plastica, solo il nome cambia"))
-              (when (pos? dropped)
-                (str " · " dropped " " (if (> dropped 1) "click erano" "click era")
-                     " sull'altra faccia e il nome nuovo era già occupato: "
-                     (if (> dropped 1) "tolti" "tolto")))))))))
+        ;; DIETA (direttiva di Vincenzo 5/9, «meno loquace l'operatività»):
+        ;; questa riga usciva a OGNI commit dei controlli di posa e dominava
+        ;; il log — decine di righe identiche per un allineamento. Parla solo
+        ;; quando la lettura CAMBIA la dichiarazione della foto, o quando ha
+        ;; spostato/tolto dei click (un atto va sempre detto). Silenzio =
+        ;; niente di nuovo.
+        (when (or (not= prev derived) (pos? moved) (pos? dropped))
+          (set-status-message!
+           (str "facce lette dalla posa: "
+                (if (seq derived)
+                  (str/join " " (for [[a s] (sort-by (comp str key) derived)]
+                                  (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+                  "nessuna")
+                (when (seq profile)
+                  (str " · " (str/join " · "
+                                       (for [[a e s] profile
+                                             :let [nm (str/upper-case (name a))]]
+                                         (str nm " quasi di taglio (" (.toFixed e 0)
+                                              "°): non la dichiaro io — direbbe "
+                                              nm (if (pos? s) "p" "m")
+                                              ", premilo tu se lo confermi")))))
+                (when (pos? moved)
+                  (str " · " moved " click che avevi sull'altra faccia "
+                       (if (> moved 1) "sono passati" "è passato")
+                       " su questa: stesso dischetto attraverso la plastica, solo il nome cambia"))
+                (when (pos? dropped)
+                  (str " · " dropped " " (if (> dropped 1) "click erano" "click era")
+                       " sull'altra faccia e il nome nuovo era già occupato: "
+                       (if (> dropped 1) "tolti" "tolto"))))))))))
 
 (defn- toggle-cage-face!
   "Declare (or un-declare) which FACE of ring `axis` this photo shows — the
@@ -2566,6 +2965,7 @@
   (when (and @session (not= :pnp (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :pnp)
+    (refresh-pose-controls-visibility!)
     (swap! session dissoc :pnp-batch-mode?)   ; always open in the armed flow
     ;; On a CAGE with no face declaration yet for this photo, read one off the
     ;; photo's current pose on the way in, so the panel opens with the toggles
@@ -2625,8 +3025,8 @@
     ;; drop it on exit so re-entering PnP opens clean in the armed flow
     (swap! session dissoc :pnp-batch :pnp-batch-mode?)
     (swap! session assoc :mode :gizmo)
+    (refresh-pose-controls-visibility!)
     (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
 (defn- undo-batch-click!
@@ -4138,7 +4538,13 @@
    this check runs on the OUTCOME, whoever produced it, and speaks only when
    the number is bad — a caveat that always prints stops being read."
   [idx targets cands k]
-  (when (registered-result? (get-in @session [:acquire-results idx]))
+  (when (and (registered-result? (get-in @session [:acquire-results idx]))
+             ;; NOT on a rim registration: it exists because the discs starved
+             ;; (two rings edge-on), and on those frames «dischetti spiegati»
+             ;; judges nothing — misurato 5→3 a 12px con posa palesemente
+             ;; giusta (battiscopa5 foto 2). Its verdict is already paid for:
+             ;; the coverage bar of the second pass.
+             (not (:rim? (get-in @session [:acquire-results idx]))))
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           cam (get-in @session [:camera-poses idx])
           pose (when cam (bridge/editor->solver-pose cam proxy-pose))
@@ -4151,6 +4557,67 @@
                         "posa sana ne spiega più di un terzo). La gabbia disegnata "
                         "probabilmente NON combacia: guardala — se è storta, Azzera, "
                         "posala a occhio col gizmo e ripremi 'a' senza click."))))))
+
+(defn- apply-rim-registration!
+  "APPLY a pose solved from the rim dashes (match-cage/rim-register). No disc
+   picks back it — the dashes are not targets — so it cannot ride
+   on-solve-pnp!: the pose lands directly, the same rigid move as
+   solve-and-apply!'s own apply tail (proxy on photo 0, registered cameras in
+   tow; camera otherwise), and the result records :rim? so the disc-based nets
+   know their metric has no jurisdiction here (see cage-pose-verdict!)."
+  [idx sol]
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        camera-pose (current-camera-pose)]
+    (if (zero? idx)
+      (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
+            [new-mesh] (attachment/group-transform
+                        [(:proxy-mesh @session)]
+                        (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
+                        (:position np) (:heading np) (:up np))]
+        (swap! session assoc :proxy-mesh new-mesh)
+        (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
+      (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
+        (swap! session assoc-in [:camera-poses idx] ncp)
+        (viewport/set-camera-pose! ncp)))
+    (swap! session assoc-in [:acquire-results idx]
+           {:pnp? true :rim? true :matched (:hits sol) :rms-px (:rms-px sol)
+            :outliers (:outliers sol 0)})
+    ;; disc residuals/outliers of an older pose must not survive under the new
+    ;; one: they would paint red dots the new pose never earned
+    (swap! session assoc-in [:pnp-residuals idx] {})
+    (swap! session assoc-in [:pnp-outliers idx] #{})
+    (redraw-pnp-preview!)
+    (redraw-overlay-dots!)))
+
+(defn- rim-refusal-phrase
+  "The rim attempt's own evidence, appended to 'a''s refusal — why the dashes
+   did not rescue this frame, with the numbers (the log is the record). nil
+   input (cage without rim marks, or no eye seed) appends nothing."
+  [rr]
+  (when rr
+    (str " Ho provato anche i TRATTINI sul bordo: "
+         (case (:refused rr)
+           :starved (str "dalla tua posa ne leggo solo " (:hits rr) " su "
+                         (:tried rr) " cercati — troppo pochi per una posa "
+                         "(ne servono " match-cage/rim-min-solve "). Riallinea "
+                         "la gabbia a occhio (i segmenti blu sono la guida) e "
+                         "ripremi 'a'.")
+           :no-solve (str (:hits rr) " letti su " (:tried rr) ", ma nessuna "
+                          "posa ne esce: probabile lettura mista di trattini "
+                          "di anelli diversi — riallinea e ripremi 'a'.")
+           :far-from-eye (str "la posa che ne esce atterra a "
+                              (.toFixed (:dist-mm rr) 0) "mm dalla tua — quasi "
+                              "sempre è l'aggancio del trattino SBAGLIATO (il "
+                              "pettine si ripete ogni 30°). Riallinea meglio e "
+                              "ripremi 'a'.")
+           :coverage (str "al secondo giro ne rilegge solo " (:hits rr) " su "
+                          (:tried rr) " — sotto l'asticella di copertura: "
+                          "aggancio sospetto (trattino sbagliato). Riallinea "
+                          "meglio e ripremi 'a'.")
+           :rms (str "si leggono (" (:hits rr) " su " (:tried rr) ") ma il fit "
+                     "resta a " (.toFixed (:rms-px rr) 1) "px, sopra la barra "
+                     "dei " match-cage/eye-accept-rms-px "px.")
+           "non hanno retto."))))
 
 (defn- cage-read-and-place!
   "Cage 'a': the crown you clicked, read by the REST OF THE CAGE — then every
@@ -4275,12 +4742,22 @@
                                    (when-let [cp (get-in @session [:camera-poses idx])]
                                      (bridge/editor->solver-pose
                                       cp (get-in @session [:proxy-mesh :creation-pose]))))
+                        ;; the TRANSLATION automatism (Vincenzo 5/9: al gizmo
+                        ;; le rotazioni vengono facili, la fatica sono le
+                        ;; traslazioni): keep his rotation, refit lateral and
+                        ;; depth from the detected discs — but only when the
+                        ;; normalized seed actually assigns MORE discs than
+                        ;; his (choose-eye-seed: ties go to the human, and on
+                        ;; starved frames the raw eye wins by construction)
+                        seed-choice (when eye-pose
+                                      (match-cage/choose-eye-seed
+                                       targets (mapv :center cands) k eye-pose))
                         rr (match-cage/auto-read (mapv :center cands) targets k
                                                  judge marks
                                                  {:disc-r disc-r
                                                   :mounting mounting
                                                   :blobs cands
-                                                  :eye-pose eye-pose
+                                                  :eye-pose (or (:pose seed-choice) eye-pose)
                                                   ;; the comb identity (lever 1)
                                                   ;; rides only where the
                                                   ;; mounting arbiter has
@@ -4292,25 +4769,99 @@
                                                   ;; eye does (the gizmo seed
                                                   ;; kills the same twins)
                                                   :teeth? (boolean (or (seq mounting)
-                                                                       eye-pose))})]
-                    (if (nil? rr)
-                      ;; the refusal goes to the LOG too: a 4-second status line
-                      ;; is not a record, and «'a' non fa niente» (3/9) was this
-                      ;; very message evaporating before it was read
-                      (let [msg (str "Da sola non ci riesco su questa foto (" (count cands)
-                                     " dischetti trovati, nessun anello identificato con certezza). "
-                                     (if (pos? (count picks-by-id))
-                                       (str "I tuoi " (count picks-by-id) " click restano ma non "
-                                            "bastano a seminare: portali a 4 su UN anello + il "
-                                            "doppio pallino, poi ripremi 'a'.")
-                                       "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'.")
-                                     (when eye-pose
-                                       (str " Ho provato anche dalla tua posa a occhio, ma il fit "
-                                            "non reggeva le barre: se la gabbia disegnata ti sembra "
-                                            "già appaiata bene, il problema sono i dischetti rilevati "
-                                            "(pochi, o su un anello solo).")))]
-                        (auto-log! (str "  " foto-tag msg))
-                        (say! msg))
+                                                                       eye-pose))})
+                        ;; option (b), Vincenzo 5/9: a MACHINE disc reading on
+                        ;; a cage with rim marks must be CONFIRMED by the
+                        ;; dashes before adoption — the quiet lie this net
+                        ;; exists for passed every disc bar with the camera
+                        ;; 54.8mm out, and the dashes starve under such a
+                        ;; pose. :confirmed and :silent (too few pieces face
+                        ;; the camera to judge) adopt as before.
+                        confirm (when (:pose rr)
+                                  (match-cage/rim-confirm
+                                   lum-at (:proxy-mesh @session) k (:pose rr)))
+                        rim-veto? (= :disconfirmed (:verdict confirm))]
+                    (when rim-veto?
+                      (auto-log! (str "  " foto-tag "la rete dei trattini SMENTISCE la "
+                                      "lettura dai dischetti: sotto quella posa rilegge "
+                                      "solo " (:hits confirm) " trattini su "
+                                      (:tried confirm) " — scartata, provo dai trattini.")))
+                    (if (or (nil? rr) rim-veto?)
+                        ;; the discs refused (or the dash net disconfirmed
+                        ;; them). Before giving up: the RIM DASHES — this
+                        ;; recovery exists for exactly this frame (two rings
+                        ;; edge-on, discs starved; misurato battiscopa5 e GATE
+                        ;; LIVE PASSATO 5/9: entrambe le foto rifiutate dai
+                        ;; dischetti registrano dai trattini, rms 1.21/1.24px).
+                        ;; Guided-only: senza seme non si tenta — l'identità
+                        ;; dei trattini viene dalla posa. Second seed: the
+                        ;; translation-normalized eye, when the discs endorsed
+                        ;; it (choose-eye-seed) and the raw eye's dashes
+                        ;; refused.
+                      (let [rim-raw (when eye-pose
+                                      (match-cage/rim-register
+                                       lum-at (:proxy-mesh @session) k eye-pose))
+                            rim-norm (when (and (:normalized? seed-choice)
+                                                (not (:pose rim-raw)))
+                                       (match-cage/rim-register
+                                        lum-at (:proxy-mesh @session) k
+                                        (:norm seed-choice)))
+                            rim-res (if (:pose rim-raw) rim-raw (or rim-norm rim-raw))
+                            norm-won? (boolean (and (not (:pose rim-raw))
+                                                    (:pose rim-norm)))]
+                        (if (:pose rim-res)
+                          (let [wit-obs (when (cage-obs-focal-ok?)
+                                          (:obs (match-cage/index-witness
+                                                 targets cands k (:pose rim-res)
+                                                 marks {})))]
+                              ;; stale proposals of an older pose die with the
+                              ;; pose they testified for (the same disease
+                              ;; propose-clear-px guards); hand clicks stay
+                            (swap! session update-in [:pnp-picks idx]
+                                   (fn [m] (into {} (remove (comp :proposed? val) m))))
+                            (apply-rim-registration! idx rim-res)
+                            (remember-cage-mounting! idx wit-obs)
+                            (save-acquire-state!)
+                            (update-panel!)
+                            (let [msg (str "Gabbia registrata dai TRATTINI sul bordo, "
+                                           (if norm-won?
+                                             (str "dalla tua posa a occhio con le TRASLAZIONI "
+                                                  "rifatte dai dischetti — ")
+                                             "partendo dalla TUA posa a occhio — ")
+                                           "i dischetti non bastavano ("
+                                           (count cands) " rilevati): " (:hits rim-res)
+                                           " trattini su " (:tried rim-res) " riletti sotto la "
+                                           "posa risolta, rms " (.toFixed (:rms-px rim-res) 2)
+                                           "px. Controlla che la gabbia disegnata combaci con "
+                                           "la plastica."
+                                           (when rim-veto?
+                                             " (La lettura dai dischetti che ho scartato era smentita da questi stessi trattini.)")
+                                           (when (and mounting wit-obs)
+                                             (cage-mounting-suffix mounting wit-obs)))]
+                              (auto-log! (str "  " foto-tag msg))
+                              (say! msg)))
+                            ;; the refusal goes to the LOG too: a 4-second status
+                            ;; line is not a record, and «'a' non fa niente» (3/9)
+                            ;; was this very message evaporating before it was read
+                          (let [msg (str "Da sola non ci riesco su questa foto (" (count cands)
+                                         " dischetti trovati, nessun anello identificato con certezza). "
+                                         (if (pos? (count picks-by-id))
+                                           (str "I tuoi " (count picks-by-id) " click restano ma non "
+                                                "bastano a seminare: portali a 4 su UN anello + il "
+                                                "doppio pallino, poi ripremi 'a'.")
+                                           "Clicca 4 dischetti su UN anello + il doppio pallino, poi ripremi 'a'.")
+                                         (when rim-veto?
+                                           (str " C'era una lettura dai dischetti, ma la rete dei "
+                                                "trattini l'ha smentita (" (:hits confirm) " su "
+                                                (:tried confirm) " riletti): non l'ho applicata."))
+                                         (when eye-pose
+                                           (str " Ho provato anche dalla tua posa a occhio, ma il fit "
+                                                "non reggeva le barre: se la gabbia disegnata ti sembra "
+                                                "già appaiata bene, il problema sono i dischetti rilevati "
+                                                "(pochi, o su un anello solo)."))
+                                         (rim-refusal-phrase rim-res))]
+                            (auto-log! (str "  " foto-tag msg))
+                            (say! msg))))
                       (let [canvas (viewport/get-canvas)
                             ;; a clean slate: with zero hand clicks whatever picks
                             ;; exist are STALE proposals of an older pose — left
@@ -6700,11 +7251,11 @@
     ;; linger over the naked photo the toggle just produced
     :pnp (do (redraw-pnp-preview!) (redraw-overlay-dots!))
     (do
-      ;; Hide the gizmo together with the solid proxy (install-gizmo! now no-ops
-      ;; while hidden); re-install it when the proxy comes back.
-      (if (:hide-proxy? @session)
-        (gizmo/close!)
-        (install-gizmo! (:current-idx @session)))
+      ;; the pose controls hide together with the solid proxy — with the
+      ;; cage off screen there is nothing to align, and floating controls
+      ;; over the bare photo would be the old floating-gizmo confusion
+      ;; (Vincenzo 2026-07-24) in new clothes
+      (refresh-pose-controls-visibility!)
       (viewport/show-preview! (proxy-preview-items))))
   (update-panel!))
 
@@ -6921,6 +7472,7 @@
   (when (and @session (not= :retrace (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :retrace)
+    (refresh-pose-controls-visibility!)
     (ensure-active-ricalco!)
     (install-retrace-gizmo!)
     (let [^js canvas (viewport/get-canvas)]
@@ -6936,8 +7488,8 @@
   (when (and @session (= :retrace (:mode @session)))
     (teardown-retrace-listeners!)
     (swap! session assoc :mode :gizmo)
+    (refresh-pose-controls-visibility!)
     (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
 (defn- undo-retrace-point! []
@@ -7081,6 +7633,7 @@
   (when (and @session (not= :mark (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :mark)
+    (refresh-pose-controls-visibility!)
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" mark-on-pointerdown true)
       (.addEventListener canvas "pointermove" mark-on-pointermove true)
@@ -7094,8 +7647,8 @@
     (teardown-mark-listeners!)
     (viewport/clear-labels!)
     (swap! session assoc :mode :gizmo)
+    (refresh-pose-controls-visibility!)
     (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
 (defn- set-mark-face!
@@ -7176,6 +7729,7 @@
       (set-status-message! "Il segno si marca su una foto diversa dalla prima (quella fissa il proxy)")
       (do (gizmo/close!)
           (swap! session assoc :mode :marker)
+          (refresh-pose-controls-visibility!)
           ;; re-render so the red Klein-branch corner dot appears (it's gated to
           ;; :marker mode now — proxy-preview-items only emits it here).
           (viewport/show-preview! (proxy-preview-items))
@@ -7187,8 +7741,8 @@
   (when (and @session (= :marker (:mode @session)))
     (.removeEventListener (viewport/get-canvas) "pointerdown" marker-on-pointerdown true)
     (swap! session assoc :mode :gizmo)
+    (refresh-pose-controls-visibility!)
     (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
 (declare install-retrace-gizmo!)
@@ -8129,13 +8683,35 @@
         (let [btn (.createElement js/document "button")
               result (get-in @session [:acquire-results i])
               confirmed? (:rms-px result)
-              predicted? (and result (:predicted? result))]
+              predicted? (and result (:predicted? result))
+              ;; the badge answers Vincenzo's two questions and nothing else
+              ;; (direttiva 5/9): usabile? and does it vote on the LENS? A
+              ;; twin-convicted photo is quarantined by the vote; a rim-dash
+              ;; registration has no disc picks, so the joint R never sees
+              ;; it. Both stay fully usable — green — with the amber dashed
+              ;; flag; the WHY is in the tooltip, the forensics in the log.
+              no-lens? (and confirmed?
+                            (or (contains? (or (:twin-flagged @session) #{}) i)
+                                (:rim? result)))]
           (set! (.-type btn) "button")
           (set! (.-textContent btn) (if confirmed?
                                       (str (inc i) " · " (.toFixed (:rms-px result) 1) "px")
                                       (str (inc i))))
-          (set! (.-title btn) file)
-          (.add (.-classList btn) (cond confirmed? "eaq-badge-ok"
+          (set! (.-title btn)
+                (cond
+                  no-lens?
+                  (str file " — registrata"
+                       (when (:rim? result) " dai trattini sul bordo")
+                       "; NON concorre alla misura della lente"
+                       (if (contains? (or (:twin-flagged @session) #{}) i)
+                         " (il suo montaggio contraddice quello votato dalla sessione: rifalla — Azzera, posa a occhio, 'a')"
+                         " (i trattini registrano la posa ma non entrano nella rifinitura congiunta)"))
+                  confirmed? (str file " — registrata")
+                  predicted? (str file " — posa PREVISTA dal fit, da confermare")
+                  (:manual? result) (str file " — posata a occhio, da registrare: premi 'a'")
+                  :else (str file " — da registrare: posa a occhio e premi 'a'")))
+          (.add (.-classList btn) (cond no-lens? "eaq-badge-nolens"
+                                        confirmed? "eaq-badge-ok"
                                         predicted? "eaq-badge-predicted"
                                         :else "eaq-badge-none"))
           ;; In the stage the current photo is the one you're posed into (or last
@@ -8358,7 +8934,7 @@
 (defn- save-acquire-state! []
   (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
         photos (into {}
-                     (map (fn [[idx {:keys [matched rms-px manual?]}]]
+                     (map (fn [[idx {:keys [matched rms-px manual? rim?]}]]
                             [(str idx)
                              (cond-> {:matched matched :rms-px rms-px}
                                ;; Persist :manual? so a hand-placed camera comes
@@ -8367,6 +8943,10 @@
                                ;; 0 would drop it as if it were a bare seed
                                ;; (transport-registered-cameras!).
                                manual? (assoc :manual? true)
+                               ;; …and :rim? so a dash registration keeps its
+                               ;; lens-flag badge (and its exemption from the
+                               ;; disc verdict) across a reload
+                               rim? (assoc :rim? true)
                                (pos? idx) (assoc :camera-pose (get-in @session [:camera-poses idx])))])
                           (:acquire-results @session)))
         ;; P4a-2 — the PnP CORRESPONDENCES (the per-photo corners the user clicked)
@@ -8654,7 +9234,7 @@
                {:obj (mapv vec obj)
                 :worst-mm (:worst-mm plate-calib)
                 :views (:views plate-calib)}))
-      (doseq [[idx-kw {:keys [camera-pose matched rms-px manual?]}] photos]
+      (doseq [[idx-kw {:keys [camera-pose matched rms-px manual? rim?]}] photos]
         (let [idx (js/parseInt (name idx-kw))]
           (cond
             (zero? idx)
@@ -8664,7 +9244,8 @@
             (do (swap! session assoc-in [:camera-poses idx] camera-pose)
                 (swap! session assoc-in [:acquire-results idx]
                        (cond-> {:matched matched :rms-px rms-px}
-                         manual? (assoc :manual? true))))
+                         manual? (assoc :manual? true)
+                         rim? (assoc :rim? true))))
 
             ;; idx > 0 with no camera-pose: this photo's entry is incomplete
             ;; (a save that raced with another and lost — see save-acquire-
@@ -9624,6 +10205,8 @@
     ;; the acquire form's :shapes via emit-acquire-code; discard/cancel emit nothing.
     (viewport/unregister-frame-callback! :edit-acquire)
     (gizmo/close!)
+    (remove-pose-sliders!)
+    (remove-pose-rings!)
     (backdrop/clear!)
     (viewport/clear-preview!)
     (viewport/show-user-geometry!)
