@@ -15,7 +15,8 @@
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.linalg :as la]
             [ridley.photogrammetry.match-cage :as mc]
-            [ridley.photogrammetry.pnp :as pnp]))
+            [ridley.photogrammetry.pnp :as pnp]
+            [ridley.photogrammetry.rim-detect :as rim]))
 
 (def fs (js/require "fs"))
 (def path (js/require "path"))
@@ -1525,8 +1526,425 @@
              (solve-set "FLIP-FACE, solo mano    " (filterv :hand? flipped)))))
         (.catch (fn [e] (println (str "  ERRORE: " (str e))))))))
 
+(defn- rim-probe!
+  "CAGE_AUTO_RIM=1: la lettura dei TRATTINI sul bordo (rim-detect), misurata
+   sulle foto vere della sessione. Su una foto REGISTRATA la posa è buona per
+   definizione: gli scarti predetto→misurato collaudano il rilevatore e la
+   geometria stampata insieme (pochi px = il modello è la plastica). Su una
+   foto RIFIUTATA con posa a occhio (manual?) la sonda fa il solve dai soli
+   trattini (seme = l'occhio) e conta i dischetti RILEVATI che la posa nuova
+   spiega contro quelli che spiegava l'occhio — l'arbitro di sempre, la
+   frazione spiegata. CAGE_AUTO_RIM_OVERLAY=<dir> scrive per ogni foto un
+   overlay JPEG: predetti blu, misurati rossi, riproiezione della posa
+   risolta verde."
+  []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state)
+                                      :gen 2 :rim-marks? true)
+        targets (cage-targets proxy)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        overlay-dir (aget (.-env js/process) "CAGE_AUTO_RIM_OVERLAY")
+        svg-mark (fn [[u v] color]
+                   (str "<circle cx='" (fmt u 1) "' cy='" (fmt v 1)
+                        "' r='7' fill='none' stroke='" color "' stroke-width='2'/>"))]
+    (println (str "\n=== trattini sul bordo (rim-detect): " (count files)
+                  " foto · lente " (fmt focal 2) "mm · gabbia "
+                  (pr-str {:phases phases :flips (vec (sort (declared-flips state)))
+                           :gen 2 :rim-marks? true}) " ==="))
+    (letfn [(step [i]
+              (if (>= i (count files))
+                (println "\n  (fine)")
+                (-> (decode (.join path dir (nth files i)))
+                    (.then
+                     (fn [res]
+                       (let [{:keys [data lum-at w h]} (sampler res)
+                             intr (cam/intrinsics-from-fov
+                                   (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                             pose (solver-camera state i)
+                             manual? (get-in state [:photos (keyword (str i)) :manual?])
+                             label (if manual? "posa A OCCHIO (foto rifiutata)"
+                                       "posa REGISTRATA")]
+                         (if-not pose
+                           (println (str "\n  foto " (inc i) " (" (nth files i)
+                                         "): nessuna posa nello stato — salto"))
+                           (let [verbose? (= "2" (aget (.-env js/process) "CAGE_AUTO_RIM"))
+                                 {:keys [hits tried misses]}
+                                 (rim/read-rim lum-at proxy intr pose {:trace? verbose?})
+                                 by-ring (group-by :axis hits)
+                                 offs (map #(Math/abs (:offset-px %)) hits)
+                                 blobs (bd/detect-blobs lum-at [w h]
+                                                        (assoc bd/cage-opts :rgba data))
+                                 cands (mapv :center blobs)
+                                 expl (fn [p tol] (mc/explained targets cands intr p tol))]
+                             (println (str "\n  foto " (inc i) " (" (nth files i) ") · " label))
+                             (println (str "    trattini: " (count hits) " letti su " tried
+                                           " cercati ("
+                                           (str/join " · " (for [[ax hs] (sort-by (comp str first) by-ring)]
+                                                             (str (name ax) " " (count hs))))
+                                           ")"
+                                           (when (seq offs)
+                                             (str " · scarto predetto→misurato: mediana "
+                                                  (fmt (nth (vec (sort offs)) (quot (count offs) 2)) 1)
+                                                  "px, max " (fmt (reduce max offs) 1) "px"))))
+                             (when (and verbose? (seq misses))
+                               (doseq [m misses]
+                                 (println (str "      rifiutato " (name (:axis m)) (:k m)
+                                               ": " (name (:why m))
+                                               " (contrasto " (:contrast m)
+                                               ", lung " (:len-ratio m)
+                                               ", centro " (:center-px m)
+                                               ", cross " (:cross m) ")"))))
+                             (let [sol (when (and manual? (>= (count hits) 4))
+                                         (pnp/solve-pnp (mapv #(select-keys % [:world :px]) hits)
+                                                        intr {:seed pose}))]
+                               (when manual?
+                                 (if-not (:pose sol)
+                                   (println (str "    solve dai trattini: non parte ("
+                                                 (count hits) " letti, ne servono 4)"))
+                                   (println (str "    solve dai trattini: rms "
+                                                 (fmt (:rms-px sol) 2) "px su " (count hits)
+                                                 " (scartati " (count (:outliers sol)) ")"
+                                                 " · dischetti spiegati (su " (count cands)
+                                                 " rilevati): occhio " (expl pose 12)
+                                                 " → trattini " (expl (:pose sol) 12)
+                                                 " (a 26px: " (expl pose 26) " → "
+                                                 (expl (:pose sol) 26) ")"))))
+                               ;; SECONDO GIRO: rileggi sotto la posa risolta —
+                               ;; una posa a occhio molto storta trova pochi
+                               ;; trattini al primo passaggio, la posa risolta
+                               ;; li trova quasi tutti (lo stesso giro
+                               ;; dell'ICP del seme dell'occhio)
+                               (when-let [p1 (:pose sol)]
+                                 (let [{h2 :hits t2 :tried} (rim/read-rim lum-at proxy intr p1)
+                                       sol2 (when (>= (count h2) 4)
+                                              (pnp/solve-pnp (mapv #(select-keys % [:world :px]) h2)
+                                                             intr {:seed p1}))]
+                                   (when (:pose sol2)
+                                     (println (str "    secondo giro: " (count h2) " letti su " t2
+                                                   " · rms " (fmt (:rms-px sol2) 2) "px"
+                                                   " (scartati " (count (:outliers sol2)) ")"
+                                                   " · dischetti spiegati: " (expl (:pose sol2) 12)
+                                                   " (a 26px: " (expl (:pose sol2) 26) ")")))
+                                   ;; CAGE_AUTO_RIM_SWEEP=1: il BACINO DI CATTURA —
+                                   ;; la posa risolta fa da verità, la si storce di
+                                   ;; N gradi (perturbed-eye: rotazione rigida
+                                   ;; attorno al centro gabbia + 5% di distanza,
+                                   ;; asse fisso: deterministico) e si misura a
+                                   ;; quale N la lettura smette di riprendersi.
+                                   ;; Risponde a «quanto grossolana può essere la
+                                   ;; posa a occhio»
+                                   (when (and (aget (.-env js/process) "CAGE_AUTO_RIM_SWEEP")
+                                              (:pose sol2))
+                                     (let [truth (:pose sol2)
+                                           t-hits h2]
+                                       (println "    bacino di cattura (verità = posa dai trattini):")
+                                       (doseq [deg [3 6 9 12 15 20 25]]
+                                         (let [eye (perturbed-eye truth deg 1.05)
+                                               shift (let [ds (keep (fn [hh]
+                                                                      (when-let [a (cam/project intr eye (:world hh))]
+                                                                        (when-let [b (cam/project intr truth (:world hh))]
+                                                                          (Math/hypot (- (nth a 0) (nth b 0))
+                                                                                      (- (nth a 1) (nth b 1))))))
+                                                                    t-hits)]
+                                                       (when (seq ds) (/ (reduce + ds) (count ds))))
+                                               {rh :hits} (rim/read-rim lum-at proxy intr eye)
+                                               s1 (when (>= (count rh) 4)
+                                                    (pnp/solve-pnp (mapv #(select-keys % [:world :px]) rh)
+                                                                   intr {:seed eye}))
+                                               p1' (:pose s1)
+                                               {rh2 :hits} (when p1' (rim/read-rim lum-at proxy intr p1'))
+                                               s2 (when (>= (count rh2) 4)
+                                                    (pnp/solve-pnp (mapv #(select-keys % [:world :px]) rh2)
+                                                                   intr {:seed p1'}))
+                                               fin (or (:pose s2) p1')
+                                               d (when fin
+                                                   (la/v-norm (la/v-sub (cam/camera-center fin)
+                                                                        (cam/camera-center truth))))]
+                                           (println (str "      " deg "° (" (fmt (or shift 0) 0)
+                                                         "px sull'immagine): letti " (count rh)
+                                                         (if-not fin
+                                                           " → NON riparte"
+                                                           (str " → " (count rh2) " al 2° giro, camera a "
+                                                                (fmt d 1) "mm dalla verità"
+                                                                (when (> d 15.0) " (PERSA)")))))))))))
+                               (when overlay-dir
+                                 (let [svg (str "<svg xmlns='http://www.w3.org/2000/svg' width='" w
+                                                "' height='" h "'>"
+                                                (apply str
+                                                       (concat
+                                                        (keep #(some-> (:predicted-px %)
+                                                                       (svg-mark "#f97316"))
+                                                              (or misses []))
+                                                        (map #(svg-mark (:predicted-px %) "#3b82f6") hits)
+                                                        (map #(svg-mark (:px %) "#ef4444") hits)
+                                                        (when-let [p (:pose sol)]
+                                                          (keep (fn [hh]
+                                                                  (some-> (cam/project intr p (:world hh))
+                                                                          (svg-mark "#22c55e")))
+                                                                hits))))
+                                                "</svg>")
+                                       out (.join path overlay-dir
+                                                  (str "rim-" (inc i) "-" (nth files i)))
+                                       ^js img (.rotate (sharp (.join path dir (nth files i))))
+                                       ^js cmp (.composite img
+                                                           #js [#js {:input (js/Buffer.from svg)
+                                                                     :top 0 :left 0}])]
+                                   (.toFile (.jpeg cmp) out)))
+                               (step (inc i))))))))
+                    (.catch (fn [e]
+                              (println (str "  foto " (inc i) ": ERRORE " (str e)))
+                              (step (inc i)))))))]
+      (step 0))))
+
+(defn- rimreg-probe!
+  "CAGE_AUTO_RIMREG=1: la funzione di PRODUZIONE (mc/rim-register — quella che
+   'a' chiama davvero) collaudata sulle foto della sessione, con la posa dello
+   stato come seme dell'occhio. Sulle foto REGISTRATE il seme è buono per
+   definizione e deve ACCETTARE con copertura alta; sulla foto col seme a
+   occhio CATTIVO congelato (battiscopa5 foto 2, 5-7°/24mm) l'esito onesto è
+   o il recupero (il bacino misurato tiene i 6° lì) o un RIFIUTO coi numeri —
+   mai un'accettazione con la camera lontana dal seme. Stampa il verdetto,
+   i gate che hanno parlato, e per le accettate la distanza camera↔seme."
+  []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state)
+                                      :gen 2 :rim-marks? true)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)]
+    (println (str "\n=== rim-register (produzione): " (count files)
+                  " foto · lente " (fmt focal 2) "mm ==="))
+    (letfn [(step [i]
+              (if (>= i (count files))
+                (println "\n  (fine)")
+                (-> (decode (.join path dir (nth files i)))
+                    (.then
+                     (fn [res]
+                       (let [{:keys [lum-at w h]} (sampler res)
+                             intr (cam/intrinsics-from-fov
+                                   (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                             pose (solver-camera state i)
+                             manual? (get-in state [:photos (keyword (str i)) :manual?])
+                             label (if manual? "seme A OCCHIO (foto rifiutata)"
+                                       "seme = posa registrata")]
+                         (if-not pose
+                           (println (str "\n  foto " (inc i) " (" (nth files i)
+                                         "): nessuna posa nello stato — salto"))
+                           (let [{:keys [data]} (sampler res)
+                                 rr (mc/rim-register lum-at proxy intr pose)
+                                 say-rr (fn [tag rr seed]
+                                          (cond
+                                            (:pose rr)
+                                            (let [d (la/v-norm (la/v-sub (cam/camera-center (:pose rr))
+                                                                         (cam/camera-center seed)))]
+                                              (println (str "    " tag "ACCETTATA: " (:hits rr) "/" (:tried rr)
+                                                            " trattini al 2° giro (1°: " (:first-pass rr)
+                                                            ") · copertura " (fmt (:coverage rr) 2)
+                                                            " · rms " (fmt (:rms-px rr) 2) "px"
+                                                            " · camera a " (fmt d 1) "mm dal seme")))
+                                            :else
+                                            (println (str "    " tag "RIFIUTATA (" (name (:refused rr)) "): "
+                                                          (:hits rr) "/" (:tried rr) " trattini"
+                                                          (when-let [dm (:dist-mm rr)]
+                                                            (str " · posa a " (fmt dm 0) "mm dal seme"))
+                                                          (when-let [r (:rms-px rr)]
+                                                            (str " · rms " (fmt r 2) "px"))
+                                                          (when-let [fp (:first-pass rr)]
+                                                            (str " · 1° giro " fp))))))]
+                             (println (str "\n  foto " (inc i) " (" (nth files i) ") · " label))
+                             (cond
+                               (nil? rr)
+                               (println "    (il proxy non dichiara rim marks — niente da leggere)")
+
+                               (:pose rr)
+                               (say-rr "" rr pose)
+
+                               :else
+                               ;; il RETRY di produzione: seme con le traslazioni
+                               ;; rifatte dai dischetti (choose-eye-seed), poi di
+                               ;; nuovo i trattini — il caso foto 5 (posa troppo
+                               ;; vicina: tutti i trattini rifiutati per LUNGHEZZA)
+                               (do
+                                 (say-rr "" rr pose)
+                                 (let [targets (cage-targets proxy)
+                                       cands (mapv :center (bd/detect-blobs
+                                                            lum-at [w h]
+                                                            (assoc bd/cage-opts :rgba data)))
+                                       {:keys [norm normalized?]}
+                                       (mc/choose-eye-seed targets cands intr pose)]
+                                   (if-not normalized?
+                                     (println (str "    retry normalizzato: il seme crudo assegna "
+                                                   "meglio (" (count cands) " dischetti) — non provo"))
+                                     (let [rr2 (mc/rim-register lum-at proxy intr norm)]
+                                       (say-rr "retry (traslazioni dai dischetti): " rr2 norm))))))))
+                         (step (inc i)))))
+                    (.catch (fn [e]
+                              (println (str "  foto " (inc i) ": ERRORE " (str e)))
+                              (step (inc i)))))))]
+      (step 0))))
+
+(defn- eyetrans-probe!
+  "CAGE_AUTO_EYETRANS=1: l'automatismo delle TRASLAZIONI del seme dell'occhio
+   (mc/eye-normalize-translation), misurato prima di cablarlo. L'osservazione
+   di Vincenzo (4/9): al gizmo le rotazioni vengono facili, la fatica sono le
+   traslazioni — avvicinare/allontanare la gabbia finché è grande quanto
+   quella in foto. Qui la verità di ogni foto registrata viene guastata SOLO
+   in traslazione (profondità ×0.6…×1.8, spostamento laterale, e un caso
+   realistico con 3° di rotazione sopra), poi si misura: quanti px di
+   riproiezione l'occhio guasto aveva, quanti ne restano dopo il
+   normalizzatore, e se l'ICP del seme (assign 60→26→26, la stessa scala di
+   eyeseed-probe!) riparte dal seme normalizzato dove dal seme guasto muore."
+  []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state))
+        targets (cage-targets proxy)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        depth (fn [pose s] (update pose :t (fn [t] (mapv #(* s %) t))))
+        lateral (fn [pose dx] (update pose :t (fn [[tx ty tz]] [(- tx dx) ty tz])))
+        cases [["z×0.60      " #(depth % 0.60)]
+               ["z×0.75      " #(depth % 0.75)]
+               ["z×1.40      " #(depth % 1.40)]
+               ["z×1.80      " #(depth % 1.80)]
+               ["lat 40mm    " #(lateral % 40.0)]
+               ["z×1.5+lat40 " #(lateral (depth % 1.5) 40.0)]
+               ["3°+z×1.5    " #(perturbed-eye % 3.0 1.5)]]]
+    (println (str "\n=== automatismo traslazioni del seme (eye-normalize-translation): "
+                  (count files) " foto · lente " (fmt focal 2) "mm ==="))
+    (letfn [(step [i]
+              (if (>= i (count files))
+                (println "\n  (fine)")
+                (let [truth (solver-camera state i)]
+                  (if-not truth
+                    (do (println (str "\n  foto " (inc i) " (" (nth files i)
+                                      "): nessuna posa nello stato — salto"))
+                        (step (inc i)))
+                    (-> (decode (.join path dir (nth files i)))
+                        (.then
+                         (fn [res]
+                           (let [{:keys [data lum-at w h]} (sampler res)
+                                 intr (cam/intrinsics-from-fov
+                                       (cam/equiv-focal->hfov-deg focal (/ w h)) w h)
+                                 cands (mapv :center (bd/detect-blobs
+                                                      lum-at [w h]
+                                                      (assoc bd/cage-opts :rgba data)))
+                                 err-px (fn [pose]
+                                          (let [ds (for [{:keys [obj]} (take-nth 7 targets)
+                                                         :let [a (cam/project intr pose obj)
+                                                               b (cam/project intr truth obj)]
+                                                         :when (and a b)]
+                                                     (Math/hypot (- (nth a 0) (nth b 0))
+                                                                 (- (nth a 1) (nth b 1))))]
+                                            (when (seq ds) (/ (reduce + ds) (count ds)))))
+                                 icp (fn [seed]
+                                       (let [sol (reduce (fn [{:keys [sol]} tol]
+                                                           (if-let [p (:pose sol)]
+                                                             (let [c (mc/assign targets cands intr p tol)]
+                                                               {:sol (when (>= (count c) 6)
+                                                                       (pnp/solve-pnp c intr {}))
+                                                                :n (count c)})
+                                                             {:sol nil :n 0}))
+                                                         (let [c (mc/assign targets cands intr seed 60.0)]
+                                                           {:sol (when (>= (count c) 6)
+                                                                   (pnp/solve-pnp c intr {}))
+                                                            :n (count c)})
+                                                         [26.0 26.0])
+                                             s (:sol sol)]
+                                         (if-not (:pose s)
+                                           "muore"
+                                           (let [d (la/v-norm (la/v-sub (cam/camera-center (:pose s))
+                                                                        (cam/camera-center truth)))
+                                                 ok? (and (<= (:rms-px s) mc/eye-accept-rms-px)
+                                                          (>= (:n s) 8) (<= d 15.0))]
+                                             (str (:n s) " corr rms " (fmt (:rms-px s) 1)
+                                                  "px cam " (fmt d 1) "mm "
+                                                  (if ok? "✓" "✗"))))))]
+                             (println (str "\n  foto " (inc i) " (" (nth files i) ") · "
+                                           (count cands) " dischetti rilevati"))
+                             (doseq [[label f] cases]
+                               (let [eye (f truth)
+                                     norm (mc/eye-normalize-translation targets cands intr eye)]
+                                 (println (str "    " label " occhio " (fmt (or (err-px eye) 0) 0)
+                                               "px → norm " (fmt (or (err-px norm) 0) 0)
+                                               "px · ICP(norm): " (icp norm)
+                                               " · ICP(occhio): " (icp eye)))))
+                             (step (inc i)))))
+                        (.catch (fn [e]
+                                  (println (str "  foto " (inc i) ": ERRORE " (str e)))
+                                  (step (inc i)))))))))]
+      (step 0))))
+
+(defn- rimscale-probe!
+  "CAGE_AUTO_RIMSCALE=1: la profondità del seme, isolata — per ogni foto NON
+   registrata (manual?), rim-register dal seme dell'occhio con la distanza
+   scalata ×0.7…×2.2 (la rotazione resta la sua). Risponde alla domanda di
+   foto 5: i 9 trattini rifiutati tutti per LUNGHEZZA (misurato ≈ metà del
+   previsto, contrasti 64-150) sono una posa troppo vicina, o altro? Se a
+   una scala i trattini agganciano, la fatica era la PROFONDITÀ e il
+   ripiego di produzione può stimarla dai trattini stessi (len-ratio)."
+  []
+  (let [state (js->clj (js/JSON.parse (.readFileSync fs (str dir "/acquire-state.json") "utf8"))
+                       :keywordize-keys true)
+        phases (get-in state [:cage-mounting-obs :cage :phases])
+        proxy (cage/registration-cage :d 176 :phases phases
+                                      :flips (declared-flips state)
+                                      :gen 2 :rim-marks? true)
+        focal (or (some-> (aget (.-env js/process) "CAGE_AUTO_FOCAL") js/parseFloat)
+                  (get-in state [:focal :mm] 48.0))
+        files (->> (.readdirSync fs dir) (filter #(re-find #"(?i)\.jpe?g$" %)) sort vec)
+        depth (fn [pose s] (update pose :t (fn [t] (mapv #(* s %) t))))]
+    (println (str "\n=== sweep di profondità del seme (rim-register): lente "
+                  (fmt focal 2) "mm ==="))
+    (letfn [(step [i]
+              (if (>= i (count files))
+                (println "\n  (fine)")
+                (let [pose (solver-camera state i)
+                      manual? (get-in state [:photos (keyword (str i)) :manual?])]
+                  (if-not (and pose manual?)
+                    (step (inc i))
+                    (-> (decode (.join path dir (nth files i)))
+                        (.then
+                         (fn [res]
+                           (let [{:keys [lum-at w h]} (sampler res)
+                                 intr (cam/intrinsics-from-fov
+                                       (cam/equiv-focal->hfov-deg focal (/ w h)) w h)]
+                             (println (str "\n  foto " (inc i) " (" (nth files i)
+                                           ") · seme a occhio, distanza scalata:"))
+                             (doseq [s [0.7 0.85 1.0 1.15 1.3 1.5 1.8 2.2]]
+                               (let [rr (mc/rim-register lum-at proxy intr (depth pose s))]
+                                 (println (str "    ×" (fmt s 2) ": "
+                                               (if (:pose rr)
+                                                 (str "ACCETTATA " (:hits rr) "/" (:tried rr)
+                                                      " (1°: " (:first-pass rr) ") rms "
+                                                      (fmt (:rms-px rr) 2) "px")
+                                                 (str "rifiutata (" (name (:refused rr)) ") "
+                                                      (:hits rr) "/" (:tried rr)
+                                                      (when-let [fp (:first-pass rr)]
+                                                        (str " · 1° giro " fp))))))))
+                             (step (inc i)))))
+                        (.catch (fn [e]
+                                  (println (str "  foto " (inc i) ": ERRORE " (str e)))
+                                  (step (inc i)))))))))]
+      (step 0))))
+
 (defn ^:export main [& _]
   (cond
+    (aget (.-env js/process) "CAGE_AUTO_RIMSCALE") (rimscale-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_EYETRANS") (eyetrans-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_RIMREG") (rimreg-probe!)
+    (aget (.-env js/process) "CAGE_AUTO_RIM") (rim-probe!)
     (aget (.-env js/process) "CAGE_AUTO_TWIN") (twin-probe!)
     (aget (.-env js/process) "CAGE_AUTO_BUDGET") (outlier-budget-probe!)
     (aget (.-env js/process) "CAGE_AUTO_RESTART") (restart-probe!)
