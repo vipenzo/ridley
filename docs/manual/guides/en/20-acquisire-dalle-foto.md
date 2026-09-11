@@ -117,21 +117,23 @@ The **Conferma (OK)** button writes an ordinary form into the source, in place o
 
 The form holds what belongs to the program; the camera poses, the clicks, the focal length and the eyeballed photos stay in a session file next to the photos, `acquire-state.json`. **Chiudi** leaves without writing the measurements but still strips the `edit-`: the form stays valid. Putting `edit-` back in front and re-evaluating, the session reopens where it was: it is the same round trip as `edit-mesh-split` (ch. 18.3). Esc never closes the session: it steps out one level from the mode you are in.
 
-## 20.5 Anchors: the `d` key
+## 20.5 Anchors: a plane by eye
 
-With the cameras registered, you need somewhere to draw. The cage knows nothing about the object it contains, so you place the plane yourself, and it is called an **anchor**: a named pose, with a position and a normal, that goes into the form's `:marks` map.
+With the cameras registered, you need somewhere to draw. The cage knows nothing about the object it contains, so you place the plane yourself, and it is called an **anchor**: a named pose, with a position and a normal, that lives in the form's `:marks` map.
 
-The **Add anchor (d)** button opens the mode. A plane appears with a translate-and-rotate gizmo, and a white ball which is the anchor's point, that is the origin the turtle will start from. The three presets **Big ring (1)**, **Medium ring (2)**, **Small ring (3)** put the plane at the centre of the cage, parallel to that ring: a known starting point, since the part sits at the centre by construction. From there you bring it onto the flat area of the object with the gizmo, and the **Plane offset (mm)** slider slides it along its own normal in half-millimetre steps. The check is always the same: change photo with `[` and `]` and see whether the plane stays resting on the surface from every angle; the solid cage around it tells you whether the plane passes in front of or behind a ring, that is how deep it sits. In the panel you name the anchor (the default is `ancora-1`), **New anchor (n)** adds another, **Exit (d)** returns to the session.
-
-On confirmation the anchors are entries of `:marks`:
+It is not done inside edit-acquire: there your geometry is hidden and the script does not run, so you could not judge an anchor on the object you build on it. It is done on the stage (20.7), by writing the intent into the source:
 
 ```clojure
-:marks {:coperchio {:position [12.4 -3.1 41.0] :heading [0 0 1] :up [0 1 0]}}
+:marks {:coperchio (edit-plane-by-eye :big)}
 ```
 
-From then on renaming them, moving them by a millimetre or deleting them is ordinary text editing, not a dedicated gesture.
+On Run the camera flies into a photo and a disc appears at the centre of the cage, parallel to the big ring (`:medium` and `:small` for the other two, or `:x` `:y` `:z`): a known starting point, since the part sits at the centre by construction. From there you carry it onto the flat zone of the object with the translate and rotate gizmo; a click on the photo puts the origin where you clicked; the arrow keys move the origin in the plane and, with Shift, the plane in depth. The check is always the same: change photo with `[` and `]` and see whether the plane stays resting on the surface from every angle. And the geometry you have already built on that mark stays over the photo and moves with the plane at every gesture: you aim at it, not at the disc. Enter writes the anchor into the source:
 
-The same gesture also exists **outside** edit-acquire, on the stage (20.8), with one decisive advantage: there your own geometry is visible over the photo and follows the plane as you move it. Write `:coperchio (edit-plane-by-eye :big)` among the `:marks` and press Run.
+```clojure
+:marks {:coperchio (plane-by-eye :big {:position [12.4 -3.1 41.0] :heading [0 0 1] :up [0 1 0]})}
+```
+
+To touch it up again put `edit-` in front and Run; Backspace puts it back where it started; Esc leaves everything as it was. A `(plane-by-eye :big)` without a pose is already a valid mark: the plane of the ring itself. From then on renaming an anchor, moving it by a millimetre or deleting it is ordinary text editing. Details in [edit-plane-by-eye](ref:edit-plane-by-eye) and [plane-by-eye](ref:plane-by-eye).
 
 ## 20.6 Shooting live
 
@@ -177,7 +179,7 @@ The path editor ([edit-path-2d](ref:edit-path-2d), ch. 5) opens on the anchor's 
 
 When you cannot place the plane by eye, the stage can **measure** it: the **Plane** button in the toolbar. In pose on a photo you click a point on a flat area of the object; a yellow dot appears on the click's ray, which seen from the other photos slides along a line. You change photo with `]`, click the same physical point again helped by the line, and the dot turns green: the point is triangulated. With `n` you move to the next point; after three points Enter fits the plane and proposes a translucent disc resting on the area, which you check by navigating the photos; a second Enter accepts it and writes a [plane-mark](ref:plane-mark) into `:marks` in the source, with the points it was born from. The HUD guides you with the numbers that matter, parallax and error in pixels. A mark like this reopens by prefixing `edit-` and re-evaluating, like any other edit session. The result is used exactly like an anchor: `(turtle A :at :piano-1 (edit-path-2d))`.
 
-And when you can place the plane **by eye**, there is [edit-plane-by-eye](ref:edit-plane-by-eye): the anchor of the `d` key, on the stage. Write `:coperchio (edit-plane-by-eye :big)` among the `:marks` of the `acquire` and press Run: the camera flies into a photo and a disc appears at the centre of the cage, parallel to the big ring (`:medium` and `:small` for the other two, or `:x` `:y` `:z`), with a translate and rotate gizmo. You carry it onto the flat zone of the part; a click on the photo puts the origin where you clicked; the arrow keys move the origin in the plane and, with Shift, the plane in depth; `[` and `]` change photo to check that it stays glued. The difference from `d` is what you see: the geometry you have already built on that mark stays over the photo and moves with the plane at every gesture, so you aim at it and not at the disc. Enter writes [plane-by-eye](ref:plane-by-eye) into the source, `(plane-by-eye :big {…})`; to touch it up again put `edit-` in front and Run; Backspace puts it back where it started; Esc leaves everything as it was. A `(plane-by-eye :big)` without a pose is already a valid mark: the plane of the ring itself.
+And when you can place the plane **by eye**, the anchor of 20.5, `edit-plane-by-eye`, lives on this same stage: same gizmo, same check by changing photo, and the geometry built on it follows.
 
 ## 20.9 The scaffold comes down
 

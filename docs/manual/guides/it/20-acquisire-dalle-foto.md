@@ -6,20 +6,20 @@ piatto+giradischi). Convenzioni:
 - Decisioni di Vincenzo (2026-09-06): si documenta SOLO la gabbia (il piatto di
   registrazione resta nel codice e nella reference, non nella guida); entrano i
   controlli di posa e i badge della pellicola; entra lo scatto dal vivo (Grab);
-  il ricalco passa dagli ancoraggi del tasto 'd' in edit-acquire e da
+  il ricalco passa dagli ancoraggi (edit-plane-by-eye sul palcoscenico dall'11/9;
+  il tasto 'd' di edit-acquire e' stato tolto quel giorno) e da
   (turtle A :at :ancora-1 (edit-path-2d)) sul palcoscenico.
 - Il numero 19 resta riservato a "Estendere Ridley" (mai scritto): questo è il 20.
 - Etichette dei bottoni riportate ESATTE dal codice (edit_acquire.cljs e
   acquire_stage.cljs del 2026-09-05): il pannello mescola italiano e inglese
-  ("Registra per punti (p)", "Add anchor (d)", "Hide cage (v)", "Conferma (OK)",
+  ("Registra per punti (p)", "Hide cage (v)", "Conferma (OK)",
   "Chiudi"); la toolbar del palcoscenico è in inglese ("Photo", "Marks", "Plane",
   "‹", "›"). Non uniformate qui: è un tema di UI per Code.
-- VERIFICATI sul codice: tasti a/p/r/n/v/d/g/R/[/]/Esc su gabbia; k/m/b/F/C
+- VERIFICATI sul codice: tasti a/p/r/n/v/g/R/[/]/Esc su gabbia; k/m/b/F/C
   nascosti su gabbia; i tre cursori e i tre cerchi di posa (foto 0 muove la
   gabbia, le altre la camera); i quattro stati del badge; "faccia che vedi:" con
-  i sei bottoni Xp..Zm; preset "Big/Medium/Small ring (1/2/3)" e slider
-  "Plane offset (mm)"; nome di default "ancora-N"; gli ancoraggi emessi come
-  mappe nude di posa in :marks; Grab su gabbia tenuta NON registrata; memoria
+  i sei bottoni Xp..Zm; gli ancoraggi scritti come (plane-by-eye :ring {…})
+  in :marks; Grab su gabbia tenuta NON registrata; memoria
   focale ~/.ridley/cameras.json; il gesto "Plane" del palcoscenico non gatato
   sulla gabbia; [ e ] promossi sopra edit-path-2d.
 - NON verificati / semplificazioni da confermare con Vincenzo o Code:
@@ -156,21 +156,23 @@ Il bottone **Conferma (OK)** scrive nel sorgente una form normale, al posto di q
 
 Nella form c'è ciò che appartiene al programma; le pose delle camere, i click, la focale e le foto posate a occhio restano in un file di sessione accanto alle foto, `acquire-state.json`. **Chiudi** esce senza scrivere le misure ma toglie comunque l'`edit-`: la form resta valida. Riaggiungendo `edit-` davanti e rivalutando, la sessione si riapre dov'era: è lo stesso round-trip di `edit-mesh-split` (cap. 18.3). Esc non chiude mai la sessione: esce di un passo dalla modalità in cui sei.
 
-## 20.5 Gli ancoraggi: il tasto `d`
+## 20.5 Gli ancoraggi: un piano a occhio
 
-Registrate le camere, serve un posto su cui disegnare. La gabbia non sa nulla dell'oggetto che contiene, quindi il piano lo metti tu, e si chiama **ancoraggio**: una posa nominata, con una posizione e una normale, che finisce nella mappa `:marks` della form.
+Registrate le camere, serve un posto su cui disegnare. La gabbia non sa nulla dell'oggetto che contiene, quindi il piano lo metti tu, e si chiama **ancoraggio**: una posa nominata, con una posizione e una normale, che vive nella mappa `:marks` della form.
 
-Il bottone **Add anchor (d)** apre la modalità. Compare un piano con un gizmo di traslazione e rotazione, e una pallina bianca che è il punto dell'ancoraggio, cioè l'origine da cui partirà la turtle. I tre preset **Big ring (1)**, **Medium ring (2)**, **Small ring (3)** mettono il piano al centro della gabbia, parallelo a quell'anello: è un punto di partenza noto, visto che il pezzo sta al centro per costruzione. Da lì lo porti sulla zona piana dell'oggetto col gizmo, e lo slider **Plane offset (mm)** lo fa scorrere lungo la sua normale a passi di mezzo millimetro. La verifica è sempre la stessa: cambi foto con `[` e `]` e guardi se il piano resta appoggiato alla superficie da ogni angolazione; la gabbia solida intorno ti dice se il piano passa davanti o dietro un anello, cioè a che profondità sta. Nel pannello dai un nome all'ancoraggio (il default è `ancora-1`), **New anchor (n)** ne aggiunge un altro, **Exit (d)** torna alla sessione.
-
-Alla conferma gli ancoraggi sono voci di `:marks`:
+Non si fa dentro edit-acquire: lì la tua geometria è nascosta e lo script non gira, quindi un ancoraggio non lo potresti giudicare sull'oggetto che ci costruisci sopra. Si fa sul palcoscenico (20.7), scrivendo l'intenzione nel sorgente:
 
 ```clojure
-:marks {:coperchio {:position [12.4 -3.1 41.0] :heading [0 0 1] :up [0 1 0]}}
+:marks {:coperchio (edit-plane-by-eye :big)}
 ```
 
-Da lì in poi rinominarli, spostarli di un millimetro o cancellarli è normale editing del testo, non un gesto dedicato.
+Al Run la camera va in posa su una foto e compare un dischetto al centro della gabbia, parallelo all'anello grande (`:medium` e `:small` per gli altri due, oppure `:x` `:y` `:z`): è un punto di partenza noto, visto che il pezzo sta al centro per costruzione. Da lì lo porti sulla zona piana dell'oggetto con il gizmo di traslazione e rotazione; un click sulla foto mette l'origine dove hai cliccato; le frecce spostano l'origine nel piano e con Shift il piano in profondità. La verifica è sempre la stessa: cambi foto con `[` e `]` e guardi se il piano resta appoggiato alla superficie da ogni angolazione. E la geometria che hai già costruito su quel mark resta sopra la foto e si muove con il piano a ogni gesto: miri a lei, non al dischetto. Invio scrive l'ancoraggio nel sorgente:
 
-Lo stesso gesto esiste anche **fuori** da edit-acquire, sul palcoscenico (20.8), con un vantaggio decisivo: lì la tua geometria è visibile sopra la foto e segue il piano mentre lo sposti. Scrivi `:coperchio (edit-plane-by-eye :big)` fra i `:marks` e premi Run.
+```clojure
+:marks {:coperchio (plane-by-eye :big {:position [12.4 -3.1 41.0] :heading [0 0 1] :up [0 1 0]})}
+```
+
+Per ritoccarlo rimetti `edit-` davanti e Run; Backspace lo riporta dov'era partito; Esc lascia tutto com'era. Un `(plane-by-eye :big)` senza posa è già un mark valido: il piano dell'anello stesso. Da lì in poi rinominare un ancoraggio, spostarlo di un millimetro o cancellarlo è normale editing del testo. I dettagli in [edit-plane-by-eye](ref:edit-plane-by-eye) e [plane-by-eye](ref:plane-by-eye).
 
 ## 20.6 Scattare dal vivo
 
@@ -216,7 +218,7 @@ L'editor di path ([edit-path-2d](ref:edit-path-2d), cap. 5) si apre sul piano de
 
 Quando il piano non lo sai mettere a occhio, il palcoscenico lo sa **misurare**: bottone **Plane** nella toolbar. In posa su una foto clicchi un punto di una zona piana dell'oggetto; compare un pallino giallo sul raggio del click, che visto dalle altre foto scorre lungo una retta. Cambi foto con `]`, riclicchi lo stesso punto fisico aiutandoti con la retta, e il pallino diventa verde: il punto è triangolato. Con `n` passi al punto successivo; dopo tre punti Invio adatta il piano e propone un dischetto traslucido appoggiato sulla zona, che controlli navigando le foto; un secondo Invio lo accetta e scrive nel sorgente un [plane-mark](ref:plane-mark) dentro `:marks`, con i punti da cui è nato. La HUD ti guida coi numeri che contano, parallasse e scarto in pixel. Un mark così si riapre anteponendogli `edit-` e rivalutando, come ogni altra sessione di edit. Il risultato si usa esattamente come un ancoraggio: `(turtle A :at :piano-1 (edit-path-2d))`.
 
-E quando il piano lo sai mettere **a occhio**, c'è [edit-plane-by-eye](ref:edit-plane-by-eye): l'ancoraggio del tasto `d`, ma sul palcoscenico. Scrivi `:coperchio (edit-plane-by-eye :big)` fra i `:marks` della `acquire` e premi Run: la camera va in posa su una foto e compare un dischetto al centro della gabbia, parallelo all'anello grande (`:medium` e `:small` per gli altri due, oppure `:x` `:y` `:z`), con un gizmo di traslazione e rotazione. Lo porti sulla zona piana dell'oggetto; un click sulla foto mette l'origine dove hai cliccato; le frecce spostano l'origine nel piano e con Shift il piano in profondità; `[` e `]` cambiano foto per controllare che resti appoggiato. La differenza con la `d` è quello che vedi: la geometria che hai già costruito su quel mark resta sopra la foto e si muove con il piano a ogni gesto, così miri a lei e non al dischetto. Invio scrive [plane-by-eye](ref:plane-by-eye) nel sorgente, `(plane-by-eye :big {…})`; per ritoccarlo rimetti `edit-` davanti e Run; Backspace lo riporta dov'era partito; Esc lascia tutto com'era. Un `(plane-by-eye :big)` senza posa è già un mark valido: il piano dell'anello stesso.
+E quando il piano lo sai mettere **a occhio**, l'ancoraggio di 20.5, `edit-plane-by-eye`, vive su questo stesso palcoscenico: stesso gizmo, stessa verifica cambiando foto, e la geometria costruita sopra che segue.
 
 ## 20.9 La caduta dell'impalcatura
 

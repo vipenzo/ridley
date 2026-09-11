@@ -813,7 +813,8 @@ sull'oggetto costruito sopra. Nasce `edit-plane-by-eye ⇄ plane-by-eye`, il
 gesto della `d` sul PALCOSCENICO: `:marks {:x (edit-plane-by-eye :big)}` semina
 il piano sull'anello, il gizmo lo porta sul pezzo, la geometria costruita sopra
 lo segue live, Invio scrive `(plane-by-eye :big {…})`. `edit-plane-mark` (tre
-punti misurati) resta com'è. Decisione aperta: togliere `d` da edit-acquire.
+punti misurati) resta com'è. La `d` è stata TOLTA da edit-acquire subito dopo,
+sopra il checkpoint `ed2984e`: restano a `k` i piani dichiarati del proxy.
 
 **Fronti chiusi di recente** (2026-07): famiglia mesh-split/mesh-board —
 spec ad albero, `split-tree`, viste di confronto, heal-slivers (brief

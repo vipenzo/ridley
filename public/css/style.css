@@ -510,11 +510,11 @@ html, body {
   gap: 6px;
 }
 
-/* P3 plane-retrace ('d'): same visual family as the PnP box (reuses
-   .eaq-pnp-info / .eaq-pnp-corners / .eaq-pnp-actions), set off with a rule so
-   the two mode boxes read as distinct. Face buttons carry wider labels than the
-   PnP corner numbers, so they get horizontal padding. */
-.modal-panel .eaq-retrace-box {
+/* Mode-entry actions box (proxy toggle + the marking gestures' entry buttons;
+   it was the plane-retrace 'd' box until 2026-09-11): same visual family as the
+   PnP box (reuses .eaq-pnp-info / .eaq-pnp-corners / .eaq-pnp-actions), set off
+   with a rule so the mode boxes read as distinct. */
+.modal-panel .eaq-actions-box {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -522,11 +522,11 @@ html, body {
   border-top: 1px solid #3a3b42;
 }
 
-.modal-panel .eaq-retrace-box .eaq-pnp-corners button {
+.modal-panel .eaq-actions-box .eaq-pnp-corners button {
   padding: 3px 8px;
 }
 
-/* P4a-3 named marks ('k'): same visual family as the retrace box. Face buttons
+/* P4a-3 named marks ('k'): same visual family as the actions box. Face buttons
    pick the plane for the next mark; the list is one row per placed mark, with an
    editable id and a delete. */
 .modal-panel .eaq-mark-box {
