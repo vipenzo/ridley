@@ -231,7 +231,7 @@
    'turtle-transform-mesh turtle/transform-mesh
    ;; NOTE: attach-state and att-* functions are defined in macro-defs
    ;; Path/shape utilities
-   'path->data   path/path-from-state
+   'path->data   path/path-data
    'make-shape   shape/make-shape
    'shape?       shape/shape?
    ;; Generative operations (legacy ops namespace)
@@ -268,6 +268,11 @@
    'morphed          sfn/morphed
    'angle            sfn/angle
    'displace-radial  sfn/displace-radial
+   'shape-centroid   sfn/shape-centroid
+   'smoothstep       sfn/smoothstep
+   ;; the length of the sweep a shape-fn is being evaluated for (loft: the
+   ;; path; revolve: the centroid's arc) — nil outside loft/revolve
+   'current-path-length (fn [] sfn/*path-length*)
    ;; Procedural noise and displacement
    'noise            sfn/noise
    'fbm              sfn/fbm
@@ -728,6 +733,16 @@
    ;; una specifica differita che `acquire` risolve — lo stesso trucco a due
    ;; tempi di edit-plane-mark.
    'plane-from-edges    edit-acquire/plane-from-edges
+   ;; plane-by-eye: a plane placed BY EYE on the stage — seeded on a ring of the
+   ;; registration cage, carried onto the part with the gizmo (edit-acquire's
+   ;; 'd', moved out to the stage where the user's geometry is visible over the
+   ;; photo and follows the plane live). Same grammar as the pair above:
+   ;;   :marks {:coperchio (edit-plane-by-eye :big)}      arms it (creation)
+   ;;   :marks {:coperchio (plane-by-eye :big {…})}       what OK leaves behind
+   ;; `(plane-by-eye :big)` alone is the plane the ring itself spans, resolved
+   ;; by acquire like plane-from-edges (Vincenzo 2026-09-11).
+   'edit-plane-by-eye   acquire-stage/request-eye-edit!
+   'plane-by-eye        edit-acquire/plane-by-eye
    'edit-edge-mark      (fn [& [e]] (acquire-stage/request-edge-edit! :retta e))
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here

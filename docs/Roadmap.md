@@ -784,6 +784,37 @@ utente).
 - **Design/storia**: `dev-docs/acquisizione-parametrica-design.md`; handover in
   `dev-docs/HANDOVER-edit-acquire-*.md` — leggere solo per il *perché* di una scelta.
 
+**Manuale, cap. 19 «Estendere Ridley» — accertamenti CHIUSI (2026-09-10).**
+Il brief `dev-docs/brief-ch19-accertamenti.md` (Vincenzo + Claude-manuale) ha
+avuto risposta punto per punto in `dev-docs/brief-ch19-accertamenti-risposte.md`,
+tutto misurato allo schermo. Cinque bug delle shape-fn corretti (heightmap
+`:fit :physical` su catene a due livelli, `shape-fn` con base parziale muta,
+`:fn` di shell senza `:softness`, `*path-length*` nil in revolve, `path->data`
+guscio vuoto), lo schema dei path che rifiutava `(register x (path …))` in dev,
+la regex delle librerie (`defonce` dentro, `^:private` fuori), `weave.clj`
+senza `register` a top level, `recursive-tree.clj` riscritto con `cone` e
+`turtle`, tre binding nuovi (`current-path-length`, `smoothstep`,
+`shape-centroid`, con schede). Spec §3/§4/§6/§17/§18.10 e Architecture 11.3.1
+aggiornati; ora tocca a Claude-manuale chiudere cap. 6 (dominio dell'angolo
+`(-π, π]`, «solo tapered dopo shell» falso), cap. 9 (header `;; Requires: a, b`,
+`defonce` sì) e la bozza del 19. D5 decisa da Vincenzo l'11/9 («tutta la UI sempre in
+inglese») e FATTA: ≈1.100 stringhe utente tradotte in tutta la famiglia
+acquire e nei file minori; la mappa delle etichette per il cap. 20 è nel file
+delle risposte.
+
+*Il piano a occhio esce da edit-acquire (2026-09-10/11)*: allineando un loft
+alla foto sono emersi due fatti. (1) edit-attach dentro un `turtle A :at :mark`
+valutava l'anteprima FUORI dal turtle, quindi gizmo e filo di ferro nascevano
+all'origine dopo il primo gesto — corretto misurando il moto rigido dal frame
+«da solo» alla sonda in scena (Architecture 11.2). (2) Il tasto `d` di
+edit-acquire non serve a niente lì dentro: la sessione nasconde la geometria
+dell'utente e non rilancia lo script, quindi un ancoraggio non si può giudicare
+sull'oggetto costruito sopra. Nasce `edit-plane-by-eye ⇄ plane-by-eye`, il
+gesto della `d` sul PALCOSCENICO: `:marks {:x (edit-plane-by-eye :big)}` semina
+il piano sull'anello, il gizmo lo porta sul pezzo, la geometria costruita sopra
+lo segue live, Invio scrive `(plane-by-eye :big {…})`. `edit-plane-mark` (tre
+punti misurati) resta com'è. Decisione aperta: togliere `d` da edit-acquire.
+
 **Fronti chiusi di recente** (2026-07): famiglia mesh-split/mesh-board —
 spec ad albero, `split-tree`, viste di confronto, heal-slivers (brief
 relativi in `dev-docs/`, capitolo 18 delle guide). **Fronti in pausa

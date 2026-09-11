@@ -151,7 +151,7 @@
                " <span class='help-tier-count'>(" cnt ")</span>"
                "</div>")))
       (sort-by (comp :order val) db/tiers)))
-   "<div class='help-footer'>1-3 o click | cerca: dì il nome | Esc esci</div>"))
+   "<div class='help-footer'>1-3 or click | search: say the name | Esc leaves</div>"))
 
 (defn- render-search [help-state lang]
   (let [{:keys [results page query highlight]} help-state]
@@ -161,7 +161,7 @@
      "Help: \"" (escape-html (or query "")) "\"</div>"
      (if (seq results)
        (render-items-page results page lang highlight)
-       "<div class='help-doc'>Nessun risultato</div>"))))
+       "<div class='help-doc'>No results</div>"))))
 
 (defn- render-browse [help-state lang]
   (let [{:keys [results page query highlight]} help-state
@@ -193,7 +193,7 @@
                  total " simboli — "
                  "\u2191\u2193 Enter | Bksp \u25C0 | Esc"
                  "</div>"))))
-       "<div class='help-doc'>Nessun simbolo</div>"))))
+       "<div class='help-doc'>No symbols</div>"))))
 
 (defn render-html
   "Render help panel content. Called when mode = :help."

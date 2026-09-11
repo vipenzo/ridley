@@ -17,7 +17,8 @@
    the proxy known and fixed (photos 1..N-1, proxy frozen); solver-pose->proxy
    needs the camera known and fixed (photo 0, where the gizmo moves the proxy
    with the camera still)."
-  (:require [ridley.math :as m]
+  (:require [clojure.string :as str]
+            [ridley.math :as m]
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.box-fit :as bf]
             [ridley.photogrammetry.linalg :as la]
@@ -130,6 +131,52 @@
    carry a mark's face normal into the object frame."
   [proxy-pose v]
   (to-local-dir (box-basis proxy-pose) v))
+
+(defn local->world-dir
+  "An OBJECT-frame direction lifted to world through `proxy-pose`'s box-basis —
+   the oriented companion of local->world (points), inverse of world->local-dir."
+  [proxy-pose [x y z]]
+  (let [{:keys [ex ey ez]} (box-basis proxy-pose)]
+    (m/normalize (m/v+ (m/v* ex x) (m/v+ (m/v* ey y) (m/v* ez z))))))
+
+;; ---- the planes a registration cage's rings span ----
+;;
+;; `(:rings cage)` is ordered biggest first, each {:axis :x|:y|:z :inner :outer …}
+;; in the cage's object frame. The bench knows the rings by SIZE — big, medium,
+;; small, what the eye tells apart — and the model by axis; both spellings are
+;; accepted, in any case.
+
+(def ^:private ring-by-size {:big 0 :medium 1 :small 2})
+
+(defn ring-of
+  "The ring entry named by `which` — :big/:medium/:small or :x/:y/:z — or nil
+   when the proxy has no such ring (not a cage, or a name it lacks)."
+  [rings which]
+  (when (and (seq rings) (keyword? which))
+    (let [k (keyword (str/lower-case (name which)))]
+      (if-let [i (ring-by-size k)]
+        (nth rings i nil)
+        (first (filter #(= k (:axis %)) rings))))))
+
+(defn ring-spec?
+  "A deferred `(plane-by-eye :big)`: a ring named, no pose yet. `acquire`
+   resolves it against its own proxy (ring-plane-pose)."
+  [v]
+  (and (map? v) (contains? v :ring) (not (contains? v :position))))
+
+(defn ring-plane-pose
+  "World pose of the plane ring `which` spans, with the cage at `proxy-pose`:
+   the cage's centre, normal = the ring's axis, up = the next axis round (so the
+   three rings' planes are mutually consistent — the same choice as
+   edit-acquire's ring presets). nil for no such ring."
+  [rings proxy-pose which]
+  (when-let [{:keys [axis]} (ring-of rings which)]
+    (let [unit (fn [i] (assoc [0.0 0.0 0.0] i 1.0))
+          n (unit (case axis :x 0 :y 1 :z 2))
+          u (unit (case axis :x 1 :y 2 :z 0))]
+      {:position (vec (:position proxy-pose))
+       :heading (local->world-dir proxy-pose n)
+       :up (local->world-dir proxy-pose u)})))
 
 (defn dims-from-mesh
   "Box extents [w h d] from `mesh`'s ACTUAL vertices (not from construction

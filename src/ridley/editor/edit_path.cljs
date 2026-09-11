@@ -1505,12 +1505,12 @@
                            total (if cl n (dec n))]
                        (str " · curve " curved "/" total
                             (when cl
-                              (if (:bez (first nds)) " · cucitura curva" " · cucitura DIRITTA")))))
+                              (if (:bez (first nds)) " · curved seam" " · STRAIGHT seam")))))
                    ;; the one thing on this line that is not a fact but a problem
                    (when (pos? (:crossings s 0))
-                     (str "  ⚠ il contorno si incrocia in " (:crossings s)
-                          (if (= 1 (:crossings s)) " punto" " punti")
-                          " (cerchi rossi) — l'estrusione ne uscirà bucata")))))
+                     (str "  ⚠ the contour crosses itself at " (:crossings s)
+                          (if (= 1 (:crossings s)) " point" " points")
+                          " (red circles) — the extrusion would come out holed")))))
       ;; plane radios reflect the active plane
       (when (three-d? s)
         (doseq [[cls pl] [[".ep-plane-f" :f] [".ep-plane-r" :r] [".ep-plane-u" :u]]]

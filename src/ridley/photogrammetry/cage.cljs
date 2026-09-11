@@ -1100,12 +1100,12 @@
       :or {h default-h seg 64 index-phase default-index-phase gen 1}}]
   (when-not (and (number? d) (pos? d))
     (throw (js/Error.
-            (str "registration-cage: dimmi il diametro della gabbia — quello "
-                 "dell'anello PIÙ GRANDE — per esempio (registration-cage :d 176).\n"
-                 "Non c'è un default apposta: è l'unico numero che lega il modello "
-                 "alla gabbia che hai in mano, e se è sbagliato NON si presenta come "
-                 "un errore — la registrazione riesce lo stesso, con residui ottimi, "
-                 "e tutte le misure escono scalate in silenzio."))))
+            (str "registration-cage: give me the cage's diameter — the one "
+                 "of the LARGEST ring — for example (registration-cage :d 176).\n"
+                 "There is deliberately no default: it is the only number tying the model "
+                 "to the cage in your hands, and if it is wrong it does NOT show up as "
+                 "an error — registration succeeds anyway, with excellent residuals, "
+                 "and every measurement comes out scaled, silently."))))
   (let [n (or marks default-marks)
         disc (or disc (* d disc-frac))
         rings (mapv (fn [k] (assoc (ring-radii d k) :axis (ring-axis k) :marks n))

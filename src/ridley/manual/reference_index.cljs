@@ -390,6 +390,15 @@
     :description "Rotate the geometry under a stationary anchor — the mesh (or SDF) rotates by `-angle` around the chosen local axis while the creation-pose's orientation stays fixed in world. The geometry spins beneath the anchor; the anchor still points where it pointed before."
     :path "docs/manual/reference/en/cp-rotation.md"}
 
+   "current-path-length"
+   {:name "current-path-length"
+    :category "generative-operations"
+    :status "stable"
+    :since ""
+    :signature "(current-path-length)"
+    :description "The length, in world units, of the sweep a shape-fn is being evaluated for — readable **only while** `loft` or `revolve` is calling your transform; anywhere else it returns `nil`."
+    :path "docs/manual/reference/en/current-path-length.md"}
+
    "curve-mark"
    {:name "curve-mark"
     :category "acquisition"
@@ -569,6 +578,15 @@
     :signature "(edit-path-2d)\n(edit-path-2d (move-to [a b]) (tv α) (f d) …)"
     :description "A **pen tool** for tracing a planar polyline interactively — draw over a reference image (see `set-image`) and clip the piece you need. `edit-path-2d` wraps a [`path-2d`](#path-2d) body and opens an interactive session from the **definitions panel** (Cmd+Enter), not the REPL. Its result is a `:2d` path that lives in the `(right,up)` plane, so it reads un-rotated and feeds `path-to-shape` / `stroke-shape` directly."
     :path "docs/manual/reference/en/edit-path-2d.md"}
+
+   "edit-plane-by-eye"
+   {:name "edit-plane-by-eye"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(edit-plane-by-eye ring)\n(edit-plane-by-eye ring pose-map)\n(edit-plane-by-eye pose-map)"
+    :description "Place a plane **by eye** on the acquisition stage: seeded on one of the registration cage's rings, carried onto the part with a gizmo, written into the `:marks` of the evaluated `(acquire …)`. It is the `d` anchor gesture of `edit-acquire`, moved out to the stage — where your own geometry is visible over the photo and **follows the plane live** as you move it, so you aim at the thing you built on the mark rather than at the disc."
+    :path "docs/manual/reference/en/edit-plane-by-eye.md"}
 
    "edit-plane-mark"
    {:name "edit-plane-mark"
@@ -1479,6 +1497,15 @@
     :description "Resolve a path's marks at the **current turtle pose** and return the resulting `{anchor-name → {:position [x y z] :heading [x y z] :up [x y z]}}` map."
     :path "docs/manual/reference/en/pin-path.md"}
 
+   "plane-by-eye"
+   {:name "plane-by-eye"
+    :category "acquisition"
+    :status "stable"
+    :since ""
+    :signature "(plane-by-eye ring pose-map)\n(plane-by-eye pose-map)\n(plane-by-eye ring)"
+    :description "A plane of an acquisition placed **by eye**: a named working plane on the photographed object, an ordinary Ridley pose whose `:heading` is the surface normal, that was carried into place by hand with the stage's gizmo rather than fitted through measured points. It is what `edit-plane-by-eye` writes into the `:marks` of an `(acquire …)`."
+    :path "docs/manual/reference/en/plane-by-eye.md"}
+
    "plane-from-edges"
    {:name "plane-from-edges"
     :category "acquisition"
@@ -2190,6 +2217,15 @@
     :description "Connect N shapes with smooth bridges by offsetting each shape outward by `:radius`, unioning the expansions, then contracting the union by the same radius. The result is a single outline where nearby shapes are joined by rounded fillets. Implemented with Clipper2. Does not modify turtle state."
     :path "docs/manual/reference/en/shape-bridge.md"}
 
+   "shape-centroid"
+   {:name "shape-centroid"
+    :category "generative-operations"
+    :status "stable"
+    :since ""
+    :signature "(shape-centroid shape)"
+    :description "The centroid of a shape's **outer** contour — the plain mean of its points — as `[x y]`. Holes are ignored, and so is edge length: a contour with many points on one side is pulled that way, which is exactly the reference `shell` uses, so a custom thickness-fn that computes its own angles with this function agrees with the built-in styles point for point."
+    :path "docs/manual/reference/en/shape-centroid.md"}
+
    "shape-difference"
    {:name "shape-difference"
     :category "2d-shapes"
@@ -2369,6 +2405,15 @@
     :signature "(smooth-falloff dist)"
     :description "Return the Hermite smooth-step `3t² − 2t³` evaluated at `t = 1 − dist`, clamped so `dist` ranges over `[0, 1]`. At the volume centre (`dist = 0`) the result is `1`; at the boundary (`dist = 1`) the result is `0`; the transition is smooth (zero derivative at both endpoints)."
     :path "docs/manual/reference/en/smooth-falloff.md"}
+
+   "smoothstep"
+   {:name "smoothstep"
+    :category "math"
+    :status "stable"
+    :since ""
+    :signature "(smoothstep e0 e1 x)"
+    :description "The Hermite ramp: `0` for `x` at or below `e0`, `1` for `x` at or above `e1`, and a smooth (C1) cubic in between — `t² (3 - 2t)` with `t = (x - e0) / (e1 - e0)` clamped to `[0, 1]`. The same function GLSL calls `smoothstep`."
+    :path "docs/manual/reference/en/smoothstep.md"}
 
    "span"
    {:name "span"

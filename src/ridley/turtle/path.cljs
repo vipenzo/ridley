@@ -14,6 +14,18 @@
    :start (get-in turtle-state [:geometry 0 :from] [0 0 0])
    :end (:position turtle-state)})
 
+(defn path-data
+  "The plain-data view of a path value: the map the `path` macro built —
+   {:type :path :commands [{:cmd :f :args [30]} …]} plus one key per recorded
+   mark holding its pose — minus :micro-commands, the memoized lowering every
+   consumer recomputes on demand when it is absent. What you print, save or
+   diff. Anything that is not a path (a turtle state, from before paths were
+   recorded) still goes through path-from-state."
+  [x]
+  (if (and (map? x) (= :path (:type x)))
+    (dissoc x :micro-commands)
+    (path-from-state x)))
+
 (defn shape-from-state
   "Convert turtle state to closed shape structure."
   [turtle-state]

@@ -19,7 +19,7 @@
             [clojure.string :as str]))
 
 ;; Forward declarations for mutual references
-(declare confirm! cancel! update-panel-display!)
+(declare confirm! cancel! update-panel-display! build-code)
 
 ;; ============================================================
 ;; State
@@ -154,6 +154,20 @@
 ;; the (f d) that moves the object along exactly that arrow, by exactly d. (A
 ;; non-rigid outer transform — an outer `scale` — would still skew distances;
 ;; the pose placement stays right, the step size wouldn't.)
+;;
+;; The probe covers what the script does to the VALUE. A second thing can
+;; separate the preview from the object: the script may wrap the marker in a
+;; context that changes where the argument is BORN —
+;;   (turtle A :at :piano (edit-attach (loft SF (f 30))))
+;; — and the previews evaluate their replacement text `(attach (loft …) (f 5))`
+;; on its own, outside that context, so their loft is born at the origin while
+;; the script's is born on the mark. No probe can see this: inner pose and
+;; probe coincide, both on the mark. (Vincenzo 2026-09-10: after the first
+;; drag the gizmo and the wireframe jumped off the object — «sposto da una parte
+;; e la mesh si muove in un'altra».) So the transform previews are carried by
+;; runs from the pose a STANDALONE evaluation of the session's own text gives
+;; (standalone-pose, once at entry) to the probe — both causes folded into one
+;; rigid motion, and the commands stay covariant exactly as above.
 
 (defonce ^:private probe-counter (atom 0))
 
@@ -180,22 +194,53 @@
                   (:anchors mesh)))
           (registry/all-meshes))))
 
-(defn- capture-world-xform!
-  "Measure the outer transform once, from the probe left in the finished scene,
-   and keep it as the basis pair group-transform/transform-pose-rigid want. It
-   does not change as the session's commands change (they only rebuild the
-   subtree UNDER it), so it is captured at entry and reused for every preview —
-   which matters because the previews replace the marker with literal attach
-   code and so leave no probe of their own."
+(defn- standalone-pose
+  "The creation-pose the previews' own evaluation gives the session as it
+   stands: the same (attach mesh-expr cmds…) text every preview evaluates, run
+   once here on its own — outside whatever context the script wraps the marker
+   in. nil when the text cannot be evaluated standalone (a mesh-expr naming a
+   let-local, say): the previews then fail the same way, and there is nothing
+   to carry."
   []
-  (let [{:keys [creation-pose probe-key]} @session]
-    (when-let [world (probe-pose probe-key)]
-      (swap! session assoc :world-xform
-             {:p0 (:position creation-pose) :h0 (:heading creation-pose) :u0 (:up creation-pose)
-              :p1 (:position world)         :h1 (:heading world)         :u1 (:up world)}))))
+  (let [{:keys [source-expr commands]} @session]
+    (try
+      (let [v (sci/eval-string (build-code source-expr commands) @state/sci-ctx-ref)
+            pose (when (map? v) (:creation-pose v))]
+        (when (and (:position pose) (:heading pose) (:up pose))
+          pose))
+      (catch :default _ nil))))
+
+(defn- capture-world-xform!
+  "Measure, once at entry, the rigid motion that carries a preview result onto
+   the object the user sees, and keep it as the basis pair group-transform/
+   transform-pose-rigid want. Source frame: the pose the session's text gives
+   when evaluated on its own (standalone-pose) — the frame every preview result
+   is born in. Target frame: the probe left in the finished scene, or — when
+   the subtree never reached a registered mesh — the inner pose, which is where
+   the script itself built the object. Either side falls back to the inner
+   pose, so a session that needs no carrying gets the identity.
+
+   The motion does not change as the session's commands change (they only
+   rebuild the subtree UNDER it), so it is captured here and reused for every
+   preview — which matters because the previews replace the marker with literal
+   attach code and so leave no probe of their own. Also records :scene-pose,
+   where the object stands right now, for enter! to put the gizmo on directly."
+  []
+  (let [{:keys [creation-pose probe-key]} @session
+        scene (or (probe-pose probe-key) creation-pose)
+        local (or (standalone-pose) creation-pose)]
+    (swap! session assoc
+           :scene-pose scene
+           ;; identical frames = nothing to carry: leave the xform out so the
+           ;; previews skip a vertex pass they do not need
+           :world-xform (let [frame #(select-keys % [:position :heading :up])]
+                          (when (not= (frame local) (frame scene))
+                            {:p0 (:position local) :h0 (:heading local) :u0 (:up local)
+                             :p1 (:position scene) :h1 (:heading scene) :u1 (:up scene)})))))
 
 (defn- to-world-pose
-  "Carry an inner-frame pose to where the script's outer transform puts it."
+  "Carry a pose from the previews' standalone frame to where the script shows
+   the object."
   [pose]
   (if-let [{:keys [p0 h0 u0 p1 h1 u1]} (:world-xform @session)]
     (attachment/transform-pose-rigid pose p0 h0 u0 p1 h1 u1)
@@ -785,7 +830,7 @@
     ;; is readable — and everything below stands on the mesh the user sees
     ;; instead of on the untransformed inner pose.
     (capture-world-xform!)
-    (let [world-pose (to-world-pose (:creation-pose @session))]
+    (let [world-pose (:scene-pose @session)]
       ;; Show turtle indicator on the mesh's current (attached) creation-pose
       (viewport/set-turtle-source! {:custom world-pose})
       (viewport/update-turtle-pose world-pose)

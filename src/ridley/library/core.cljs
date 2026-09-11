@@ -11,14 +11,23 @@
 ;; ============================================================
 
 (defn- extract-def-names
-  "Extract public def/defn names from source string.
-   Excludes defn- (private) definitions.
+  "Extract public def/defn/defonce names from source string.
+   Excludes defn- and anything tagged ^:private / ^{:private true}.
+   defmacro is not exported: a macro works inside the library that defines
+   it, but cannot cross into the caller's context as a value (the loader
+   hands values over, and a macro is not one). defmulti/defprotocol/defrecord
+   are not exported either.
    Only matches defs at the start of a line (ignores commented-out code)."
   [source]
   (let [;; (?m) = multiline: ^ matches start of each line
-        ;; Match (def name or (defn name but NOT (defn- name
-        matches (re-seq #"(?m)^\s*\(def(?:n)?\s+(?:\^[^\s]+\s+)?([a-zA-Z*+!_?<>=][a-zA-Z0-9*+!_?<>=\-']*)" source)]
-    (set (map second matches))))
+        ;; Match (def name / (defn name / (defonce name — but NOT (defn- name;
+        ;; group 1 = the optional metadata (^:tag or ^{…}), group 2 = the name
+        matches (re-seq #"(?m)^\s*\(def(?:n|once)?\s+(?:(\^(?:\{[^}]*\}|[^\s]+))\s+)?([a-zA-Z*+!_?<>=][a-zA-Z0-9*+!_?<>=\-']*)" source)]
+    (into #{}
+          (keep (fn [[_ meta-tag name]]
+                  (when-not (and meta-tag (re-find #":private\b" meta-tag))
+                    name)))
+          matches)))
 
 ;; ============================================================
 ;; Dependency validation

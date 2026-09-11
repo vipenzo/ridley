@@ -146,7 +146,7 @@
         (reset! continuous-mode? false)
         (state/update-voice! {:listening? false
                               :partial-transcript ""
-                              :pending-speech "Microfono non autorizzato"}))
+                              :pending-speech "Microphone not allowed"}))
       ;; Other errors: log but let on-end-continuous handle restart
       ;; Stop only after repeated failures
       (do
@@ -157,7 +157,7 @@
           (reset! continuous-mode? false)
           (state/update-voice! {:listening? false
                                 :partial-transcript ""
-                                :pending-speech (str "Errore: " error)}))))))
+                                :pending-speech (str "Error: " error)}))))))
 
 ;; ============================================================
 ;; Error handler (single mode)
@@ -166,12 +166,12 @@
 (defn- on-error-single [event]
   (let [error (.-error event)
         msg (case error
-              "no-speech" "Nessun audio rilevato"
-              "network" "Errore di rete"
-              "not-allowed" "Microfono non autorizzato"
-              "audio-capture" "Nessun microfono trovato"
+              "no-speech" "No audio detected"
+              "network" "Network error"
+              "not-allowed" "Microphone not allowed"
+              "audio-capture" "No microphone found"
               "aborted" nil
-              (str "Errore: " error))]
+              (str "Error: " error))]
     (js/console.warn "Speech recognition error:" error)
     (state/update-voice! {:listening? false
                           :partial-transcript ""

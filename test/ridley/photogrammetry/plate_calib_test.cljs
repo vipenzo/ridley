@@ -189,7 +189,7 @@
           r (pc/calibrate broken nom)]
       (is (string? (:error r)))
       (is (nil? (:marks r)))
-      (is (re-find #"registrazione" (:error r))
+      (is (re-find #"registration" (:error r))
           "the message must point at the registration, not at the plate"))))
 
 (deftest the-refined-poses-come-back

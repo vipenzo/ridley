@@ -583,17 +583,17 @@ La catena si legge dall'alto in basso: cerchio, poi scanalature, poi rastremazio
 
 ### Il vincolo di shell
 
-`shell` e `woven-shell` devono essere **ultime** nella catena di composizione. Il motivo è tecnico: `shell` annota la shape con metadata (`:shell-mode`) che il loft legge per generare i doppi anelli (esterno + interno). Le altre shape-fn non conoscono questo metadata e lo perderebbero.
+`shell` e `woven-shell` vanno messe **in fondo** alla catena di composizione. Il motivo: `shell` annota la shape con metadata (`:shell-mode` e i valori di spessore, uno per punto) che il loft legge per generare i doppi anelli (esterno + interno), e li calcola sul profilo che riceve; una shape-fn che lo deforma dopo (`fluted`, `noisy`) lascia i valori dov'erano, sui punti spostati.
 
 ```clojure
-;; tapered è l'eccezione: può stare dopo shell
+;; tapered può stare anche dopo shell
 (-> (circle 20 64)
     (fluted :flutes 12 :depth 1)
     (shell :thickness 2 :style :voronoi :cells 8 :rows 6)
     (tapered :to 0.6))
 ```
 
-L'eccezione è `tapered`: `tapered` *dopo* `shell` funziona perché `tapered` preserva il metadata di shell. In pratica, la regola si riduce a: metti `shell` o `woven-shell` dopo le shape-fn che modificano la geometria del profilo (`fluted`, `twisted`, `noisy`, ecc.), ma `tapered` può stare sia prima sia dopo.
+Tutte le shape-fn built-in conservano il metadata di shell (trasformano i punti e lasciano il resto), quindi `tapered`, `twisted` e simili *dopo* `shell` funzionano; quello che cambia è il senso. In pratica: metti `shell` o `woven-shell` dopo le shape-fn che modificano la geometria del profilo (`fluted`, `noisy`, ecc.), mentre `tapered` e `twisted`, che scalano e ruotano il profilo intero, possono stare sia prima sia dopo. Un'eccezione vera è `morphed`: prende due shape statiche, e con una shape-fn come primo argomento dà errore.
 
 ### Il caso di embroid
 
@@ -625,11 +625,13 @@ Qui le due shape-fn da sole non avrebbero bisogno di risoluzione: ma `twisted` f
 
 ## Thickness-fn: controllare lo spessore delle pareti
 
+Questa sezione insegna a disegnare un pattern; il contratto esatto della funzione (il dominio dell'angolo, cosa succede al valore restituito, il caso di `woven-shell`) è nel capitolo 19.2.
+
 Nella sezione su `shell` abbiamo usato gli stili built-in (`:voronoi`, `:lattice`, `:checkerboard`, `:pattern`). Ognuno di quegli stili è una thickness-fn preconfezionata: una funzione che dice al loft quanto deve essere spessa la parete in ogni punto.
 
 La thickness-fn ha la firma `(fn [angle t] -> 0..1)`. I due argomenti sono le coordinate di un punto sulla superficie del guscio:
 
-- `angle`: posizione angolare sul profilo, in radianti (da 0 a 2π per un profilo chiuso). Dice *dove* sei attorno alla sezione trasversale.
+- `angle`: posizione angolare sul profilo, in radianti, da -π a π (è `atan2` attorno al centroide della shape). Dice *dove* sei attorno alla sezione trasversale.
 - `t`: posizione lungo il percorso (da 0 a 1). Dice *dove* sei lungo l'estrusione.
 
 Il valore restituito è un coefficiente di spessore: 1 significa parete piena (spessore = `:thickness`), 0 significa nessuna parete (apertura). Valori intermedi producono pareti più sottili. Valori sotto la soglia `:threshold` (default 0.05) vengono arrotondati a 0 per evitare triangoli degenerati.
@@ -730,6 +732,8 @@ Per pattern che sono varianti di uno stile built-in (una griglia con aperture pi
 
 
 ## Scrivere una shape-fn propria
+
+Qui c'è il gesto; il contratto che una shape-fn deve rispettare, e dove si rompe, è nel capitolo 19.1.
 
 Le shape-fn built-in coprono i casi più comuni. Quando servono variazioni che nessuna built-in esprime, si può scrivere una shape-fn custom con la funzione `shape-fn`.
 

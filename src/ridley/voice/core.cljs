@@ -295,7 +295,7 @@
   (let [{:keys [insert speak get-script]} @handlers]
     (if-not (settings/ai-configured?)
       (do (js/console.warn "AI mode: not configured")
-          (when speak (speak "AI non configurato. Apri le impostazioni.")))
+          (when speak (speak "AI not configured. Open the settings.")))
       (do
         (js/console.log "AI generating from:" transcript)
         (when speak (speak "Genero..."))
@@ -308,8 +308,8 @@
                            (do (insert {:target :script :code code :position :after-current-form})
                                (ai/add-entry! transcript code)
                                (js/console.log "AI generated:" code)
-                               (when speak (speak "Codice inserito")))
-                           (when speak (speak "Nessun codice generato")))
+                               (when speak (speak "Code inserted")))
+                           (when speak (speak "No code generated")))
 
                          :clarification
                          (do (js/console.log "AI clarification:" question)
@@ -319,7 +319,7 @@
                          (when speak (speak "Risposta AI non valida")))))
               (.catch (fn [err]
                         (js/console.error "AI generation error:" err)
-                        (when speak (speak (str "Errore: " (.-message err))))))))))))
+                        (when speak (speak (str "Error: " (.-message err))))))))))))
 
 ;; ============================================================
 ;; Utterance handling

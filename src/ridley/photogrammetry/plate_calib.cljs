@@ -274,9 +274,9 @@
   ([views nominal] (cross-validate views nominal {}))
   ([views nominal opts]
    (if (< (count views) 4)
-     {:error (str "per la verifica servono almeno 4 viste (ne ho " (count views)
-                  "): togliendone una devono restarne tre, che è il minimo per "
-                  "misurare il piatto")}
+     {:error (str "the check needs at least 4 views (I have " (count views)
+                  "): removing one must leave three, the minimum to "
+                  "measure the plate")}
      (let [per (vec (keep-indexed
                      (fn [i held]
                        (let [rest-views (vec (concat (subvec (vec views) 0 i)
@@ -289,7 +289,7 @@
                                {:idx (:idx held) :nominal-px a :measured-px b})))))
                      views))]
        (if (empty? per)
-         {:error "nessuna vista ha potuto essere tenuta fuori e rimisurata"}
+         {:error "no view could be held out and re-measured"}
          (let [pool (fn [k] (Math/sqrt (/ (reduce + 0.0 (map #(let [x (k %)] (* x x)) per))
                                           (count per))))
                nom (pool :nominal-px)
@@ -332,14 +332,14 @@
                    :or {iterations default-iterations mode default-mode}}]
    (cond
      (< (count views) 3)
-     {:error (str "la calibrazione del piatto ha bisogno di almeno TRE viste "
-                  "registrate (ne ho " (count views) "): con due, i mark e le pose "
-                  "si accordano su qualunque cosa e non resta niente da misurare")}
+     {:error (str "plate calibration needs at least THREE registered "
+                  "views (I have " (count views) "): with two, the marks and the poses "
+                  "agree on anything and nothing is left to measure")}
 
      (some (fn [j] (< (count (filter #(get (:picks %) j) views)) 2))
            (range (count nominal)))
-     {:error (str "almeno un mark è visto da meno di due viste: senza due raggi "
-                  "non ha una posizione")}
+     {:error (str "at least one mark is seen by fewer than two views: without two rays "
+                  "it has no position")}
 
      :else
      (let [before (reproject-rms views nominal)]
@@ -386,12 +386,12 @@
                  gauge (/ (reduce + 0.0 (map (fn [p] (la/v-norm (la/v-sub p o))) nominal))
                           (count nominal))]
              (if (> worst (* max-deviation-frac gauge))
-               {:error (str "il risultato non descrive un piatto: il mark più spostato "
-                            "si allontana di " (.toFixed worst 1) " mm dal modello "
-                            "(il limite è " (.toFixed (* max-deviation-frac gauge) 1)
-                            " mm). Non è un piatto storto, è una registrazione "
-                            "sbagliata a monte: controlla le foto con il residuo più "
-                            "alto e rifai la rifinitura congiunta prima di ricalibrare.")
+               {:error (str "the result does not describe a plate: the most displaced mark "
+                            "moves away by " (.toFixed worst 1) " mm from the model "
+                            "(the limit is " (.toFixed (* max-deviation-frac gauge) 1)
+                            " mm). It is not a warped plate, it is a registration "
+                            "wrong upstream: check the photos with the highest "
+                            "residual and redo the joint refinement before recalibrating.")
                 :worst-mm worst}
                {:marks marks
                 :poses (mapv :pose vs)

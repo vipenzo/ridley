@@ -547,12 +547,12 @@
         bad (filter #(> (:delta %) angle-tol-deg) pairs)]
     (when (seq bad)
       (let [w (apply max-key :delta bad)]
-        (str "gli agganci non possono essere le stesse zone: fra " (:a w) " e " (:b w)
-             " le facce formano " (js/Math.round (:from w)) "° in una sessione e "
-             (js/Math.round (:to w)) "° nell'altra, e l'angolo fra due facce non "
-             "cambia muovendo l'oggetto. Controlla di aver marcato le stesse zone "
-             "in tutte e due — su un pezzo con facce parallele è facile prendere "
-             "quella sbagliata")))))
+        (str "the anchors cannot be the same zones: between " (:a w) " e " (:b w)
+             " the faces form " (js/Math.round (:from w)) "° in one session and "
+             (js/Math.round (:to w)) "° in the other, and the angle between two faces does not "
+             "change by moving the object. Check that you marked the same zones "
+             "in both — on a part with parallel faces it is easy to take "
+             "the wrong one")))))
 
 (def min-baseline-mm
   "POINT anchors closer together than this do not span the object: the rotation
@@ -607,14 +607,14 @@
                                  min-baseline-mm))]
      (cond
        (< (count anchors) 2)
-       {:error (str "servono almeno DUE agganci fra le due sessioni (ne ho trovato "
-                    (count anchors) "). Con i piani ne servono TRE, con le normali "
-                    "che guardano in direzioni diverse")}
+       {:error (str "at least TWO anchors between the two sessions are needed (I found "
+                    (count anchors) "). With planes THREE are needed, with normals "
+                    "looking in different directions")}
 
        short-baseline?
-       {:error (str "i mark-punto di aggancio sono troppo vicini fra loro (meno di "
-                    min-baseline-mm " mm): la rotazione che determinano è rumore. "
-                    "Prendine due lontani, agli estremi dell'oggetto")}
+       {:error (str "the anchor point-marks are too close to each other (less than "
+                    min-baseline-mm " mm): the rotation they determine is noise. "
+                    "Take two far apart, at the ends of the object")}
 
        ;; BEFORE fitting: the angles between the normals must already agree.
        ;; Fitting first and judging after does not work here — the distance part
@@ -659,9 +659,9 @@
                                                       (m/normalize to-dir)))))
                                (mapv :name)))]
          (if (empty? cands)
-           {:error (str "i mark di aggancio non determinano una rotazione: sono allineati, "
-                        "oppure le loro normali sono parallele fra loro. "
-                        "Serve un aggancio che guardi in un'altra direzione")}
+           {:error (str "the anchor marks do not determine a rotation: they are collinear, "
+                        "or their normals are parallel to each other. "
+                        "An anchor looking in another direction is needed")}
            (let [res {:params (:params winner) :cost (:cost winner)}
                  rt (:rt winner)
                  pa (per-anchor rt anchors)
@@ -669,7 +669,7 @@
              ;; 'not enough constraints' comes BEFORE 'more than one answer':
              ;; when both are true, the first is the more useful thing to be told.
              (if (underdetermined? rfn (:params res))
-               {:error (str "questi agganci non fissano tutto il movimento: "
+               {:error (str "these anchors do not pin down the whole motion: "
                             (if (and (>= (count planes) 2) (empty? points))
                               ;; Naming the point-mark first was writing a cheque the
                               ;; app cannot cash: nothing in the UI produces a mark
@@ -681,36 +681,36 @@
                               ;; know that from here). So the reachable remedy goes
                               ;; first, and the point is named as what it is: something
                               ;; you can only write by hand, if you have the numbers.
-                              (str "due piani lasciano libero lo scorrimento lungo la loro "
-                                   "intersezione. Il modo più semplice di chiuderlo è uno "
-                                   "SPIGOLO: misuralo in tutte e due le sessioni e "
-                                   "chiamalo con lo stesso nome fra gli :edges — vale come "
-                                   "aggancio da solo, e non chiede di appaiare nessun punto "
-                                   "fra le foto. In alternativa un terzo piano con la "
-                                   "normale in un'altra direzione")
-                              (str "gli agganci sono allineati o le normali sono tutte "
-                                   "parallele fra loro. Serve un aggancio fuori da quella "
-                                   "direzione")))}
+                              (str "two planes leave the sliding along their "
+                                   "intersection free. The simplest way to close it is an "
+                                   "EDGE: measure it in both sessions and "
+                                   "call it by the same name among the :edges — it counts as "
+                                   "an anchor on its own, and asks you to pair no point "
+                                   "between the photos. Alternatively a third plane with its "
+                                   "normal in another direction")
+                              (str "the anchors are collinear or the normals are all "
+                                   "parallel to each other. An anchor outside that "
+                                   "direction is needed")))}
                (if rival
-                 {:error (str "questi agganci ammettono DUE sistemazioni lontane "
+                 {:error (str "these anchors admit TWO placements "
                               (js/Math.round (la/v-norm (la/v-sub (transform-point (:rt rival) probe)
                                                                   (transform-point rt probe))))
-                              " mm l'una dall'altra, e combaciano ugualmente bene: su un "
-                              "pezzo quasi simmetrico sono l'una lo specchio dell'altra. "
-                              "Tre facce da sole non bastano MAI a distinguerle: una mezza "
-                              "rotazione attorno a una qualunque delle tre normali riporta "
-                              "le tre facce su se stesse. Non è una questione di "
-                              "precisione, e non posso sceglierne una a caso. Serve un "
-                              "aggancio ASIMMETRICO: un dettaglio che esista da una parte "
-                              "sola — uno spigolo, un rilievo, una tacca — marcato in "
-                              "entrambe le sessioni e dichiarato punto vero con "
-                              "`(plane-mark {… :point? true})`. In alternativa una quarta "
-                              "faccia messa di traverso"
+                              " mm apart from each other, and they match equally well: on a "
+                              "nearly symmetric part they are each other's mirror. "
+                              "Three faces alone are NEVER enough to tell them apart: a half "
+                              "turn around any of the three normals brings "
+                              "the three faces back onto themselves. It is not a matter of "
+                              "precision, and I cannot pick one at random. An "
+                              "ASYMMETRIC anchor is needed: a detail that exists on one side "
+                              "only — an edge, a relief, a notch — marked in "
+                              "both sessions and declared a true point with "
+                              "`(plane-mark {… :point? true})`. Alternatively a fourth "
+                              "face set crosswise"
                               (when (seq dissenting)
-                                (str ". Per inciso: il verso di "
+                                (str ". Incidentally: the sense of "
                                      (apply str (interpose " e " (map str dissenting)))
-                                     " contraddice quello degli altri mark, quindi quello "
-                                     "è comunque da rivedere")))}
+                                     " contradicts that of the other marks, so that "
+                                     "needs a second look anyway")))}
                  (assoc rt
                         :rvec (vec (take 3 (:params res)))
                         :n (count anchors)
@@ -829,14 +829,14 @@
         marks (second entry)
         edges (nth entry 2 nil)]
     (cond
-      (nil? lbl) {:missing (str ref " non dice a quale sessione appartiene: "
-                                "scrivilo come :etichetta/nome-del-mark")}
-      (nil? entry) {:missing (str "l'etichetta :" (name lbl) " di " ref
-                                  " non è fra le sessioni passate")}
+      (nil? lbl) {:missing (str ref " does not say which session it belongs to: "
+                                "write it as :label/mark-name")}
+      (nil? entry) {:missing (str "the label :" (name lbl) " di " ref
+                                  " is not among the sessions passed")}
       (get marks nm) [lbl nm (get marks nm) :mark]
       (get edges nm) [lbl nm (get edges nm) :edge]
-      :else {:missing (str "il mark " ref " non esiste in quella sessione "
-                           "(né fra i :marks né fra gli :edges)")})))
+      :else {:missing (str "mark " ref " does not exist in that session "
+                           "(neither among the :marks nor among the :edges)")})))
 
 (defn declared-anchors
   "Correspondences between the reference session and the one labelled `lbl`,
@@ -861,10 +861,10 @@
                                    ;; direction along an edge. Refuse by name.
                                    (if (not= (nth to 3) (nth from 3))
                                      (do (swap! mismatch conj
-                                                (str "l'aggancio fra " (second to) " e " nm
-                                                     " mette insieme un piano e uno spigolo: "
-                                                     "sono due cose diverse e non si "
-                                                     "corrispondono"))
+                                                (str "the anchor between " (second to) " e " nm
+                                                     " pairs a plane with an edge: "
+                                                     "they are two different things and do not "
+                                                     "correspond"))
                                          nil)
                                      (assoc ((if (= :edge (nth to 3)) edge-anchor-of anchor-of)
                                              nm (nth to 2) (nth from 2))

@@ -42,7 +42,7 @@ loft begins): `:cap-top` closes the far end, `:cap-bottom` the near one.
 | `shape-or-fn` | — | Base profile (shape or shape-fn). |
 | `:thickness` | `2` | Wall thickness. Outer ring offset outward by `thickness/2`, inner ring inward by the same amount. |
 | `:style` | `:solid` | Wall pattern: `:solid`, `:lattice`, `:checkerboard`, `:voronoi`, `:pattern`. Ignored when `:fn` is supplied. |
-| `:fn` | — | Custom thickness function `(fn [a t] -> 0..1)` overriding `:style`. `a` = angular position (radians), `t` = path progress. |
+| `:fn` | — | Custom thickness function `(fn [a t] -> 0..1)` overriding `:style`. `a` = `atan2` angle around the profile's centroid, in `(-π, π]` (with `:style :pattern` alongside, the arc-length fraction `u` in 0..1 instead); `t` = path progress. The isocontour cut (`:softness`) is off for `:fn` unless you pass a value > 0. |
 | `:threshold` | `0.05` | Values below this snap to 0 (no wall). |
 | `:invert?` | `false` | Swap solid/empty (`v → 1 - v`): e.g. turn `:lattice` bricks into brick-shaped openings, or a `:voronoi` wireframe into solid cells. Works with every style and with custom `:fn`. |
 | `:cap-top` | — | Close the **arrival** end (where the path finishes). Number (solid cap) or map `{:thickness :style …}` (patterned cap). |

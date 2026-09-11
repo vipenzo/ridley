@@ -201,6 +201,9 @@
    'twisted                  sfn/twisted
    'displaced                sfn/displaced
    'capped                   sfn/capped
+   'shape-centroid           sfn/shape-centroid
+   'smoothstep               sfn/smoothstep
+   'current-path-length      (fn [] sfn/*path-length*)
    ;; Impl functions (used by slimmed macros)
    'extrude-impl        macro-impl/extrude-impl
    'extrude-closed-impl macro-impl/extrude-closed-impl

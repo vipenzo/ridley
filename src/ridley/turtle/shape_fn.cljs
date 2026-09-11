@@ -19,8 +19,11 @@
 ;; ============================================================
 
 (def ^:dynamic *path-length*
-  "Total path length in world units, bound by loft during shape-fn evaluation.
-   Used by capped to auto-calculate transition fraction."
+  "Length of the sweep in world units, bound around shape-fn evaluation by
+   loft (the path's length) and by revolve (the arc the t=0 profile's centroid
+   travels: |angle| · its distance from the axis). nil outside a sweep.
+   Read by capped (auto transition fraction), heightmap (:fit :physical) and
+   embroid; exposed to user shape-fns as (current-path-length)."
   nil)
 
 ;; ============================================================
@@ -38,7 +41,12 @@
   (let [m (v2-mag [x y])]
     (if (< m 0.0001) [0 0] [(/ x m) (/ y m)])))
 
-(defn- shape-centroid [shape]
+(defn ^:export shape-centroid
+  "Centroid of a shape's outer contour (the mean of its points), as [x y] —
+   the reference `shell` takes its thickness-fn angles from and
+   `displace-radial` its directions. Exported so a custom thickness-fn or
+   displacement can use the same one."
+  [shape]
   (let [pts (:points shape)
         n (count pts)]
     (if (zero? n)
@@ -58,17 +66,29 @@
 (defn ^:export shape-fn
   "Create a shape-fn from a base shape (or shape-fn) and a transform function.
    transform: (fn [shape t] -> shape) where t in [0, 1].
-   Returns a callable (fn [t] -> shape) with :shape-fn metadata."
+   Returns a callable (fn [t] -> shape) with metadata {:type :shape-fn :base base}.
+
+   The base must be a 2D shape or another shape-fn. A bare transform — the
+   PARTIAL form of a combinator, e.g. (tapered :to 0.5) — is a function too,
+   but it has no profile to start from: it is refused here with a message
+   instead of being wrapped as if it were a static shape (which used to make
+   the loft return nil, with no error)."
   [base transform]
+  (when-not (or (shape/shape? base) (shape-fn? base))
+    (throw (js/Error.
+            (str "shape-fn: the base must be a 2D shape or a shape-fn, got "
+                 (cond
+                   (fn? base)
+                   (str "a bare transform — a partial form such as (tapered :to 0.5) "
+                        "has no profile; give it one: (tapered (circle 20) :to 0.5)")
+                   (map? base) (str "a map with :type " (pr-str (:type base)))
+                   :else (pr-str base))))))
   (let [evaluate (if (shape-fn? base)
                    (fn [t] (transform (base t) t))
                    (fn [t] (transform base t)))]
     (with-meta evaluate
       {:type :shape-fn
-       :base base
-       :point-count (if (shape-fn? base)
-                      (:point-count (meta base))
-                      (count (:points base)))})))
+       :base base})))
 
 ;; ============================================================
 ;; Partial form for profile combinators
@@ -769,7 +789,12 @@
                             tile-x tile-y offset-x offset-y]
                      :or {amplitude 1.0 center false direction :circumference
                           fit :auto scale 1.0 tile-x 1 tile-y 1}}]
-  (let [base      (if (shape-fn? shape-or-fn) (:base (meta shape-or-fn)) shape-or-fn)
+  (let [;; the ROOT profile of the chain: (-> (circle 20) (fluted …) (tapered …)
+        ;; (heightmap …)) has a shape-fn as its immediate :base, and the
+        ;; perimeter of a function is nil — which used to fall through to the
+        ;; 1.0 default and place a :physical heightmap at a fraction of its size
+        base      (loop [b shape-or-fn]
+                    (if (shape-fn? b) (recur (:base (meta b))) b))
         physical? (case fit
                     :physical true
                     :stretch  false
@@ -917,8 +942,10 @@
     [(fract (* (Math/sin h1) 43758.5453))
      (fract (* (Math/sin h2) 22578.1459))]))
 
-(defn- smoothstep
-  "Hermite smoothstep: 0 below e0, 1 above e1, smooth (C1) in between."
+(defn ^:export smoothstep
+  "Hermite smoothstep: 0 below e0, 1 above e1, smooth (C1) in between —
+   the ramp every built-in :softness draws. Exported so a custom thickness-fn
+   can give its openings the same soft edge: (smoothstep 0.2 0.4 x)."
   [e0 e1 x]
   (if (<= e1 e0)
     (if (< x e0) 0.0 1.0)
@@ -1269,6 +1296,13 @@
    (shell shape :thickness 2 :style :pattern :pattern (circle 6))  ; Tiled motif holes
    (shell shape :thickness 2 :fn (fn [a t] ...))                   ; Custom function
 
+   The :fn contract: (fn [a t] -> 0..1). a = the point's atan2 angle around the
+   profile's centroid (shape-centroid), in (-π, π]; t = sweep progress (0..1).
+   1 = full wall, 0 = opening; values below :threshold snap to 0. With
+   :style :pattern alongside, the first argument is the arc-length fraction u
+   (0..1) instead of the angle — the parametrization :pattern tiles by. The
+   isocontour cut is OFF for a custom :fn unless you pass :softness > 0.
+
    Add :invert? true to swap solid/empty (e.g. turn :lattice bricks into a
    shell with brick-shaped openings, or :voronoi wireframe into solid cells).
 
@@ -1321,10 +1355,20 @@
         ;; Exception: :lattice + :invert? keeps the hard cut — its longit=0
         ;; band-boundary plateau doesn't close manifold under the isocontour
         ;; build when inverted (voronoi is fine inverted).
-        eff-soft (if (and (contains? #{:voronoi :lattice :pattern} style)
-                          (not (and (= style :lattice) invert?)))
+        eff-soft (cond
+                   ;; a custom :fn is a field of its own: the isocontour cut is
+                   ;; opt-in — any :softness > 0 switches it on (the value itself
+                   ;; only shapes the built-in styles' ramps). Before 2026-09-10
+                   ;; :fn could get it only by ALSO naming a :style, which then
+                   ;; did nothing but flip this flag.
+                   (:fn opts)
+                   (or (:softness opts) 0)
+
+                   (and (contains? #{:voronoi :lattice :pattern} style)
+                        (not (and (= style :lattice) invert?)))
                    (or (:softness opts) 0.6)
-                   0)
+
+                   :else 0)
         opts*    (assoc opts :softness eff-soft)
         base-fn (or (:fn opts)
                     (style->thickness-fn (or style :solid) opts*))
@@ -1527,6 +1571,12 @@
      :softness   isocontour ramp; >0 (default 0.6) = smooth openings,
                  0 = hard staircased cut
      :seed       :voronoi jitter seed (default 42)
+     :fn         (fn [u t] -> 0..1): your own field in place of a :style —
+                 u = arc-length fraction along the wall (0..1), t = sweep
+                 (0..1); 1 = strut, 0 = opening, cut along the 0.5 iso-line.
+                 :margin/:border/:softness do not apply to it: keep a solid
+                 frame yourself (return 1 near the borders) where the panel
+                 must stay attached to its neighbours.
 
    :style :pattern options (world units):
      :pattern    a 2D shape used as the OPENING motif, tiled across the wall
@@ -1580,12 +1630,14 @@
               (fn [shp t]
                 (let [path-len (or *path-length* length)
                       aspect (/ path-len (max 1e-6 length))
-                      field (panel-field style (assoc wall
+                      ;; a custom :fn replaces the whole field (see docstring)
+                      field (or (:fn wall)
+                                (panel-field style (assoc wall
                                                       :aspect aspect
                                                       :margin margin
                                                       :softness softness
                                                       :u-length length
-                                                      :v-length path-len))
+                                                      :v-length path-len)))
                       ;; Cap columns are forced solid (1.0) so no perforation
                       ;; lands on the rounded/squared ends.
                       values (vec (map-indexed

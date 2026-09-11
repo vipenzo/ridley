@@ -384,6 +384,12 @@
   ([shape-fn-val] (pure-revolve-shape-fn shape-fn-val 360))
   ([shape-fn-val angle]
    (let [base-shape (shape-fn-val 0)
+         ;; the sweep's own length, for capped's auto-fraction and heightmap's
+         ;; :fit :physical (they read *path-length*): the arc the t=0 profile's
+         ;; centroid travels — |angle| · its distance from the axis, which is
+         ;; x in the profile plane (revolve turns around the profile's Y)
+         [cx _] (sfn/shape-centroid base-shape)
+         sweep-length (* (js/Math.abs (* angle (/ js/Math.PI 180))) (js/Math.abs cx))
          current-turtle @@state/turtle-state-var
          initial-state (if current-turtle
                          (-> (turtle/make-turtle)
@@ -395,7 +401,8 @@
                              (assoc :preserve-up (:preserve-up current-turtle))
                              (assoc :reference-up (:reference-up current-turtle)))
                          (turtle/make-turtle))
-         result-state (turtle/revolve-shape initial-state base-shape angle shape-fn-val)
+         result-state (binding [sfn/*path-length* (when (pos? sweep-length) sweep-length)]
+                        (turtle/revolve-shape initial-state base-shape angle shape-fn-val))
          mesh (last (:meshes result-state))]
      mesh)))
 

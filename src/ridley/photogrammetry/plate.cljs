@@ -135,12 +135,12 @@
       :or {h 3.0}}]
   (when-not (and (number? d) (pos? d))
     (throw (js/Error.
-            (str "registration-plate: dimmi il diametro del piatto, per esempio "
+            (str "registration-plate: give me the plate's diameter, for example "
                  "(registration-plate :d 300).\n"
-                 "Non c'è un default apposta: il diametro è l'unico numero che lega "
-                 "il modello all'oggetto che hai sul tavolo, e se è sbagliato NON si "
-                 "presenta come un errore — la registrazione riesce lo stesso, con "
-                 "residui ottimi, e tutte le misure escono scalate in silenzio."))))
+                 "There is deliberately no default: the diameter is the only number tying "
+                 "the model to the object on your table, and if it is wrong it does NOT "
+                 "show up as an error — registration succeeds anyway, with "
+                 "excellent residuals, and every measurement comes out scaled, silently."))))
   (let [radius (/ d 2.0)
         crown-r (crown-radius d)
         disc (or disc (disc-diameter d))

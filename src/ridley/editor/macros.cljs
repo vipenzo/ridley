@@ -1361,11 +1361,11 @@
          (vec (map (fn [k] (with-export-name (get-mesh k) k)) parts)))))
    (defn- export-name->kw [x] (if (keyword? x) x (keyword (str x))))
    (defn- export-nothing! [what]
-     (throw (js/Error. (str \"export: non c'è niente da esportare per \" what
-                            \". In scena ci sono: \"
+     (throw (js/Error. (str \"export: nothing to export for \" what
+                            \". In the scene there are: \"
                             (pr-str (vec (registered-names)))
-                            \". Se hai registrato un vettore di mesh, il nome è \"
-                            \"quello che hai scritto nel register.\"))))
+                            \". If you registered a vector of meshes, the name is \"
+                            \"the one you wrote in the register.\"))))
    (defn- export-default-name [arg]
      (cond
        (keyword? arg) (name arg)

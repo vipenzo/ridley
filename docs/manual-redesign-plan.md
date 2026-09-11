@@ -165,6 +165,7 @@ Curare         13. Testo
 Concludere     17. Esportare e stampare
 
 Acquisire      18. Acquisire e sostituire
+               20. Acquisire dalle foto
 
 Estendere      19. Estendere Ridley
 ```
@@ -343,14 +344,24 @@ Guide tematiche
     18.5 Costruire e confrontare: mesh-board
     18.6 La caduta dell'impalcatura
 
-19. Estendere Ridley                                (espansione differita)
-    19.1 Scrivere shape-fn personalizzate
-    19.2 Scrivere thickness-fn personalizzate
-    19.3 Funzioni geometriche di alto livello
-    19.4 Manipolazione programmatica di percorsi
-    19.5 Pattern Clojure avanzati per la modellazione
-    19.6 Il sistema librerie sotto il cofano (modello SCI, namespace, limiti,
+19. Estendere Ridley                                (scritto il 2026-09-10)
+    19.1 Il contratto delle shape-fn
+    19.2 Il contratto delle thickness-fn
+    19.3 Registrare e ispezionare (registry, hook, collezioni: ex Internals §6.3-6.5)
+    19.4 Il path come dato
+    19.5 Le librerie sotto il cofano (modello SCI, namespace, limiti,
          differenze col Clojure "vero", scope globale)
+
+20. Acquisire dalle foto                            (scritto il 2026-09-06)
+    20.1 Fotografie come strumenti di misura
+    20.2 La gabbia di registrazione
+    20.3 La sessione fotografica
+    20.4 Registrare le camere: edit-acquire
+    20.5 Gli ancoraggi: il tasto d
+    20.6 Scattare dal vivo
+    20.7 Il palcoscenico
+    20.8 Ricalcare sulla foto
+    20.9 La caduta dell'impalcatura
 
 Galleria (decisione differita: probabilmente assorbita come case-study)
 ```

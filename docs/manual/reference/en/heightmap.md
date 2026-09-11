@@ -30,9 +30,11 @@ fit modes:
   heightmap that knows its footprint (e.g. from `text-heightmap`, which
   carries `:phys-width`/`:phys-height`) lands at that size: `:size 5` text
   is ~5 units tall on the wall, not stretched to fill it. The surface's
-  circumference is taken from the base shape's perimeter and its height
-  from the loft's own length, so coverage derives from the ratio of the
-  two — no manual normalisation.
+  circumference is taken from the perimeter of the chain's root profile
+  (the plain shape under every shape-fn of a `->` chain) and its height
+  from the sweep's own length (`current-path-length`: the path in a loft,
+  the centroid's arc in a revolve), so coverage derives from the ratio of
+  the two — no manual normalisation.
 
 `:fit :auto` (the default) picks `:physical` when the heightmap knows its
 size, else `:stretch`.
@@ -58,9 +60,11 @@ building the `{:type :heightmap …}` map by hand.
   only, default `1.0`). Use it to enlarge/shrink text without re-sizing
   the source.
 - `:surface-width` — circumference override (`:physical`). Default: the
-  perimeter of the base shape (`shape-perimeter`).
+  perimeter of the chain's root profile (`shape-perimeter` of the plain
+  shape under every shape-fn).
 - `:surface-height` — path-length override (`:physical`). Default: the
-  loft's own total length.
+  sweep's own length (`current-path-length`); `1.0` when the shape-fn is
+  evaluated outside a `loft`/`revolve`.
 - `:tile-x` / `:tile-y` — copies across the reading / height direction.
   An integer places exactly that many; `:fill` packs as many whole copies
   as the surface holds, snapping the cell so it tiles seamlessly (in

@@ -156,7 +156,6 @@ To skip the scene and write all three files at once:
 
 ```clojure
 (save-3mf cage "~/Downloads")      ; three files, one folder dialog
-(save-cradle 176 "~/Downloads")
 ```
 
 **One ring per file, not one file with six objects.** A ring and its discs stay
@@ -183,12 +182,13 @@ direction — so a lip there would block the assembly rather than the ring. The
 four that exist sit outside the partner's outer radius, where nothing ever
 passes.
 
-Glue the **smallest and middle** rings first: their own tabs impose their
-rotation, so those two are fixed by construction. Then anchor the part, and
-close with the **largest** ring, whose rotation is the one nobody can impose
-(see *The rotation you cannot impose*) — doing it last leaves the whole assembly
-with exactly one free number instead of three. Use **epoxy**, not cyanoacrylate:
-the cage gets handled a great deal while being turned.
+Gluing order, gen 2 (seat pockets and the two keys, `examples/print-cage.clj`):
+the **two largest** rings to each other first — every tab drops into its seat
+pocket and the keys refuse the wrong rotations and flips, so if a ring will not
+sit, it is turned — then the part at the centre, and the **smallest** ring last.
+(The gen-1 order was the reverse — small and middle first, the largest last,
+because its rotation was the one nobody could impose; the keys closed that.)
+Any cyanoacrylate does: six lap joints, each seated before it is glued.
 
 The face against the build plate comes out sharper than the other one, and there
 is no way to have both in a single print. That is expected: what the printer gets
@@ -259,7 +259,7 @@ pressing on its face, and it can turn while staying perfectly seated.
 Nominally every joint lands exactly **halfway between two marks** (the crowns
 are turned by half a step for this reason, giving 15° of clearance at twelve
 marks), and that is the visual check: a contact point sitting *on* a disc means
-that ring is round. But finding that midpoint by eye while the epoxy sets is
+that ring is round. But finding that midpoint by eye while the glue sets is
 hard, and at r=85mm **one degree is 1.5mm**. So glue it as it comes, and treat
 each ring's rotation as a number to measure — the same move `plate-calib` makes
 for the plate, shifting the difficulty off the fabrication and onto an
@@ -311,7 +311,7 @@ describes the one you built.
 The joints leave one more freedom than the phase: a ring can be glued **turned
 over**, face for face, and still seat (verified physically on the reference
 cage, 2026-08-28 — its Y ring is mounted that way). Like an unlucky phase this
-is not a defect to fix by reprinting: the cage is epoxied, the mounting is a
+is not a defect to fix by reprinting: the cage is glued, the mounting is a
 constant of the object, and the model can carry it:
 
 ```clojure
@@ -435,7 +435,7 @@ inside it, toward the ring's centre.
 
 ## When the clicks are right and the names are not — `a`
 
-Press **`a`** (or **Auto — leggi la gabbia**) after clicking four marks on one
+Press **`a`** (or **Auto — read the cage**) after clicking four marks on one
 ring, and the editor decides how that crown should be read, then places every
 other mark it can account for and solves on all of them.
 
@@ -546,8 +546,10 @@ while your traced features stop.
 
 ## Notes
 
-- `(acquire-cage/measured 176 175.4)` corrects the marks for what the printer
-  actually produced, from one caliper reading across the largest ring. One number
+- `(measured cage 175.4)` — `measured` lives in `examples/print-cage.clj`, next
+  to the print itself (the `acquire-cage` library it used to sit in is gone) —
+  corrects the marks for what the printer actually produced, from one caliper
+  reading across the largest ring. One number
   suffices where the plate needed two — a sheet can print to different scales on
   its two axes, three rings from one machine cannot, and a machine that did would
   make them oval, which is visible.

@@ -472,7 +472,20 @@ Create paths from coordinate pairs (like `poly` for shapes):
 
 ;; Type predicate
 (path? x)                            ; true if x is a path map
+
+;; The path as plain data (what you print, save or diff)
+(path->data path)                    ; {:type :path :commands [...]} + one key per mark; no memo
 ```
+
+**A path is data.** The value the `path` macro returns is a plain map with nothing hidden: `:commands` is the recorded sequence (`{:cmd :f :args [30]}`, `{:cmd :th :args [90]}`, `{:cmd :arc-h :args [10 90] :steps 64}` — curves keep the tessellation step count they were recorded with), and every `(mark …)` also lands as a top-level key holding the mark's pose in the path's own frame (`:here {:position [30 0 0] :heading [1 0 0] :up [0 0 1]}`). The only extra is `:micro-commands`, a memoized lowering of the curves that consumers recompute on demand when it is absent; `path->data` strips it so the printout is readable:
+
+```clojure
+(path->data (path (f 30) (th 90) (arc-h 10 90)))
+;; => {:type :path,
+;;     :commands [{:cmd :f, :args [30]} {:cmd :th, :args [90]} {:cmd :arc-h, :args [10 90], :steps 64}]}
+```
+
+`path?` is true of both forms (it tests `:type :path`), and a map of that shape built by hand is accepted by the consumers too (they lower the curves on demand when `:micro-commands` is missing).
 
 **Completing a symmetric curve from one half.** Author half of a symmetric curve (start → midpoint `M`), then mirror it across the symmetry axis and reverse it so the two pieces join head-to-tail:
 
@@ -708,6 +721,8 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 (-> (rect 30 10) (twisted :angle 180) (tapered :to 0.3))
 ```
 
+**Order in a chain.** Every combinator above keeps the point count and order and only moves points (`tapered`, `twisted`, `fluted`, `rugged`, `noisy`, `displaced`, `heightmap`, `capped`), so they compose in any order — including *after* `shell`, whose per-point wall values ride along with the points (the older rule "only `tapered` may follow `shell`" was too narrow). The two that do not: `morphed` takes two **static** shapes and cannot sit after a shape-fn at all, and `embroid` is not a chain member (see *Perforated wall*). `shell` still reads best last, for a different reason: it patterns the profile it is given, so a `fluted` after it reshapes the wall without re-patterning it.
+
 **Partial form (bare transform).** A profile-safe combinator called **without a leading shape** returns the bare transform `(fn [shape t] -> shape)` instead of a shape-fn — exactly the legacy transform `loft` already accepts. This reads far better than a hand-written lambda, and is the intended way to write a `loft+` step inside `transform->` (where the profile comes from the previous step):
 
 ```clojure
@@ -719,7 +734,7 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 (loft+ (tapered :to 1.3) (f 30))               ;; the same, readable
 ```
 
-Available in partial form: `tapered`, `twisted`, `fluted`, `rugged`, `noisy`, `capped` (keeps its positional radius: `(capped 3)`), and `displaced` (its 1-arity `(displaced displace-fn)`). The partial value has no `:shape-fn` metadata (`(shape-fn? (tapered :to 0.5))` is `false`), so it routes through loft's legacy branch with no dispatch change. `capped`'s auto-fraction reads `*path-length*`, which the loft binds on the legacy path too.
+Available in partial form: `tapered`, `twisted`, `fluted`, `rugged`, `noisy`, `capped` (keeps its positional radius: `(capped 3)`), and `displaced` (its 1-arity `(displaced displace-fn)`). The partial value has no `:shape-fn` metadata (`(shape-fn? (tapered :to 0.5))` is `false`), so it routes through loft's legacy branch with no dispatch change. `capped`'s auto-fraction reads `*path-length*`, which the loft binds on the legacy path too (and `revolve` binds to the centroid's arc); user code reads the same value as `(current-path-length)`.
 
 **Profile shape-fn:**
 
@@ -741,11 +756,13 @@ The path's X coordinates represent the radius at each point along the extrusion.
     (scale-shape shape (+ 0.6 (* 0.4 (sin (* t PI)))))))
 ```
 
+**The contract.** `(shape-fn base transform)`: `base` is a 2D shape **or another shape-fn** (that is how `->` chains compose — the transform receives the base evaluated at the same `t`); a bare transform such as the partial form `(tapered :to 0.5)` is refused with an error, since it has no profile to start from. `transform` is `(fn [shape t] -> shape)` and must return a shape with the **same number of points in the same order** — the loft pairs ring `i` with ring `i+1` vertex by vertex, so resampling or reordering inside a transform tears the mesh. It runs once per ring (`t = i/steps`), plus a few probe calls at `t = 0`, so keep it cheap and pure. The result is `(fn [t] -> shape)` with metadata `{:type :shape-fn :base base}` — `shape-fn?` tests exactly that. While the loft (or revolve) evaluates it, `(current-path-length)` returns the sweep's length in world units (`nil` outside), which is how `capped` sizes its auto-fraction and `heightmap :fit :physical` its height.
+
 **`noisy` options:** `:amplitude` (1.0), `:scale` (3.0), `:scale-x`, `:scale-y`, `:octaves` (1), `:seed` (0).
 
 **`woven` options:** `:warp` (6), `:weft` (4), `:amplitude` (1.0), `:thread` (0.42, thread width as fraction of cell, 0..0.5).
 
-**`heightmap` options:** `:amplitude` (1.0), `:center` (false; when true, shifts sample range to [-0.5, 0.5]), `:direction` (`:circumference` default — width wraps around — or `:height` — width runs along the path), `:fit` (`:auto` default / `:physical` / `:stretch`), `:scale` (1.0; physical mode), `:surface-width` / `:surface-height` (physical overrides; default = base-shape perimeter / loft length), `:tile-x` (1), `:tile-y` (1) (integer count or `:fill` to pack seamless copies), `:offset-x` (0), `:offset-y` (0). `u` runs around the cross-section, `v` along the path. In `:physical` mode the heightmap lands at its real-world size (e.g. `text-heightmap`); `:stretch` fills the whole surface (classic, for seamless patterns).
+**`heightmap` options:** `:amplitude` (1.0), `:center` (false; when true, shifts sample range to [-0.5, 0.5]), `:direction` (`:circumference` default — width wraps around — or `:height` — width runs along the path), `:fit` (`:auto` default / `:physical` / `:stretch`), `:scale` (1.0; physical mode), `:surface-width` / `:surface-height` (physical overrides; default = the perimeter of the chain's **root** profile — the plain shape under every shape-fn of a `->` chain — / the sweep length from `current-path-length`, which is `nil` and falls back to `1.0` outside `loft`/`revolve`), `:tile-x` (1), `:tile-y` (1) (integer count or `:fill` to pack seamless copies), `:offset-x` (0), `:offset-y` (0). `u` runs around the cross-section, `v` along the path. In `:physical` mode the heightmap lands at its real-world size (e.g. `text-heightmap`); `:stretch` fills the whole surface (classic, for seamless patterns).
 
 **Noise and heightmap functions** (available globally):
 
@@ -778,6 +795,9 @@ The path's X coordinates represent the radius at each point along the extrusion.
 | `(shape-fn? x)` | Check if x is a shape-fn |
 | `(angle [x y])` | Angle (radians) of 2D point from origin |
 | `(displace-radial shape offset-fn)` | Displace points radially from centroid |
+| `(shape-centroid shape)` | Centroid of the outer contour, `[x y]` — what `shell`'s angles and `displace-radial` are measured from |
+| `(smoothstep e0 e1 x)` | Hermite ramp 0→1 between `e0` and `e1` — the soft edge every `:softness` draws |
+| `(current-path-length)` | Length of the sweep being lofted/revolved, while a shape-fn is evaluated; `nil` outside |
 
 **Shell shape-fn.** Variable-thickness hollow extrusion with openings:
 
@@ -797,10 +817,12 @@ The path's X coordinates represent the radius at each point along the extrusion.
 
 The thickness function `(fn [angle t] -> 0..1)` maps each point to a wall thickness:
 - `1.0` = full wall thickness, `0.0` = no wall (opening).
-- `angle` = angular position on profile (radians), `t` = path progress (0..1).
+- `angle` = the point's `atan2` angle around the profile's centroid (`shape-centroid`), in **`(-π, π]`** — not `[0, 2π)`: a pattern written for `[0, 2π)` comes out shifted by half a turn on the half of the profile below the centroid; normalize with `(mod angle (* 2 PI))` if you want that domain. `t` = path progress (0..1).
+- With `:style :pattern` alongside `:fn`, the first argument is the **arc-length fraction `u`** (0..1) instead of the angle — the parametrization `:pattern` tiles by, which a custom `:fn` can borrow this way.
 - Values below `:threshold` (default 0.05) snap to 0.
+- Called once per profile point per ring; keep it cheap and pure.
 
-**`shell` options:** `:thickness` (2), `:style` (`:solid`), `:fn` (custom, overrides style), `:threshold` (0.05), `:invert?` (false; swap solid/empty, works with any style/`:fn`), `:cap-top`, `:cap-bottom`.
+**`shell` options:** `:thickness` (2), `:style` (`:solid`), `:fn` (custom, overrides style), `:threshold` (0.05), `:invert?` (false; swap solid/empty, works with any style/`:fn`), `:softness` (see *Opening edges*; with `:fn` it is **off** unless you pass a value > 0), `:cap-top`, `:cap-bottom`.
 
 Wall is symmetric: outer ring displaced outward by `thickness/2`, inner ring displaced inward by `thickness/2`. Where thickness is 0, both rings coincide (opening).
 
@@ -915,6 +937,7 @@ Unlike the other shape-fns, **`embroid` takes the path that defines the wall's c
 - `:start-cap` / `:end-cap` (`:flat`) — shape the wall's two free ends (the path endpoints), mirroring `stroke-shape`: `:flat` (square butt), `:round` (a half-cylinder of radius `width/2`), or `:square` (extend by `width/2`, then flat). The cap is kept solid (no perforation lands on it). May be passed top-level or inside `:wall`.
 - `:cap-steps n` (`8`) — arc segments per `:round` cap.
 - `:resolution n` (≈ `2·path-length`) — samples **along the path** (`u`). Governs how crisp the opening edges look in the path direction; the loft step count only refines the **sweep** (`t`). Raise for smoother openings (mesh grows with `resolution × loft-steps`).
+- `:fn (fn [u t] -> 0..1)` — your own field in place of a `:style` (top-level or inside `:wall`): `u` = arc-length fraction along the wall (0..1), `t` = sweep (0..1); `1` = strut, `0` = opening, cut along the `0.5` iso-line. `:margin`/`:border`/`:softness` do not apply to it — return `1` near the borders yourself where the panel must stay attached to its neighbours. The cap columns stay solid regardless.
 
 **Wall pattern (`:wall` / `:style`):**
 
@@ -1371,7 +1394,7 @@ Shapes with vertices at x < 0 are auto-clipped at the revolution axis to prevent
 
 The pivot direction is relative to the shape's 2D coordinate frame (X = right, Y = up in the turtle frame). Use `:pivot` for bend/corner geometry: it keeps the shape's holes intact (no clipping).
 
-**Shape-fn support:** When a shape-fn is passed instead of a static shape, the profile is evaluated at each revolution step with `t` going from 0 (first ring) to 1 (last ring):
+**Shape-fn support:** When a shape-fn is passed instead of a static shape, the profile is evaluated at each revolution step, `t = i/steps` — the angular fraction, `steps` being the resolution's segment count for the angle (64 for a full turn at the default). A partial revolution runs `t` from 0 to 1 (its last ring is a cap); a **full** turn has no last ring distinct from the first, so `t` stops at `1 - 1/steps` and the profile at `t = 1` is never built. While it runs, `(current-path-length)` is the arc the `t = 0` profile's centroid travels — `|angle| · r`, `r` its distance from the axis — which is what `capped`'s auto-fraction and `heightmap :fit :physical` size themselves by (before 2026-09-10 it was `nil` in a revolve and both fell back to their defaults silently):
 
 ```clojure
 (revolve (tapered (circle 20) :to 0.5))           ; Profile shrinks during revolution
@@ -4011,6 +4034,12 @@ Full Clojure available via SCI:
 (T "label" expr)                 ; Tap: prints "label: value", returns value
 ```
 
+**What the evaluator gives you beyond the bindings.** Scripts run in SCI with `clojure.core` enabled, so the usual language is there: `defmacro` (in the buffer and at the REPL alike), `atom` / `swap!` / `reset!`, `defmulti` / `defmethod`, `defprotocol` / `defrecord` / `deftype`, `letfn`, `try` / `catch :default` / `ex-info`, `clojure.string` and `clojure.set` by their full names (no `str/` alias is predefined). Three things to know:
+
+- **State lifetime.** Every Run (Cmd+Enter) rebuilds the context from scratch: an atom defined in the buffer is recreated, with its initial value, at each Run. Between REPL commands the context persists, so an atom `swap!`ed from the REPL keeps its value until the next Run.
+- **`defmulti` on a name that already exists does nothing** (it has `defonce` semantics), and the `defmethod` that follows fails with an unhelpful protocol error — `(defmulti area …)` collides with the built-in `area`, for instance. Pick a fresh name, or `def` it first.
+- **No host interop.** `js/Math`, `js/Date`, `js/parseInt`, `js/JSON`, `js/console` and `Math/sqrt` do not resolve; `js/Error.` is the one exception. What you need of the host is wrapped: the math functions below, `perf-now`, `log`. Ridley's own bindings shadow `clojure.core` where the names coincide (`min`, `max`, `abs`, `log`).
+
 ### Math functions
 
 Standard math functions and the constant `PI` are exposed at the top level (no import needed). They wrap the host JavaScript `Math.*` API.
@@ -4260,6 +4289,20 @@ Accessibility settings, runtime environment introspection, and a hook for the "R
 | `(audio-feedback?)` | Current state of the audio-feedback accessibility flag |
 | `(set-audio-feedback! bool)` | Enable / disable audio feedback |
 | `(run-definitions!)` | Trigger the toolbar's "Run definitions" action programmatically |
+
+### 18.10 User libraries: what crosses the boundary
+
+A library is a `.clj` source with a text header. It is loaded by evaluating it in a context of its own and copying its public **values** into a namespace the buffer reaches by prefix (`gears/gear-pair`). The rules that follow from that:
+
+| In a library | Exported? | Note |
+|---|---|---|
+| `def`, `defn`, `defonce` at the start of a line | yes | the name is found by a regex on the source, not by introspection — a `def` produced by a macro, or nested in a `do`/`let`, is not seen |
+| `defn-`, `^:private` / `^{:private true}` on `def`/`defn` | no | |
+| `defmacro` | no | it works **inside** the library; the loader hands values across, and a macro is not one |
+| `defmulti`, `defprotocol`, `defrecord` | no | |
+| top-level forms that are not definitions (`register`, `println`, …) | — | **executed at every Run** of whoever has the library active, in *their* scene: a library that registers geometry pollutes every session that loads it |
+
+The header is two comment lines at the top of the file — `;; Ridley Library: name` and, when the library depends on others, `;; Requires: a, b` (comma-separated; the panel's *Requires* controls set the same field). It is the only syntax the loader reads. Dependencies are loaded first, in topological order; a missing or circular one skips the library with a warning in the panel.
 
 ---
 

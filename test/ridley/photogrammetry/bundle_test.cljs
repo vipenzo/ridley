@@ -105,7 +105,7 @@
 
 (deftest one-photo-cannot-separate-focal-from-distance
   (let [out (bundle/refine-session (take 1 (views-with 49.0)) 49.0)]
-    (is (re-find #"almeno DUE foto" (:error out)))))
+    (is (re-find #"at least TWO photos" (:error out)))))
 
 (deftest views-without-picks-or-pose-are-skipped-not-fitted
   (let [views (concat (views-with 49.0)

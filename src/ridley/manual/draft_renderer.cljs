@@ -161,9 +161,9 @@
                  ;; an empty page. Refuse it loudly instead.
                  (when (structure/shell-html? text)
                    (throw (js/Error.
-                           (str "il file " url " non è in questa build "
-                                "(il server ha risposto con la pagina dell'app). "
-                                "Manca `npm run sync-manual` prima del build."))))
+                           (str "the file " url " is not in this build "
+                                "(the server answered with the app page). "
+                                "`npm run sync-manual` was not run before the build."))))
                  (swap! chapter-cache assoc url text)
                  text)))))
 
@@ -740,7 +740,7 @@
          (.then (fn [raw-md] (render-md-text! container-el raw-md nav-el nil lang)))
          (.catch (fn [err]
                    (show-error! container-el
-                                (str "Errore caricamento capitolo: " (.-message err))))))
+                                (str "Error loading chapter: " (.-message err))))))
      chap)))
 
 (defn render-card!
@@ -755,4 +755,4 @@
                  (render-md-text! container-el md nil (symbol-for-card-url url)))))
       (.catch (fn [err]
                 (show-error! container-el
-                             (str "Errore caricamento scheda: " (.-message err)))))))
+                             (str "Error loading card: " (.-message err)))))))

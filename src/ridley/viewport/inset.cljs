@@ -235,7 +235,7 @@
        (set! (.-textContent label-el) (or label (name key)))
        (set! (.-className toggle) "viewport-inset-toggle")
        (set! (.-textContent toggle) (if visible? "–" "+"))
-       (set! (.-title toggle) "nascondi/mostra questa vista")
+       (set! (.-title toggle) "hide/show this view")
        (.addEventListener toggle "click"
                           (fn [_]
                             (when (contains? @instances key)

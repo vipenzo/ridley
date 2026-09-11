@@ -60,7 +60,7 @@
                              (anchor :fianco [45 3 2] [1 0 0])
                              (anchor :becco [3 40 -2] [0 1 0])])]
     (is (some? (:error fit)) "must refuse rather than pick one of the four")
-    (is (re-find #"sistemazioni|ASIMMETRICO" (:error fit)))))
+    (is (re-find #"placements|ASYMMETRIC" (:error fit)))))
 
 (deftest sliding-a-mark-INSIDE-its-plane-changes-nothing
   ;; THE property this design exists for (Vincenzo 2026-08-05: a plane is easy to
@@ -97,8 +97,8 @@
     ;; the refusal must name a remedy that EXISTS. It used to send the user to a
     ;; point-mark gesture the app does not have; now the first thing it offers is
     ;; an edge, which is both reachable and the stronger anchor.
-    (is (re-find #"intersezione" (:error fit)))
-    (is (re-find #"SPIGOLO" (:error fit))
+    (is (re-find #"intersection" (:error fit)))
+    (is (re-find #"EDGE" (:error fit))
         (str "the reachable remedy should come first: " (:error fit)))))
 
 (deftest two-planes-plus-one-real-point-are-enough
@@ -126,7 +126,7 @@
 
 (deftest one-mark-is-refused-by-name
   (let [fit (fuse/fit-rigid [(anchor :a [0 0 0] [0 0 1])])]
-    (is (re-find #"almeno DUE" (:error fit)))))
+    (is (re-find #"at least TWO" (:error fit)))))
 
 (deftest collinear-marks-are-refused
   (let [fit (fuse/fit-rigid [(anchor :a [0 0 0]) (anchor :b [20 0 0]) (anchor :c [50 0 0])])]
@@ -134,7 +134,7 @@
 
 (deftest marks-too-close-together-are-refused
   (let [fit (fuse/fit-rigid [(anchor :a [0 0 0]) (anchor :b [1.5 0.5 0]) (anchor :c [0 1.2 0.4])])]
-    (is (re-find #"troppo vicini" (:error fit))
+    (is (re-find #"too close" (:error fit))
         "a 1.6 mm baseline on a 100 mm object multiplies click noise")))
 
 (deftest the-floor-gate-identical-sessions-fuse-to-the-identity
@@ -219,7 +219,7 @@
         refused (filterv :error fits)]
     (is (seq refused)
         "at least one pair must own up to the ambiguity instead of picking a branch")
-    (is (every? #(re-find #"sistemazioni|ASIMMETRICO" (:error %)) refused)
+    (is (every? #(re-find #"placements|ASYMMETRIC" (:error %)) refused)
         "and say what would settle it")))
 
 (deftest one-asymmetric-point-settles-the-mirror
@@ -286,15 +286,15 @@
   (testing "a reference that names no session is refused by name"
     (let [[_ errs] (fuse/declared-anchors sessions [[:piano-1 :B/piano-1]] :A :B)]
       (is (= 1 (count errs)))
-      (is (re-find #"non dice a quale sessione" (first errs)))))
+      (is (re-find #"does not say which session" (first errs)))))
 
   (testing "an unknown label is refused by name"
     (let [[_ errs] (fuse/declared-anchors sessions [[:A/piano-1 :Z/piano-1]] :A :B)]
-      (is (re-find #"etichetta :Z" (first errs)))))
+      (is (re-find #"label :Z" (first errs)))))
 
   (testing "a mark that does not exist is refused by name"
     (let [[_ errs] (fuse/declared-anchors sessions [[:A/piano-1 :B/manca]] :A :B)]
-      (is (re-find #"non esiste" (first errs)))))
+      (is (re-find #"does not exist" (first errs)))))
 
   (testing "a row can name MORE than two sessions — one row per ZONE, not per couple"
     ;; With three sessions, [[:A/p1 :B/p1 :C/p1] …] says 'this zone, seen by all
@@ -468,7 +468,7 @@
                        :from-dir [0.9 0.436 0.0])
           fit (fuse/fit-rigid [good wrong (anchor :piano [3 3 3] [0 0 1])])]
       (is (some? (:error fit)))
-      (is (re-find #"stesse zone" (:error fit))
+      (is (re-find #"same zones" (:error fit))
           (str "expected the mis-pairing to be named, got: " (:error fit))))))
 
 (deftest an-edges-reported-residual-is-the-distance-between-the-LINES

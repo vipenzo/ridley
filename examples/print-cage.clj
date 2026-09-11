@@ -392,8 +392,8 @@
 
    HOW TO ASSEMBLE (gen 2): each tab DROPS into its seat pocket — that is the
    azimuth, no eyeballing — and the two keys refuse wrong rotations and
-   flips: if a ring will not sit, it is turned. Six joints, epoxy; the two
-   big rings first, then the part at the centre, the small ring last."
+   flips: if a ring will not sit, it is turned. Six joints, any cyanoacrylate;
+   the two big rings first, then the part at the centre, the small ring last."
   [c dir]
   (let [fs (files c)]
     (save-3mf-set-at fs dir)
@@ -413,30 +413,14 @@
                     " il cambio-colore per altezza non copre il bordo.")))
     (println "  Stampa col BRIM e filamenti OPACHI.")))
 
-;; --- The cradle ---------------------------------------------------------------
-
-(defn cradle
-  "The nest to rest the ⌀`d` cage on while you shoot: a flared ring the cage
-   settles into in ANY orientation without rolling. Not a base: a cage bolted
-   to a support is back to photographing half a sphere, which is what the
-   plate already did."
-  [d]
-  (let [r-out (* 0.42 d)
-        r-wide (* 0.34 d)
-        r-narrow (* 0.18 d)
-        h (* 0.07 d)]
-    (-> (mesh-difference (rotate (cyl r-out h) :y 90)
-                         (rotate (cone r-narrow r-wide (+ h 2)) :y 90)
-                         (rotate (cone r-wide r-narrow (+ h 2)) :y 90))
-        (color base-color))))
-
-(defn save-cradle
-  "Saves the cradle for a ⌀`d` cage into folder `dir`. Print it hole-up, no
-   supports: the flare holds itself."
-  [d dir]
-  (save-3mf-at (cradle d) (str dir "/culla-" (round d) ".3mf"))
-  (println (str "Culla per la gabbia ⌀" (round d)
-                ": scegli la cartella nel dialogo che si apre.")))
+;; --- The support ---------------------------------------------------------------
+;;
+;; The stand the cage rests on while you shoot is NOT in this file: see
+;; examples/cradle.clj (Vincenzo, 6/9). A pedestal, a cylinder that slides into
+;; it, and an arch with two clips that grab ONE ring of the cage — so you choose
+;; which ring to hold and where along it, and the whole cage turns on the stand.
+;; The flared ring that used to live here (the cage just settled into it) is
+;; gone: it held the cage in no useful orientation.
 
 ;; --- After printing: the caliper correction ------------------------------------
 
@@ -482,9 +466,6 @@
 
 ;; All three 3MFs into one folder (a single dialog):
 ;; (save-3mf cage "~/Downloads")
-
-;; The cradle to rest it on while shooting:
-;; (save-cradle diameter "~/Downloads")
 
 ;; A stick (section read from the cage's own channel: the bite is guaranteed):
 ;; (register Stick (stick cage 80))

@@ -62,11 +62,11 @@
     (do (reset! skip-next false)
         (when (nil? @state/interactive-mode)
           (state/capture-println
-           (str "modale SALTATO: il flag 'salta il prossimo' era armato senza nessuna "
-                "sessione aperta, quindi questa apertura è stata mangiata in silenzio. "
-                "Rilancia (ora il flag è consumato e la seconda volta si apre). "
-                "Se succede spesso, segnalalo: vuol dire che qualcuno arma il flag e "
-                "non lo consuma.")))
+           (str "modal SKIPPED: the 'skip next' flag was armed with no "
+                "session open, so this opening was swallowed silently. "
+                "Run it again (the flag is consumed now and the second time it opens). "
+                "If it happens often, report it: it means something arms the flag and "
+                "does not consume it.")))
         true)
     false))
 
@@ -337,9 +337,9 @@
     (when @skip-next
       (reset! skip-next false)
       (state/capture-println
-       (str "modale: il flag 'salta il prossimo' non è stato consumato da questa "
-            "corsa (il marcatore che doveva mangiarlo non c'era) — disarmato qui, "
-            "invece di lasciarlo mangiare la prossima apertura.")))))
+       (str "modal: the 'skip next' flag was not consumed by this "
+            "run (the marker that should have eaten it was not there) — disarmed here, "
+            "instead of letting it eat the next opening.")))))
 
 ;; ============================================================
 ;; Shared script-mode re-eval boilerplate

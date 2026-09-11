@@ -248,9 +248,9 @@
                      (-> (build-blob)
                          (.then (fn [blob]
                                   (download-blob-fallback blob filename)
-                                  (str "Nel browser non c'è un filesystem: " filename
-                                       " è stato SCARICATO nella cartella dei download "
-                                       "(la cartella che hai scritto è stata ignorata)."))))) ]
+                                  (str "The browser has no filesystem: " filename
+                                       " was DOWNLOADED to the downloads folder "
+                                       "(the folder you wrote was ignored)."))))) ]
     (if (exists? js/window.showSaveFilePicker)
       (-> (js/window.showSaveFilePicker #js {:suggestedName filename})
           (.then (fn [handle]
@@ -260,7 +260,7 @@
                                     (.then (fn [w]
                                              (-> (.write w blob)
                                                  (.then (fn [_] (.close w)))
-                                                 (.then (fn [_] (str "Salvato come "
+                                                 (.then (fn [_] (str "Saved as "
                                                                      (.-name handle)))))))))))))
           (.catch (fn [err]
                     (if (and err (= "AbortError" (.-name err)))
@@ -502,12 +502,12 @@
                                                     " mesh(es) to " chosen-path)))))))
                      ;; no path chosen. Say so — the same silence that made the
                      ;; web branch print a Promise and leave nothing behind.
-                     "Esportazione annullata: nessun percorso scelto.")))
+                     "Export cancelled: no path chosen.")))
           (.catch (fn [err]
                     (js/console.warn "native save error:" err)
-                    (str "Esportazione FALLITA: il salvataggio nativo ha risposto «"
+                    (str "Export FAILED: the native save answered «"
                          (or (some-> err .-message) err)
-                         "». Nessun file scritto."))))
+                         "». No file written."))))
 
       ;; Chrome/Edge: File System Access API
       (exists? js/window.showSaveFilePicker)
@@ -546,10 +546,10 @@
                           (-> (build-blob suggested)
                               (.then (fn [blob]
                                        (download-blob-fallback blob suggested)
-                                       (str "Il browser non ha aperto la finestra "
-                                            "di salvataggio: " suggested
-                                            " è stato SCARICATO nella cartella dei "
-                                            "download.")))))))))
+                                       (str "The browser did not open the save "
+                                            "dialog: " suggested
+                                            " was DOWNLOADED to the downloads "
+                                            "folder.")))))))))
 
       ;; Fallback: anchor download with the suggested filename and preferred fmt
       :else
@@ -606,7 +606,7 @@
            (.then (fn [chosen]
                     (when chosen
                       (-> (desktop-write-file blob chosen)
-                          (.then (fn [_] (str "Salvato in " chosen)))))))
+                          (.then (fn [_] (str "Saved in " chosen)))))))
            (.catch (fn [err] (js/console.warn "native save error:" err) nil)))
 
        (exists? js/window.showSaveFilePicker)
@@ -616,7 +616,7 @@
                         (.then (fn [w]
                                  (-> (.write w blob)
                                      (.then #(.close w))
-                                     (.then (fn [_] (str "Salvato " (.-name handle))))))))))
+                                     (.then (fn [_] (str "Saved " (.-name handle))))))))))
            (.catch (fn [err]
                      (when-not (and err (= "AbortError" (.-name err)))
                        (js/console.warn "save picker error:" err))
@@ -663,7 +663,7 @@
         filename (last (str/split full #"/"))]
     (if (env/desktop?)
       (-> (desktop-write-file (js/Blob. #js [text]) full)
-          (.then (fn [_] (str "Salvato in " full))))
+          (.then (fn [_] (str "Saved in " full))))
       (save-in-browser! (fn [] (js/Promise.resolve
                                 (js/Blob. #js [text] #js {:type "image/svg+xml"})))
                         filename))))
@@ -688,7 +688,7 @@
   [named dir]
   (let [named (vec named)
         build (fn [meshes] (threemf/meshes->3mf-blob meshes))
-        summary (fn [where] (str (count named) " file salvati in " where))]
+        summary (fn [where] (str (count named) " files saved in " where))]
     (if (env/desktop?)
       (let [full (expand-home dir)]
         (-> (js/Promise.all
@@ -715,9 +715,9 @@
                                     (js/Promise.resolve nil)
                                     named)
                             (.then (fn [_]
-                                     (str "Nel browser non c'è un filesystem: i "
-                                          (count named) " file sono stati SCARICATI "
-                                          "nella cartella dei download.")))))]
+                                     (str "The browser has no filesystem: the "
+                                          (count named) " files were DOWNLOADED "
+                                          "to the downloads folder.")))))]
         (if (exists? js/window.showDirectoryPicker)
           (-> (js/window.showDirectoryPicker #js {:mode "readwrite"})
               (.then (fn [dir-handle]
@@ -755,5 +755,5 @@
         (-> (build)
             (.then (fn [blob]
                      (-> (desktop-write-file blob full)
-                         (.then (fn [_] (str "Salvato in " full))))))))
+                         (.then (fn [_] (str "Saved in " full))))))))
       (save-in-browser! build (last (str/split path #"/"))))))

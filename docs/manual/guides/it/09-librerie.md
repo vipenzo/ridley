@@ -117,7 +117,7 @@ Una libreria è codice Clojure ordinario. Tutto ciò che puoi scrivere nell'edit
     (cyl (* r 1.1) 1)))
 ```
 
-Solo i `def` e `defn` di top level diventano simboli pubblici della libreria. Le variabili locali (dentro `let`, `loop`, ecc.) restano private.
+Solo i `def`, `defn` e `defonce` di top level diventano simboli pubblici della libreria; `defn-` e `^:private` restano privati, e una `defmacro` funziona dentro la libreria ma non attraversa il prefisso. Le variabili locali (dentro `let`, `loop`, ecc.) restano private. Attenzione al codice fuori dalle funzioni: viene eseguito a ogni Run in cui la libreria è attiva, quindi un `register` a top level mette la sua geometria in scena ogni volta. Il capitolo 19.5 spiega il meccanismo.
 
 ### Edit mode
 
@@ -129,10 +129,11 @@ Un Cmd+Enter durante l'edit mode valuta il sorgente nell'editor come se fosse il
 
 ### Dipendenze
 
-Se una libreria usa funzioni di un'altra, dichiaralo nell'header. L'header è la prima riga del sorgente, in formato commento:
+Se una libreria usa funzioni di un'altra, dichiaralo nell'header. L'header sono le prime righe del sorgente, in formato commento, con i nomi separati da virgola (dal pannello lo scrivono i bottoni Requires):
 
 ```clojure
-;; :requires [my-shapes utils]
+;; Ridley Library: my-parts
+;; Requires: my-shapes, utils
 ```
 
 Ridley legge questa dichiarazione e carica le dipendenze prima della libreria corrente. Se una dipendenza non è attiva o non esiste, la libreria viene saltata con un warning.

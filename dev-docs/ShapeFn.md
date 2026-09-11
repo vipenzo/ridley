@@ -1,5 +1,13 @@
 # Ridley — Shape Functions (shape-fn)
 
+> **Historical design note (2025).** This is the document the shape-fn system
+> was built from, kept for the reasoning. The code has moved on in places; the
+> user-facing contract is `docs/Spec.md` § *Shape functions* and the manual
+> (chapters 6 and 19), which win wherever they differ. Known drifts, corrected
+> in place below: `rugged` is now multi-octave fBm; the constructor tests
+> `shape-fn?`, not `fn?`, and refuses a bare transform; `angle` is measured
+> from the origin, not the centroid; `:point-count` is no longer in the metadata.
+
 ## Overview
 
 Shape functions extend Ridley's shape system by allowing shapes to vary along the extrusion path. Instead of extruding a static 2D profile, a shape-fn produces a different shape at each point along the path based on a progress parameter `t` (0 → 1).
@@ -112,7 +120,7 @@ Rotate the shape progressively. At t=0 rotation is 0, at t=1 rotation is `:angle
 (rugged shape :amplitude a :frequency f)
 ```
 
-Displaces each vertex radially by `a * sin(angle * f)`. The pattern is constant along `t` — the shape has the same bumps at every ring.
+Displaces each vertex radially by layered sinusoids (fBm: each octave doubles the frequency and scales the amplitude by `:gain`), varying both around the profile and along `t` — see `:octaves`, `:gain`, `:seed` in the Spec. (Originally a single `a * sin(angle * f)`, constant along `t`.)
 
 ```clojure
 ;; Bumpy tube
@@ -209,16 +217,18 @@ Evaluation order: at each `t`, the innermost shape-fn is evaluated first, and ea
 
 ```clojure
 (defn shape-fn [base transform]
-  (let [evaluate (if (fn? base)
+  ;; base must be a shape or a shape-fn — a bare transform (the partial form,
+  ;; e.g. (tapered :to 0.5)) is a fn too but has no profile: refused with a message
+  (let [evaluate (if (shape-fn? base)
                    (fn [t] (transform (base t) t))  ; chain: evaluate base first
                    (fn [t] (transform base t)))]     ; leaf: transform static shape
     (with-meta evaluate
       {:type :shape-fn
-       :base base
-       :point-count (if (fn? base)
-                      (:point-count (meta base))
-                      (count (:points base)))})))
+       :base base})))
 ```
+
+(`:point-count` used to be stored here too; nothing read it, and a `morphed` in
+the chain resampled without updating it, so it was dropped.)
 
 Key properties:
 - A shape-fn is a regular Clojure function (`IFn`)
@@ -281,7 +291,7 @@ Displaces each point of a shape along the radial direction from the shape centro
 
 ### Helper: angle
 
-Returns the angle (in radians) of a point relative to the shape centroid. Useful in displacement functions for angular patterns:
+Returns the angle (in radians) of a point relative to the **origin** (not the centroid — shapes are built centred, and `displace-radial` is what works from the centroid). Useful in displacement functions for angular patterns:
 
 ```clojure
 (defn angle [p]

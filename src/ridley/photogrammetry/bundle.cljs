@@ -110,10 +110,10 @@
    (let [usable (filterv #(and (:pose %) (>= (count (:picks %)) 4)) views)]
      (cond
        (< (count usable) 2)
-       {:error (str "il raffinamento congiunto ha bisogno di almeno DUE foto "
-                    "registrate con i loro click (ne ho trovate " (count usable)
-                    "): con una sola, la focale e la distanza della camera sono "
-                    "la stessa cosa e non si separano")}
+       {:error (str "the joint refinement needs at least TWO photos "
+                    "registered with their clicks (I found " (count usable)
+                    "): with only one, the focal and the camera distance are "
+                    "the same thing and cannot be separated")}
 
        :else
        (let [poses0 (mapv :pose usable)

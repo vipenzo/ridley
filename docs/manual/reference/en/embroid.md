@@ -55,6 +55,7 @@ way to `:honeycomb`, `:voronoi`, and `:pattern` —
 | Option | Default | Description |
 |---|---|---|
 | `:softness` | `0.6` | Isocontour ramp: smooth opening edges; `0` = hard staircased cut. |
+| `:fn` | — | Custom field `(fn [u t] -> 0..1)` in place of a `:style`: `u` = arc-length fraction along the wall, `t` = sweep; `1` = strut, `0` = opening, cut at the `0.5` iso-line. `:margin`/`:border`/`:softness` do not apply — keep your own solid frame near the borders. |
 | `:margin` | `0.05` | **Fraction** of each side kept solid. On a non-square wall the side and top/bottom frames differ in physical width (fraction of wall length vs sweep depth). |
 | `:border` | — | World-units frame thickness, **uniform** on all four sides. Overrides `:margin` — use this for an even border. |
 
