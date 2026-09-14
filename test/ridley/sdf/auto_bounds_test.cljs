@@ -103,3 +103,28 @@
       (is (>= (+ cy1 eps) ny1) (str axis " " angle " y1"))
       (is (<= (- cz0 eps) nz0) (str axis " " angle " z0"))
       (is (>= (+ cz1 eps) nz1) (str axis " " angle " z1")))))
+
+;; --------------------------------------------------------------------------
+;; cubify-bounds — the region handed to libfive must be a cube. libfive sizes
+;; its octree from the SHORTEST axis (Region::withResolution) and subdivides
+;; every axis that many times, so a flat region starves the long ones:
+;; (sdf-torus 28 1) came out as beads until materialize cubified the region.
+;; --------------------------------------------------------------------------
+(deftest cubify-bounds-flat-region-becomes-cube-around-centre
+  (let [[[x0 x1] [y0 y1] [z0 z1]]
+        (sdf/cubify-bounds [[-37.7 37.7] [-37.7 37.7] [-1 1]])]
+    (is (close? x0 -37.7)) (is (close? x1 37.7))
+    (is (close? y0 -37.7)) (is (close? y1 37.7))
+    (is (close? z0 -37.7)) (is (close? z1 37.7))))
+
+(deftest cubify-bounds-keeps-each-axis-centre
+  ;; longest span is 40 (y); x and z grow symmetrically around their own centre
+  (let [[[x0 x1] [y0 y1] [z0 z1]]
+        (sdf/cubify-bounds [[10 20] [0 40] [-3 -1]])]
+    (is (close? x0 -5)) (is (close? x1 35))
+    (is (close? y0 0)) (is (close? y1 40))
+    (is (close? z0 -22)) (is (close? z1 18))))
+
+(deftest cubify-bounds-cube-is-unchanged
+  (is (= [[-5 5] [-5 5] [-5 5]]
+         (sdf/cubify-bounds [[-5 5] [-5 5] [-5 5]]))))

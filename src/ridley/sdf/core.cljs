@@ -975,15 +975,43 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Default SDF meshing resolution (voxels per unit)."
   15)
 
+(defn cubify-bounds
+  "Expand a meshing region to the cube around its own centre whose side is
+   the region's longest span.
+
+   libfive derives the octree depth from the region's SHORTEST axis
+   (`Region::withResolution`: level = ceil(log2(min_dimension / min_feature)))
+   and then subdivides every axis that many times. A flat region therefore
+   starves its long axes: a 60×60×4 box at 6 voxels/unit gets 2^5 = 32 cells
+   per axis, i.e. 1.9-unit cells in x and y, and a 2-unit tube dissolves into
+   beads (`(sdf-torus 28 1)` came out as 4-28 components, 2026-09-14). Rings,
+   plates and discs all have flat auto-bounds, so any small detail on them was
+   under-resolved regardless of `*sdf-resolution*`.
+
+   A cube gives every axis the requested density. The extra empty space costs
+   little: libfive culls it by interval arithmetic at the coarse levels, so the
+   work stays proportional to the surface. Bounds are a meshing region, not a
+   clip (use `sdf-clip` for that), so enlarging them changes no geometry."
+  [bounds]
+  (let [side (apply max (map (fn [[lo hi]] (- hi lo)) bounds))
+        half (/ side 2)]
+    (mapv (fn [[lo hi]]
+            (let [c (/ (+ lo hi) 2)]
+              [(- c half) (+ c half)]))
+          bounds)))
+
 (defn materialize
   "Materialize an SDF tree into a triangle mesh via libfive.
-   bounds: [[xmin xmax] ...] — if nil, auto-computed from tree
+   bounds: [[xmin xmax] ...] — if nil, auto-computed from tree. Either way the
+   region sent to libfive is cubified first (see `cubify-bounds`): libfive
+   sizes its voxels from the shortest axis, so a flat region would starve the
+   long ones.
    resolution: voxels per unit (default 15)
    Anchors and creation-pose on the SDF root carry over to the resulting mesh."
   ([node] (materialize node nil 15))
   ([node bounds] (materialize node bounds 15))
   ([node bounds resolution]
-   (let [bounds (or bounds (auto-bounds node))
+   (let [bounds (cubify-bounds (or bounds (auto-bounds node)))
          payload (clj->js {:tree node :bounds bounds :resolution resolution})
          result (invoke-sync "/sdf-mesh" payload)
          mesh (js->mesh result)]

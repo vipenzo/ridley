@@ -825,6 +825,8 @@ OBJ, fatto).
 
 ---
 
+**Intermezzo (2026-09-14): meshing SDF di regioni schiacciate — FATTO.** `(sdf-torus 28 1)` usciva a perline (4-28 componenti) anche alzando la risoluzione: libfive dimensiona l'ottree dall'asse più corto della regione. `materialize` ora cubifica la regione (`cubify-bounds`, test in `auto_bounds_test`); vale per ogni modello con bounds piatti (anelli, piastre, dischi). Resta il χ=1 sporadico del dual contouring su tubi sottili — difetto di libfive, non nostro; per un toro pulito il `revolve` mesh resta la via.
+
 ## Parte I — Breve termine
 
 Le voci di questa parte sono lavoro a settimane o mesi, con dipendenze risolte e design già preso. Sono pagamenti di debito conosciuto e completamenti puntuali.
