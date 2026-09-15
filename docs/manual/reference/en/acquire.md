@@ -21,7 +21,7 @@ and re-run it like anything else.
 
 ```clojure
 (def A (acquire "/Users/me/scans/collare"
-         {:proxy (registration-plate)
+         {:proxy (registration-plate :d 300)
           :pose  {:position [0 0 0] :heading [0 0 1] :up [0 1 0]}
           :shapes {}
           :marks  {}
@@ -59,7 +59,7 @@ And the names are anchors, so the turtle can stand on any of them:
   `session.json`). Built in the app on first use from `NOTE.md` and the images.
 - `opts` — the map that holds everything measured:
   - `:proxy` — the reference object the cameras were registered against, usually
-    `(registration-plate)` or a `(box …)`;
+    `(registration-plate :d …)` or a `(box …)`;
   - `:pose` — where that object sits in your world;
   - `:shapes` — outlines traced on the photographs, as named `(poly …)`;
   - `:marks` — working planes, as named `(plane-mark …)` or
@@ -84,6 +84,7 @@ And the names are anchors, so the turtle can stand on any of them:
 
 ## See also
 
+- `edit-acquire` — the same thing being worked on: where the cameras get registered
 - `edit-edge-mark` — measure an edge into `:edges`
 - `plane-from-edges` — a plane from the edges you have measured
 - `plane-mark` · `edge-mark` — the resting forms

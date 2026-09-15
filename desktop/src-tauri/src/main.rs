@@ -91,6 +91,11 @@ fn main() {
             // First run uses the defaults above; subsequent runs honor
             // whatever the user left when they closed the app.
             let _ = window.restore_state(StateFlags::all());
+            // Hand the window to the geo-server so a native file panel can be
+            // attached to it. Unparented, the panel is a window of its own and
+            // can be left behind the app — with the app then ignoring every
+            // click, because what is waiting for the user is out of sight.
+            geo_server::set_main_window(window);
             Ok(())
         })
         .build(tauri::generate_context!())

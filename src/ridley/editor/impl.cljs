@@ -1432,8 +1432,16 @@
    - inset / scale (legacy turtle form): rejected with explanatory error."
   [sdf-node path]
   (validate-sdf-attach-path! path)
-  (loop [state (-> (turtle/make-turtle)
-                   (assoc :material-h-local [1 0 0] :material-u-local [0 1 0]))
+  ;; Start the replay turtle at the SDF's creation-pose — the mirror of
+  ;; turtle/attach-move on the mesh branch. Rotations must pivot on the SDF
+  ;; and translations follow its frame; a turtle at world origin gives every
+  ;; th/tv/tr a lever arm equal to the SDF's distance from the origin.
+  (loop [state (let [pose (or (:creation-pose sdf-node) sdf/default-creation-pose)]
+                 (-> (turtle/make-turtle)
+                     (assoc :position (:position pose)
+                            :heading  (:heading pose)
+                            :up       (:up pose))
+                     (assoc :material-h-local [1 0 0] :material-u-local [0 1 0])))
          sdf sdf-node
          remaining (turtle/path-micro-commands path)]
     (if (empty? remaining)

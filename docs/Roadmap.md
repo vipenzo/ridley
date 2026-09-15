@@ -26,13 +26,339 @@ integrati in main. Documento di governo:
 `dev-docs/brief-observation-driven-acquire.md`; entry point
 `dev-docs/HANDOVER-edge-declared.md`.
 
-**Prossimo fronte (proposto da Vincenzo, non iniziato): "SCATTA E REGISTRA"** —
-il telefono usato come webcam (Continuity Camera), un tasto, e il fotogramma
-entra nella sessione già registrato. Entry point
-`dev-docs/HANDOVER-grab-and-register.md`, che porta i vincoli già accertati (la
-focale fittata rende superfluo l'EXIF; la scrittura file è desktop-only; i
-permessi camera in Tauri non ci sono ancora; il telefono come client web
-richiederebbe HTTPS).
+**Fronte APERTO (2026-08-17): LA GABBIA DI REGISTRAZIONE — l'ultimo
+esperimento prima dell'archivio.** Nasce da un caso reale fallito: un pezzo di
+elettrodomestico abbandonato dall'acquire e rifatto senza problemi con
+`edit-image-board`, con la diagnosi giusta — *«le tante foto obbediscono a
+criteri boilerplate: servono a far star su il meccanismo, non a disegnare
+l'oggetto»*. Il riferimento smette di stare SOTTO l'oggetto e gli va INTORNO:
+tre anelli ortogonali, il pezzo ancorato al centro, ogni foto ben mirata e
+auto-registrata, niente giradischi/θ/NOTE.md/fusione.
+
+*Fetta 0 COSTRUITA (2026-08-17), gate NON ancora fatto*: `registration-cage` +
+libreria `acquire-cage` (stampabile a due colori) + le guardie in `edit-acquire`.
+Ordine deliberato: **il detector automatico non si costruisce prima del gate** —
+tre delle quattro domande del gate si rispondono cliccando i mark a mano, e se la
+gabbia non batte l'image-board si archivia senza aver scritto il multi-ellisse.
+Documento di governo `dev-docs/brief-registration-ring.md`; entry point
+`dev-docs/HANDOVER-registration-cage.md`.
+
+*Banco preparato per il gate (2026-08-19), gabbia stampata e incollata*: tre
+inciampi tolti dalla strada prima che costassero la giornata. (1) Una cartella di
+foto SENZA NOTE.md apriva una sessione **vuota** e ne persisteva il vuoto — ma la
+gabbia non ha giradischi, quindi non ha NOTE: ora le foto si prendono dalla
+cartella, tutte fuori-anello. (2) Le vie automatiche (Auto, batch, Grab), tutte
+costruite sull'unica corona del piatto, rispondevano a una gabbia consigliando un
+piatto; ora dicono che il rilevamento automatico della gabbia non esiste ancora e
+che si registra con `p`. (3) **`:phases`**: la rotazione dell'anello grande non è
+imposta da nessun giunto, e a r=85 un grado vale 1.5mm — 4° non dichiarati
+costano 22px di rms e 15mm di camera. Ora si dichiara, e soprattutto si MISURA:
+dopo ogni solve su gabbia la REPL stampa la fase di ciascun anello, ciascuno
+misurato contro una posa che non lo ha usato (leave-one-ring-out, più un giro di
+raffinamento) — su gabbia sintetica legge 3.00° ±0.00 sul colpevole e 0.00 sugli
+innocenti. La difficoltà si sposta dal costruire al misurare, come per
+`plate-calib`.
+
+*Svolta d'interfaccia (2026-08-31, decisione di Vincenzo)*: tredici giri live
+sulla sessione battiscopa3 hanno mostrato che il collo di bottiglia non è più
+l'algoritmo ma la FACCIA DICHIARATA a mano (sbagliata su tre foto di fila, e
+ogni errore avvelena tutto il valle). Prossima fetta: la **gabbia virtuale
+orientata a occhio col gizmo** — le facce non si dichiarano più, si leggono
+dalla posa; la posa a occhio fa anche da seme per l'auto-lettura. Entry point
+`dev-docs/HANDOVER-cage-zero-click.md`, blocco ATTERRAGGIO.
+
+*Gabbia virtuale COSTRUITA e sessione REGISTRATA (2026-09-01/02)*: la gabbia
+si disegna sopra la foto COME STAMPATA (anelli pieni, alette, box porta-stick,
+corone e doppi pallini; sbirciatina Alt+drag) e le facce si leggono dalla posa
+(guardia 20°, suggerimento quando tace). Lo strumento ha smontato in due
+giorni tre dichiarazioni false che sette giorni di residui "buoni" non avevano
+mai smentito: le `:phases {:y 180 :x 180}` (entrambe false), i ribaltamenti
+non dichiarabili (nato `:flips` — battiscopa3 è `#{:y :z}`), la focale 44 (la
+vera è 28.08, misurata dalla rifinitura congiunta a valle). **battiscopa3
+registra 5/5 a 2.9-8.5px.** Coda ATTERRAGGIO 2/9 tutta chiusa
+(`a454732..e7c7c5d`): commit in 8 pezzi tematici; memoria per-camera della
+focale (`~/.ridley/cameras.json`, «label @ w×h», sorgente `:remembered`);
+testimone curato (un anello = UNA lettura — l'anomalia di foto 2 era un
+candidato spazzatura, spiegato al banco con la sonda `CAGE_AUTO_WITNESS`);
+e **il seme dell'occhio**: la posa appaiata a mano come seme diretto di 'a'
+(assign+ICP, niente ellissi) — 4/5 in ~0.2s contro 0/5 in 17-36s, zero
+falsi, cold start chiuso anche per gabbie non dichiarate. Restano i difetti
+storici (max-outliers fisso, accettazione senza asticella, rinomina prima
+del solve); trappole e dettagli in `dev-docs/HANDOVER-cage-zero-click.md`.
+
+*Gate manuale PASSATO e riconoscitore automatico avviato (2026-08-23/24)*: il
+gesto a mano si è dimostrato chiuso — una corona da sola è invariante per
+rotazione e specchiata dall'altra faccia (48 riletture, stesso rms), e sopra un
+disegno fuori di 150px l'utente non riesce ad appaiare i nomi. Quindi
+l'identificazione si toglie dalle mani dell'utente. **Fetta 1 (il RILEVATORE)
+FATTA**: su foto vera 32 candidati di cui ~29 veri e 13 mark noti su 13 — corona,
+zero-indice e i quattro degli anelli INTERNI, che prima erano zero. Il primo
+tentativo dava 10 veri su 89 candidati e nulla sugli anelli interni. Tre cose:
+riferimento chiaro = MASSIMO locale (una media su finestra larga è quasi tutta
+fondo e scende sotto i mark), risoluzione PIENA (i mark interni stanno a 4-6px dal
+bordo della banda e mezzo giro di media a blocchi li salda al fondo), e un test di
+forma sui pixel veri (`enclosed-frac`, 16 raggi). **Fetta 2 (posa + identità) COSTRUITA**
+(2026-08-24, `photogrammetry/match-cage`): le 48 riletture di una corona spiegano
+l'anello *in sé* in modo indistinguibile — 5.3-5.4px tutte — ma pesate sui
+candidati degli ALTRI due anelli collassano a 2 pose fisiche, e fra due facce
+decide la guardia fisica. La simmetria della corona non si rompe cliccando di più:
+si rompe col resto della gabbia, ed è per questo che il rilevatore doveva venire
+prima. Cade invece il piano precedente («si campiona un intorno della posa»):
+l'intorno non esiste, l'LM da 91 pose torna sempre allo stesso minimo. Sui pixel
+veri: legge `rot 3`, appaia 19 mark, la posa su tutti chiude a 9.13px, e i quattro
+mark interni noti passano da 157/127/92/139px a 21/8/4/4. I 17-23px residui NON
+erano le `:phases` (misurate: 1-2°, incollaggio buono) ma la planarità dell'anello
+di MEZZO, che Vincenzo conferma guardando il pezzo. **Fetta 3 (il tasto) FATTA**
+lo stesso giorno: `a` su una gabbia rileva, legge, rinomina i pick senza toccarne
+i pixel, piazza il resto come proposte e chiama il solve normale — quel che entra
+in sessione è ordinario, quindi pannello/residui/outlier funzionano senza impianto
+nuovo. Verificata dal vivo nel bundle del browser (stessi numeri di node), e la
+verifica dal vivo ha trovato un bug che il compilatore non vedeva. **Il fronte
+gabbia è completo dal rilevamento alla registrazione.** Il collaudo umano
+(2026-08-24) è FALLITO nel modo più fruttuoso: i candidati dicevano «rot 3», lo
+zero-indice cliccato «rot 0», e la conciliazione è che **l'anello grande della
+gabbia di riferimento è INCOLLATO girato di 90°** — l'unica rotazione che nessun
+giunto impone, invisibile a occhio perché le linguette ricadono fra i mark. Il
+mio «rot 3» era la fase travestita da rinominazione (scartava lo zero-indice in
+silenzio). Ora `match-cage` non mette lo zero ai voti e DIAGNOSTICA l'anello
+girato (`:phase-suspect` + `phase-probe`, con messaggio che dà la forma da
+copiare); la gabbia di riferimento si modella `:phases {:x 90}` (facce verificate
+x=m y=p z=m, come Vincenzo le ha lette sul pezzo). Il collaudo col quarto di giro
+dichiarato è PASSATO (r: 8.7px in dlt — multi-anello, tutti e sei i gradi di
+libertà; a: conferma i nomi, 10.8px; Y/Z e facce giuste). E per le gabbie future
+la fase non serve: su proposta di Vincenzo («una tacca e una spina») i giunti ora
+portano la CHIAVE DI MONTAGGIO — spina su una linguetta dell'anello di mezzo,
+tacca passante nel bordo del grande — che rifiuta ogni rotazione e ribaltamento
+sbagliato dell'anello grande all'assemblaggio. Il collaudo di stampa (chiave +
+portapezzi) è PASSATO e la sessione battiscopa (8 foto, pezzo vero) è registrata
+per intero — dopo una settimana di recupero da un avvelenamento della focale che
+ha fruttato cinque correzioni alle difese (rifinitura non avvelenabile, soccorsi
+che non rinominano su fit cattivi, voto sulla lente solo alle foto registrate).
+**Fronte nuovo su direttiva di Vincenzo («se non riusciamo ad avere la
+registrazione automatica sarà tutto inutile»): ZERO CLICK** —
+`match-cage/auto-read`, prima luce 2026-08-27: 2 foto su 8 si registrano DA SOLE
+(camera a 1.0 e 3.5mm dalla mano, zero falsi positivi), cablata in `a` a zero
+click col seeded come ripiego. Le sei rifiutate muoiono tutte allo stadio
+ellissi: frontiera = concentricità, identità condivisa fra famiglie di anello,
+recall del rilevatore. *Fetta «le fasi dalla foto» COSTRUITA (2026-08-28)*: le
+fasi degli anelli sono per-montaggio, e ora le scopre la foto — gli zero-indice
+cliccati su altri anelli VETANO i gemelli in `read-crown` (46 riletture
+contraddette sul pareggio sintetico) e uno zero che il solve scarterebbe come
+outlier viene prima riletto a k passi (`rescue-hand-zeros`: anello montato a
+90° misurato dal suo zero — DIAGNOSI + suggerimento `:phases`, mai
+compensazione: direttiva di Vincenzo 28/8, la gabbia deve essere giusta); più
+il filtro anti-doppioni sulle proposte e la gomma per i pick (clic destro).
+Gate live di veto e gomma PASSATO (28/8: 42 riletture contraddette, 2
+proposte outlier tolte con la gomma); la diagnosi a k passi aspetta una
+gabbia rimontata girata. *Leva 1 — identificazione contamination-proof —
+FATTA (2026-08-30)*: il pettine come prima mossa dell'identità
+(`ellipse/comb-teeth`: gap-snapping ciclico in anomalia eccentrica, tolleranza
+scalata con la campata; `assign-marks :teeth`: 24 candidati al posto di
+C(12,k)·k·2, l'intruso non arriva mai all'omografia). Il banco però ha
+spostato la frontiera: coi denti accesi foto 6/7 si registrano DAL GEMELLO
+attraverso-la-plastica (548/764mm — la corona identifica a pari merito su
+tutte e sei le facce e decide solo lo zero al giudice dei pixel, che lì passa
+sul gemello), quindi il gate `:teeth?` resta CHIUSO in produzione (2/8, zero
+falsi) finché non c'è l'arbitro del gemello per semi macchina. *Leva 2 —
+l'ARBITRO DEL MONTAGGIO — FATTA (2026-08-31)*: gli indici sul banco erano
+RILEVATI ma in alloggio specchiato (l'anello Y della gabbia battiscopa è
+montato RIBALTATO — la chiave non lo vieta), quindi il "gemello" era la
+lettura che spiegava l'indice vero meglio del modello; con montaggio libero
+per-assemblaggio la singola foto non decide, la SESSIONE sì:
+`index-witness` legge per ogni posa le osservazioni (senso,k) POSE-ASSOLUTE
+dell'indice di ogni anello, `vote-mounting` le vota a maggioranza sulle
+foto, e `auto-read` veta le letture che contraddicono il voto, esige la
+conferma sull'anello-seme noto, avalla nel rango il disco-indice rilevato
+(explained satura — 19 il gemello), spazza i 12 gauge del seme ed esige
+≥2 mark fuori-anello. Risultato: foto 7 da gemello-a-764mm a VERA a 1.1mm,
+zero falsi con e senza denti, e il voto ha SCOPERTO che la posa A MANO di
+foto 1 della sessione-verità è un gemello a 180° (il vecchio «2/8» era
+1 vera + 1 falso mai visto). Cablato in `a`: il montaggio si accumula per
+sessione, i denti si accendono da soli dove il voto ha giurisdizione, e i
+messaggi diagnosticano «anello RIBALTATO» e «sessione col gemello». Resta
+il COLD START (sessione senza voto = senza arbitro) → prossima fetta:
+riconciliazione di sessione. *Settimana dal vivo (28–30/8), il collo di
+bottiglia si sposta sull'INTERFACCIA*: quattro sere di rifiuti su sessioni
+vere hanno esposto — nell'ordine — la trappola della focale di default (48 su
+camera da 44: obs del montaggio avvelenate, falsi GEMELLO; ora gate + focale
+nell'impronta + azzeramento su rifinitura/slider), lo stato stantio fra
+sessioni di lavoro, le proposte della vecchia posa che bloccavano la cura
+(ora la catena di soccorso riprova sui SOLI click a mano), e infine la causa
+a monte di tutto: **il pannello imponeva la faccia** che la posa credeva, e
+i nomi sbagliati nascevano lì — cura di Vincenzo, tre toggle per-anello
+(`:cage-face-choice`, con `:declared-faces` fino dentro `read-crown`), gate
+live pendente. Correzione di dominio dello stesso giro: **la gabbia è
+INCOLLATA**, il montaggio è una costante fisica → la dichiarazione `:phases`
+arma l'arbitro dalla prima foto (cold start chiuso per gabbie dichiarate) e
+uno specchiato accusa la registrazione, mai la gabbia. In coda, ad alto
+rendimento: memoria per-camera della focale, e la GABBIA ORIENTABILE COL
+GIZMO (idea di Vincenzo: quando il doppio pallino non si vede i nomi non
+hanno senso per costruzione — lui appaia la gabbia fisica alla foto;
+virtualizzarlo dà facce, nomi e un seme umano per 'a'). Foto 3 muore invece
+alla SELEZIONE (il suo
+anello non si assembla mai in un'ipotesi, nemmeno col concentrico — cablato
+dietro `:concentric?`, misurato identico). Banco `node out/cage-auto.js` su
+`test-assets/cage-battiscopa` (verità = la sessione a mano; `CAGE_AUTO_TEETH`
+/ `CAGE_AUTO_CONC` / `CAGE_AUTO_NOCTX` / `CAGE_AUTO_ZERO`). *Segmenti sul
+bordo (disegno di Vincenzo 3/9, per gli anelli visti di taglio dove i
+dischetti si spengono)*: modello+disegno 3/9, e dal 4/9 pomeriggio anche la
+GEOMETRIA DI STAMPA in `examples/print-cage.clj` — `cage/rim-spans` è
+l'unica fonte per disegno e plastica; le fasce condividono i layer col corpo
+(due colori per oggetto, AMS). Il detector guidato dalla posa è FATTO al
+banco (4/9 sera, `rim_detect.cljs`: le due foto che i dischetti rifiutavano
+si registrano dai trattini a rms 1.21px) e dal 5/9 è CABLATO in 'a'
+(`match-cage/rim-register`: gate di distanza dal seme + asticella di
+copertura al 2° giro; gate live pendente); misurato ma NON cablato
+l'automatismo delle traslazioni del seme (`eye-normalize-translation` —
+l'osservazione di Vincenzo sulla fatica del gizmo). Entry point
+`dev-docs/HANDOVER-cage-zero-click.md`; storia in
+`dev-docs/HANDOVER-cage-auto-detect.md`; banchi `node out/cage-study.js` e
+`node out/cage-fit.js`.
+
+**Fronte APERTO (2026-08-11): "SCATTA E REGISTRA"** — il telefono usato come
+webcam (Continuity Camera), un tasto, e il fotogramma entra nella sessione già
+registrato. Entry point `dev-docs/HANDOVER-grab-and-register.md`; complemento
+`dev-docs/brief-live-sources.md`.
+
+**Prima fetta COSTRUITA e GATE UMANO PASSATO (2026-08-11)**, su Logitech C922 a
+1920×1080, in Chrome su `localhost:9000` (in Tauri i permessi camera non ci sono
+ancora). Esito: `grab-01.jpg registrata ✓ rms 2.9px, corona 12/12, focale
+MISURATA dal piatto 31.1mm`, e il fit congiunto su 5 viste chiude a **28.4122mm /
+1.27px** — cioè lo stesso numero che un fotogramma singolo aveva misurato da solo
+(28.43), e coerente con i 78° di diagonale dichiarati dalla webcam. Una sessione
+tutta-webcam converge come quelle a foto.
+
+Cosa ha cambiato la fetta rispetto a come era stata proposta:
+
+- **la focale era il fronte, non un dettaglio.** Il primo fotogramma di una
+  sessione non ha né EXIF né una seconda vista contro cui fittare — e una focale
+  sbagliata non viene respinta, viene assorbita nella distanza: misurato, 20mm
+  invece di 28 dà rms 7.95px (sotto la soglia di 12) con la camera a 167mm
+  invece di 229. Risposta: `photogrammetry/plate-focal`, che ricava la focale dal
+  piatto in forma chiusa (vincoli di Zhang su un bersaglio piano). Esatta sulle
+  proiezioni esatte, ~1.5% con 0.5px di rumore, e **rifiuta per nome** un piatto
+  ripreso in faccia invece di inventare un numero;
+- **un difetto già presente**: la finestra di `blob/snap-to-blob` era fissa a
+  40px, tarata su foto da 4032px. Su un fotogramma da 1920px lo stesso dischetto
+  è ~8px e lo snap rifiutava in silenzio (6 mark su 12, 20px di scarto). Ora la
+  finestra vale 3 raggi del dischetto VISTO (`match-plate/snap-window-radius`):
+  12 su 12, 0.12px. Il percorso delle foto da telefono è invariato per
+  costruzione;
+- una cartella **vuota** ora apre (prima si rifiutava, negando l'accesso al
+  bottone che avrebbe creato le foto di cui si lamentava), e uno scatto è
+  misurato PRIMA di essere scritto: se non si registra non lascia niente;
+- **il gate stesso ha trovato due difetti**, entrambi corretti con regressione sui
+  blob VERI del fotogramma che aveva fallito. *(a)* «non si vede» non è «non c'è»:
+  un oggetto sul piatto copre il riferimento, e il messaggio unico «crown not
+  recognised» mandava a inquadrare meglio invece che a **girare il piatto** —
+  `fit-crown-explained` ora riporta il motivo. *(b)* la selezione della corona era
+  una scommessa: lo stadio 1 decideva da solo su un giudizio debole (conteggio
+  degli inlier), le ipotesi alternative erano quasi-copie della stessa, e sotto a
+  tutto un campionamento RANSAC che con 11 dischetti su 24 candidati aveva l'1.1%
+  di estrazioni utili su 250 tentativi. Ora: prime K ipotesi **diverse**, arbitrate
+  dallo stadio 2, con 1200 estrazioni. E la correzione ha reso il RIFIUTO
+  lentissimo (8s per passaggio, 49s per la scala delle focali: «non esce più»),
+  ripreso alla presa di controllo successiva — il costo non era la ricerca
+  dell'ellisse (14ms) ma l'identificazione di un anello PARZIALE, che enumera
+  `C(12,k)` sottoinsiemi: 24 candidati con k=12, 11088 con k=7. Ora solo gli anelli
+  vicini per taglia al migliore meritano un solve, e la scala si ferma su un
+  rifiuto definitivo: **509ms**;
+- **e il collaudo ha continuato a pagare**. *(c)* Un granello di sporco (raggio
+  4px contro i 13 di un dischetto) ha fatto da zero-indice a un fotogramma il cui
+  riferimento era coperto, **eleggendo la rotazione** — e il residuo di 1.9px non
+  lo smentiva, perché una corona simmetrica riproietta identica ruotata di 30°. Il
+  giudizio di presenza ora pesa la TAGLIA. *(d)* Il fit congiunto era marcato
+  `:manual` e veniva scavalcato dal primo scatto successivo (28.41mm su 5 viste →
+  27.25mm da uno solo): ora è `:refined`. *(e)* La pulizia degli outlier di
+  `solve-pnp` non partiva mai sui fotogrammi live — usciva appena sotto la soglia
+  di accettazione, e la soglia di "grossolano" era 30px assoluti (0.75% di 4032px,
+  enorme su 1920). Ogni foto teneva il suo punto peggiore: 1-5px su dieci
+  dischetti e uno a 26-34px, tre quarti dell'errore. Ora la soglia scala con
+  l'immagine e le due spie (rms per il danno sparso, `gross-outlier?` per quello
+  isolato) valgono in `or`.
+
+**Il piatto si può misurare — e la prima volta che l'abbiamo misurato non era
+storto (2026-08-13/14).** Vincenzo: «stampare un piatto perfetto è
+difficilissimo, per me e per chiunque provasse a utilizzare questa feature» —
+quindi la difficoltà si sposta dallo *stampare* al **misurare**, come per tutto il
+resto del canale. Costruito; e poi la verifica ha ribaltato la diagnosi che lo
+aveva motivato.
+
+**Come è andata, perché è la lezione.** Il residuo sparso fra 0.36 e 3.42px su 12
+viste sembrava spiegato: triangolando i mark si vedeva il ⌀300 imbarcato (mark 0
+a −1.63mm fuori piano). La calibrazione, costruita, confermava: 1.97mm sul mark
+peggiore, residuo da 2.18 a 1.78px. Due conti indipendenti d'accordo — e non
+provavano niente, **perché usavano gli stessi click**. La verifica vera è tenere
+fuori una foto alla volta e chiedere a chi non ha votato: così il piatto
+"misurato" peggiorava **otto foto su dodici**. Togliendo il solo mark 0, quattro
+foto crollano da 3.4/2.3/3.0/2.4px a 1.5/0.4/0.3/0.3 **sul piatto del modello**.
+Non era un piatto imbarcato: era un click sbagliato su un mark in quattro
+fotogrammi, sotto la soglia di `gross-outlier?`, e la calibrazione stava piegando
+il piatto attorno a quello.
+
+Quindi `C` adesso **si rifiuta di adottare** ciò che non supera la prova delle
+foto tenute fuori, e sulla sessione che l'ha motivato si rifiuta.
+
+**E poi si è trovata la causa vera, che valeva molto più della calibrazione.**
+Guardando il residuo PER MARK invece che per foto: ogni foto cattiva aveva
+esattamente UN pick sballato fra 6.1 e 9.4px, con tutti gli altri undici sotto il
+pixel. Non geometria: click sbagliati. `gross-outlier?` non li prendeva perché la
+sua metà assoluta valeva 0.75% della larghezza — 14.4px su 1920 — tarata sui
+CLICK A MANO, dove qualche pixel è la mano. Il rilevamento automatico dei
+dischetti centra a mezzo pixel, quindi lì un punto a 9px è venti volte gli altri
+ed è ovviamente sbagliato, e restava. Portata a 0.15% (2.9px su 1920, 6px su
+4032; sui click a mano comanda ancora la metà RELATIVA, quindi quel percorso non
+cambia), la stessa sessione passa da **2.1px a 0.6px**:
+
+    foto 1  2.24 → 1.05    foto 3  3.03 → 0.57    foto 4  3.42 → 1.14
+    foto 5  2.31 → 0.43    foto 11 2.74 → 0.31    foto 12 2.40 → 0.31
+
+E ricalibrando DOPO la pulizia, il piatto risulta piano entro **0.24mm**, che la
+verifica a foto tenute fuori non conferma neanche. Confermato dalla mano: Vincenzo
+ha fatto girare il piatto guardando un punto fisso — si alza in un punto solo del
+cerchio, meno di un millimetro. Il piatto è a posto; erano sei click.
+
+Confutate lungo la strada, con misure: la distorsione della lente (scansione di
+k1: minimo a −0.02 per uno 0.1% di guadagno) e il decentramento dei mark
+nell'immagine (le foto 9-12 hanno raggio medio identico, 248px, e residui da 0.36
+a 2.74).
+
+- `photogrammetry/plate-calib`: alterna triangolazione dei mark (pose ferme) e
+  PnP delle pose (mark fermi). Il **gauge** è il punto delicato: mark e pose
+  possono scivolare insieme senza cambiare un pixel (piatto ×s, camere ×s), quindi
+  a ogni giro i mark misurati vengono rimessi sul frame del modello — livellati,
+  centrati, ruotati e **scalati** al raggio nominale. Ne esce la FORMA, che le foto
+  sanno misurare; non la TAGLIA, che non sanno: quella resta `:d` e il calibro. Un
+  test lo pretende esplicitamente (un piatto del 5% più grande deve tornare della
+  taglia del MODELLO);
+- `plate-calib/cross-validate`: tiene fuori una vista alla volta, calibra sulle
+  altre, e chiede alla foto esclusa — con la posa risolta da capo su entrambi i
+  piatti, così a confronto c'è il PIATTO e non la registrazione — se il piatto
+  misurato le vada meglio del modello. È l'unico numero che distingua un piatto
+  imbarcato da un calcolo che si è mangiato il rumore;
+- il modo di default è `:out-of-plane`: un mark può spostarsi solo in
+  perpendicolare. La storia fisica (una stampante posa l'inchiostro a un decimo di
+  percento — 0.13mm su 133 di raggio — mentre la superficie si imbarca di
+  millimetri) l'avevo scritta come default PRIMA di misurarla, ed è stata smentita
+  sui dati veri (non salvava niente). Decisa poi per esperimento: su un piatto
+  sinteticamente imbarcato con 1.5px di rumore, tenute fuori, il vincolato dà
+  1.91px contro 2.06 del libero;
+- `C` riporta lo scostamento **diviso in tre** (fuori-piano, radiale,
+  tangenziale — tre difetti diversi) e **rifiuta** sia oltre il 3% del raggio sia
+  quando la prova delle foto tenute fuori non conferma;
+- **archiviato per PIATTO, non per sessione** (`~/.ridley/plates/`, per diametro e
+  numero di mark): un piatto si calibra una volta e vale per tutte le sessioni
+  future, che lo annunciano all'apertura. È ciò che rende la cosa utile a chi non
+  sia noi;
+- **difetto trovato per strada, vecchio e silenzioso**: `camera/rot-mat->rodrigues`
+  sbagliava ogni rotazione di **mezzo giro**. Ricavava i segni dell'asse da
+  `(m01 − m10)` e `(m02 − m20)`, che per una rotazione di π sono identicamente
+  ZERO perché quella matrice è simmetrica: i due test non potevano scattare. Chi ne
+  soffriva è `look-at-pose`, che costruisce `:t` dalla matrice e `:rvec` da qui —
+  cioè una camera che dichiarava un centro e fotografava da un altro. Una vista di
+  giradischi da +Y è esattamente un mezzo giro. Trovato perché la calibrazione di
+  un piatto PERFETTO tornava spostata di 7mm; era la vista 2 della scena
+  sintetica.
 
 Si dichiara un bordo dipingendolo su due foto e ne esce un segmento 3D misurato;
 da più bordi, il piano. Poi, dopo sei giri d'uso vero, Vincenzo ha chiesto di
@@ -62,7 +388,8 @@ dritti danno lo stesso piano senza appaiare niente. Manuale: nove schede nuove
 di una faccia — Vincenzo stesso dubita che paghi. **Non attaccato**: i punti
 2/4/5 della scala del brief, cioè i bordi come VINCOLI per le pose delle camere
 (oggi si misurano DA pose fisse e non le migliorano) — resta il pezzo grosso.
-Scoperto e non chiuso: manca la scheda di manuale di `edit-acquire`.
+Scoperto lì e poi chiuso: la scheda di manuale di `edit-acquire` (scritta
+2026-08-13, con la sezione sulla calibrazione del piatto).
 
 **Fronte (dal 2026-07): canale di acquisizione parametrica — SOSTANZIALMENTE
 CONSEGNATO.** Da foto su giradischi a geometria Ridley nativa, senza scanner.
@@ -457,6 +784,38 @@ utente).
 - **Design/storia**: `dev-docs/acquisizione-parametrica-design.md`; handover in
   `dev-docs/HANDOVER-edit-acquire-*.md` — leggere solo per il *perché* di una scelta.
 
+**Manuale, cap. 19 «Estendere Ridley» — accertamenti CHIUSI (2026-09-10).**
+Il brief `dev-docs/brief-ch19-accertamenti.md` (Vincenzo + Claude-manuale) ha
+avuto risposta punto per punto in `dev-docs/brief-ch19-accertamenti-risposte.md`,
+tutto misurato allo schermo. Cinque bug delle shape-fn corretti (heightmap
+`:fit :physical` su catene a due livelli, `shape-fn` con base parziale muta,
+`:fn` di shell senza `:softness`, `*path-length*` nil in revolve, `path->data`
+guscio vuoto), lo schema dei path che rifiutava `(register x (path …))` in dev,
+la regex delle librerie (`defonce` dentro, `^:private` fuori), `weave.clj`
+senza `register` a top level, `recursive-tree.clj` riscritto con `cone` e
+`turtle`, tre binding nuovi (`current-path-length`, `smoothstep`,
+`shape-centroid`, con schede). Spec §3/§4/§6/§17/§18.10 e Architecture 11.3.1
+aggiornati; ora tocca a Claude-manuale chiudere cap. 6 (dominio dell'angolo
+`(-π, π]`, «solo tapered dopo shell» falso), cap. 9 (header `;; Requires: a, b`,
+`defonce` sì) e la bozza del 19. D5 decisa da Vincenzo l'11/9 («tutta la UI sempre in
+inglese») e FATTA: ≈1.100 stringhe utente tradotte in tutta la famiglia
+acquire e nei file minori; la mappa delle etichette per il cap. 20 è nel file
+delle risposte.
+
+*Il piano a occhio esce da edit-acquire (2026-09-10/11)*: allineando un loft
+alla foto sono emersi due fatti. (1) edit-attach dentro un `turtle A :at :mark`
+valutava l'anteprima FUORI dal turtle, quindi gizmo e filo di ferro nascevano
+all'origine dopo il primo gesto — corretto misurando il moto rigido dal frame
+«da solo» alla sonda in scena (Architecture 11.2). (2) Il tasto `d` di
+edit-acquire non serve a niente lì dentro: la sessione nasconde la geometria
+dell'utente e non rilancia lo script, quindi un ancoraggio non si può giudicare
+sull'oggetto costruito sopra. Nasce `edit-plane-by-eye ⇄ plane-by-eye`, il
+gesto della `d` sul PALCOSCENICO: `:marks {:x (edit-plane-by-eye :big)}` semina
+il piano sull'anello, il gizmo lo porta sul pezzo, la geometria costruita sopra
+lo segue live, Invio scrive `(plane-by-eye :big {…})`. `edit-plane-mark` (tre
+punti misurati) resta com'è. La `d` è stata TOLTA da edit-acquire subito dopo,
+sopra il checkpoint `ed2984e`: restano a `k` i piani dichiarati del proxy.
+
 **Fronti chiusi di recente** (2026-07): famiglia mesh-split/mesh-board —
 spec ad albero, `split-tree`, viste di confronto, heal-slivers (brief
 relativi in `dev-docs/`, capitolo 18 delle guide). **Fronti in pausa
@@ -465,6 +824,10 @@ riprioritizzato dietro l'acquisizione parametrica — resta valido l'import
 OBJ, fatto).
 
 ---
+
+**Intermezzo (2026-09-14): meshing SDF di regioni schiacciate — FATTO.** `(sdf-torus 28 1)` usciva a perline (4-28 componenti) anche alzando la risoluzione: libfive dimensiona l'ottree dall'asse più corto della regione. `materialize` ora cubifica la regione (`cubify-bounds`, test in `auto_bounds_test`); vale per ogni modello con bounds piatti (anelli, piastre, dischi). Resta il χ=1 sporadico del dual contouring su tubi sottili — difetto di libfive, non nostro; per un toro pulito il `revolve` mesh resta la via.
+
+**RILASCIATA v3.8.0 (2026-09-15) — la gabbia di registrazione.** Tutto il pendente da v3.7.0 (183 commit): gabbia stampabile (`examples/print-cage.clj`, giunti gen 2, chiave, portapezzo) e zero-click (`a`, trattini sul bordo, seme dell'occhio, montaggio che arbitra i gemelli), palcoscenico con gabbia virtuale e ancora a occhio, memoria per-camera della focale, scatta-e-registra, UI in inglese, cap. 19-20 del manuale, fix SDF (regioni schiacciate, attach dalla creation-pose), export 3MF. Rilasciata da `main` come le precedenti; chiusura con `scripts/bump-cask.sh v3.8.0`. La v3.7.0 (2026-08-11, «gli spigoli dichiarati») non era stata annotata qui.
 
 ## Parte I — Breve termine
 

@@ -37,6 +37,7 @@
    the background) must be up even when the app itself is open in Chrome for
    REPL/hot-reload."
   (:require [clojure.string :as str]
+            [clojure.set :as set]
             [cljs.reader :as reader]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.codemirror :as cm]
@@ -44,21 +45,27 @@
             [ridley.editor.gizmo :as gizmo]
             [ridley.editor.acquire-backdrop :as backdrop]
             [ridley.editor.acquire-stage :as stage]
+            [ridley.editor.camera-capture :as camera]
             [ridley.editor.state :as state]
             [ridley.editor.ui :as ui]
             [ridley.geometry.primitives :as prims]
             [ridley.viewport.core :as viewport]
             [ridley.turtle.attachment :as attachment]
+            [ridley.turtle.core :as turtle]
             [ridley.photogrammetry.camera :as pcamera]
             [ridley.photogrammetry.exif :as exif]
             [ridley.photogrammetry.bridge :as bridge]
+            [ridley.photogrammetry.cage :as cage]
             [ridley.photogrammetry.edge-snap :as edge-snap]
             [ridley.photogrammetry.pnp :as pnp]
             [ridley.photogrammetry.fuse :as fuse]
             [ridley.photogrammetry.bundle :as bundle]
             [ridley.photogrammetry.blob :as blob]
             [ridley.photogrammetry.blob-detect :as blob-detect]
+            [ridley.photogrammetry.match-cage :as match-cage]
             [ridley.photogrammetry.match-plate :as match-plate]
+            [ridley.photogrammetry.plate-focal :as plate-focal]
+            [ridley.photogrammetry.plate-calib :as plate-calib]
             [ridley.photogrammetry.match :as match]
             [ridley.photogrammetry.turntable-fit :as tt]
             [ridley.photogrammetry.box-fit :as bf]
@@ -87,8 +94,19 @@
 ;;                                     hfov-deg (diagonal convention + the
 ;;                                     photo's aspect) wherever it feeds the
 ;;                                     backdrop/camera/intrinsics
-;;  :focal-source :exif|:manual|:default — provenance of :focal-mm, for the
-;;                                     panel's honest label
+;;  :focal-source :exif|:live|:refined|:manual|:remembered|:default — provenance of
+;;                                     :focal-mm, for the panel's honest label AND for
+;;                                     deciding whether a live grab may adopt its own
+;;                                     single-frame measurement (see
+;;                                     own-lens-sources). :live = measured off the
+;;                                     plate by a grabbed frame; :refined = the joint
+;;                                     fit over every view, which no single frame may
+;;                                     overwrite; :remembered = this camera's lens
+;;                                     from ~/.ridley/cameras.json, measured by a
+;;                                     past session (camera-lens-key)
+;;  :grab-camera "label @ w×h"         — which camera this session's grabs came
+;;                                     from; persisted, so a later 'R' can file
+;;                                     its measured lens under the right key
 ;;  :acquire-results {idx {:picks :matched :rms-px}} — `s`'s edge-snap outcome
 ;;                                     per photo, feeding both the filmstrip's
 ;;                                     badges and acquire-state.json
@@ -150,14 +168,14 @@
     (m/v+ (:position proxy-pose)
           (m/v+ (m/v* ex (* 0.5 w)) (m/v+ (m/v* ey (* 0.5 h)) (m/v* ez (* 0.5 d)))))))
 
-(declare trace-items mark-world-positions)
+(declare mark-world-positions cage-proxy? current-camera-pose)
 
-(def ^:private mark-color 0xff33cc)  ; magenta — placed marks, distinct from the retrace yellow
+(def ^:private mark-color 0xff33cc)  ; magenta — placed marks
 
 (defn- mark-dots-item
   "Placed named marks as always-on-top magenta dots — shared by every mode's
-   preview so a mark stays visible after leaving :mark (gizmo/navigation view),
-   the way the retrace trace does. Empty when no marks are placed."
+   preview so a mark stays visible after leaving :mark (gizmo/navigation view).
+   Empty when no marks are placed."
   []
   {:type :dots :data (mapv (fn [w] {:pos w :radius 1.3 :color mark-color :opacity 0.95})
                            (mark-world-positions))})
@@ -178,20 +196,348 @@
    The zero-index gets its own colour, because it is what breaks the crown's
    12-fold symmetry: with it you can tell not just where the plate is but which
    way round. Drawn even when the solid proxy is hidden ('v'), since hiding it to
-   read the photo is exactly when these are wanted."
+   read the photo is exactly when these are wanted.
+
+   A CAGE is handled by cage-marks-item instead (front-face culling, the
+   double pallini told apart, visibility tied to the proxy's own) — this
+   fn's all-anchors dump would draw both faces of every ring through the
+   plastic, which is how crowns get miscounted."
   []
   (when-let [as (seq (:anchors (:proxy-mesh @session)))]
-    {:type :dots
-     :data (mapv (fn [[k a]]
-                   {:pos (:position a)
-                    :radius (if (= k :zero) 1.3 1.0)
-                    :color (if (= k :zero) zero-dot-color crown-dot-color)
-                    :opacity 0.9})
-                 as)}))
+    (when-not (cage-proxy?)
+      {:type :dots
+       :data (mapv (fn [[k a]]
+                     (let [zero? (bridge/index-anchor? k)]
+                       {:pos (:position a)
+                        :radius (if zero? 1.3 1.0)
+                        :color (if zero? zero-dot-color crown-dot-color)
+                        :opacity 0.9}))
+                   as)})))
+
+(defn- cage-marks-item*
+  "Every mark of the cage's FRONT faces, riding the virtual proxy in the
+   alignment preview: the full crowns as azzurro dots, each face's DOUBLE
+   PALLINO — mark 0 big, zero-index small — in orange. Takes the mesh as an
+   argument so the Alt+drag peek can draw a ROTATED COPY; cage-marks-item is
+   the session-reading wrapper.
+
+   Two of Vincenzo's decisions, the second refining the first. The double
+   pallini (2026-08-31: «vedere dove finiscono i doppi pallini») are the one
+   printed figure that pins a crown's numbering AND its face, and the gauge of
+   the passetto rule (big disc → small pallino: CCW in the image = face p).
+   Then the whole crowns (2026-09-01): «dalla foto è difficile stabilire che
+   numero è un certo pallino — se sono visibili su quello virtuale si possono
+   contare guardando dietro eventuali ostacoli» — the virtual cage has no
+   sticks, no part and no glare, so counting discs on IT works where counting
+   on the photograph does not. This does not reopen the 2026-08-27 blanket
+   problem: that was the PICKING mode, where predicted dots sat exactly on the
+   discs being clicked; here they ride the proxy in the alignment view, and
+   the picking mode keeps its own sparse dots.
+
+   FRONT faces only (same per-mark test as bridge/pnp-target-points): a disc
+   of a face looking away would show through the plastic, and counting through
+   the plastic is exactly how crowns get misread. With no camera pose yet,
+   nothing is culled. Shown and hidden WITH the proxy ('v'): the dots are part
+   of the virtual cage, not an overlay on the photo — Vincenzo 2026-09-01,
+   reversing the first cut, which kept the pallini always on."
+  [proxy-mesh]
+  (let [mesh proxy-mesh]
+    (when (:cage-d mesh)
+      (let [cam-pos (:position (current-camera-pose))
+            front? (fn [{:keys [position heading]}]
+                     (or (nil? cam-pos)
+                         (pos? (m/dot (m/normalize heading) (m/v- cam-pos position)))))
+            dots (for [[id a] (sort-by key (:anchors mesh))
+                       :when (front? a)]
+                   (cond
+                     (bridge/index-anchor? id)
+                     {:pos (:position a) :radius 1.1 :color zero-dot-color :opacity 0.95}
+
+                     (= 0 (:index (cage/mark-parts id)))
+                     {:pos (:position a) :radius 1.8 :color zero-dot-color :opacity 0.95}
+
+                     :else
+                     {:pos (:position a) :radius 1.0 :color crown-dot-color :opacity 0.9}))]
+        (when (seq dots)
+          {:type :dots :data (vec dots)})))))
+
+(defn- cage-marks-item [] (cage-marks-item* (:proxy-mesh @session)))
+
+(def ^:private cage-tab-color 0x7fd17f)     ; verde: alette d'incollaggio e fermi
+(def ^:private cage-key-pin-color 0xff5533) ; rosso: la spina della chiave di montaggio
+(def ^:private cage-slot-color 0x8899aa)    ; grigio-azzurro: i box porta-stick
+(def ^:private cage-channel-color 0xe8f0ff) ; quasi bianco: la bocca del canale
+(def ^:private cage-rim-color 0x4455ee)     ; blu: i segmenti sul bordo (rim marks)
+
+(def ^:private cage-axis-colors
+  "Ring-identity colours, ONE source for the drawn cage's ring outlines and
+   for the rotation circles of the pose controls (Vincenzo 5/9: «disegnamo i
+   ring del proxy del colore degli anelli di controllo») — so the circle you
+   grab and the ring it turns read as the same thing."
+  {:x "#ff6b57" :y "#7ec14b" :z "#7986ff"})
+
+(defn- axis-color-int [axis]
+  (js/parseInt (subs (cage-axis-colors axis) 1) 16))
+
+(defn- box-corners
+  "The 8 corners of a box: `center`, three orthonormal `axes`, and the
+   half-extent along each. Corners are indexed by three bits, one per axis, so
+   the faces and edges below are index arithmetic. Oriented rather than
+   axis-aligned because the stick-slot bodies stand at their own azimuth on
+   their ring, unlike the tabs."
+  [center axes halves]
+  (mapv (fn [i]
+          (reduce (fn [p [b e h]] (m/v+ p (m/v* e (if (bit-test i b) h (- h)))))
+                  center
+                  (map vector [0 1 2] axes halves)))
+        (range 8)))
+
+(defn- aabb-corners
+  "box-corners for a {:center :size} box in cage coordinates (the tabs)."
+  [{:keys [center size]}]
+  (box-corners center
+               [[1.0 0.0 0.0] [0.0 1.0 0.0] [0.0 0.0 1.0]]
+               (mapv #(/ % 2.0) size)))
+
+(defn- box-faces
+  "Triangles over box-corners' indexing, offset into a merged vertex vector.
+   Winding is not curated: the material these feed is double-sided."
+  [offset]
+  (into [] (mapcat (fn [[a b c d]] [[(+ offset a) (+ offset b) (+ offset c)]
+                                    [(+ offset a) (+ offset c) (+ offset d)]]))
+        [[0 1 3 2] [4 6 7 5] [0 4 5 1] [2 3 7 6] [0 2 6 4] [1 5 7 3]]))
+
+(defn- box-edges
+  "The 12 edges of a corner vector as [from to] pairs — an edge wherever two
+   corner indices differ in exactly one bit."
+  [corners]
+  (for [i (range 8)
+        b (range 3)
+        :let [j (bit-or i (bit-shift-left 1 b))]
+        :when (> j i)]
+    [(nth corners i) (nth corners j)]))
+
+(defn- ellipse-loop
+  "Closed polyline of an ellipse centred at `c`, semi-axis `r1` along `e1` and
+   `r2` along `e2`, as [from to] pairs. `n` segments (default 20 — the ring
+   outlines pass 48: a full ring drawn 20-sided reads as a polygon)."
+  ([c e1 r1 e2 r2] (ellipse-loop c e1 r1 e2 r2 20))
+  ([c e1 r1 e2 r2 n]
+   (let [pt (fn [i] (let [a (* 2.0 Math/PI (/ (double i) n))]
+                      (m/v+ c (m/v+ (m/v* e1 (* r1 (Math/cos a)))
+                                    (m/v* e2 (* r2 (Math/sin a)))))))
+         pts (mapv pt (range n))]
+     (map vector pts (conj (subvec pts 1) (first pts))))))
+
+(defn- cage-feature-items*
+  "The cage's PRINTED features drawn over the photo, riding the given mesh's
+   pose (an argument, so the Alt+drag peek can draw a rotated COPY;
+   cage-feature-items is the session-reading wrapper):
+   the glue tabs with their stop lips (alette, green), the assembly key's pin
+   (spina, red), and the stick-slot bodies with the elliptical mouth of their
+   channel at each end (i box forati, grey-blue).
+
+   The bare rings are not enough to align by eye, and Vincenzo said why
+   (2026-08-31): on the print, these features are what tells him the position
+   even when the zero-indices are hidden. And they carry more than recognition —
+   the tabs rise off ONE face of each ring and the key pin is asymmetric on
+   purpose, so they are exactly what distinguishes a pose from its mirror twin:
+   a naked annulus matches its own reflection, an annulus with its tab does not.
+   Without them the align-by-eye gesture would inherit the very twin ambiguity
+   it exists to kill.
+
+   Tabs and pin are SOLID translucent boxes, not just edges — the first cut was
+   edge-only and Vincenzo couldn't use them («si vedono, ma in wireframe...
+   dovrebbero essere un po' più evidenti», 2026-08-31). Translucent rather than
+   opaque on purpose: the drawn aletta gets aligned TO the photographed one, so
+   the photo must stay readable through it. The edge lines stay on top of the
+   fill for a crisp outline.
+
+   The slot bodies joined the tabs on 2026-09-01, at Vincenzo's request: «anche
+   loro sono elementi chirali riconoscibili che facilitano il confronto tra
+   l'immagine virtuale della gabbia e la foto» — and he is right twice over,
+   since a slot body rises from ONE face of its ring, so like the tabs it is a
+   feature the mirror twin cannot reproduce. The first cut drew them as flat
+   lozenges, which read as decoration rather than as the blocks they are.
+
+   The key NOTCH is still not drawn: it is a cut, and a box there would show
+   material the print does not have. The STICKS are not drawn either — the
+   model knows the slots (printed, fixed) but not which sticks were threaded
+   through them this session.
+
+   Geometry comes from the same :tabs/:stick-slots the print rides on
+   (cage/joint-tabs, cage/stick-slots — cage coordinates), lifted to world at
+   :creation-pose, so the drawn cage and the printed cage cannot drift apart.
+   Returns a vector of preview items; nil on anything that is not a cage."
+  [proxy-mesh]
+  (let [mesh proxy-mesh]
+    (when (and (:cage-d mesh) (seq (:tabs mesh)))
+      (let [pose (:creation-pose mesh)
+            w #(bridge/local->world pose %)
+            ;; several boxes merged into ONE translucent mesh per colour: one
+            ;; preview item instead of a dozen, and the vertex offsets are why
+            ;; box-faces takes one
+            solid (fn [corner-sets color opacity]
+                    (when (seq corner-sets)
+                      (let [{:keys [verts faces]}
+                            (reduce (fn [{:keys [verts faces]} cs]
+                                      {:verts (into verts cs)
+                                       :faces (into faces (box-faces (count verts)))})
+                                    {:verts [] :faces []}
+                                    corner-sets)]
+                        {:type :mesh
+                         :data {:vertices (mapv w verts)
+                                :faces faces
+                                :material {:color color :opacity opacity
+                                           :double-sided true
+                                           :metalness 0.0 :roughness 0.9}}})))
+            segs (fn [pairs color]
+                   (map (fn [[a b]] {:from (w a) :to (w b) :color color}) pairs))
+            by-kind (group-by :kind (:tabs mesh))
+            corners-of (fn [ts] (mapv aabb-corners ts))
+            tab-corners (corners-of (into (vec (:lap by-kind)) (:stop by-kind)))
+            pin-corners (corners-of (:key-pin by-kind))
+            ;; a slot body stands at its own azimuth on its ring, so it is an
+            ;; ORIENTED box: across the channel, along the ring's axis (the
+            ;; face it rises from — the chiral half of the cue), along the
+            ;; channel itself
+            slot-boxes (mapv (fn [{:keys [position heading up body-w body-h body-len body-lift]}]
+                               (let [side (m/normalize (m/cross heading up))]
+                                 (box-corners (m/v+ position (m/v* up body-lift))
+                                              [side up heading]
+                                              [(/ body-w 2.0) (/ body-h 2.0) (/ body-len 2.0)])))
+                             (:stick-slots mesh))
+            ;; the HOLE, drawn as its elliptical mouth at both ends of the body:
+            ;; a slot the stick cannot be seen to pass through is just a block,
+            ;; and the print is unmistakable about being pierced
+            channel-segs (mapcat (fn [{:keys [position heading up channel-lift channel-r body-len]}]
+                                   (let [side (m/normalize (m/cross heading up))
+                                         [r-across r-up] channel-r
+                                         c (m/v+ position (m/v* up channel-lift))
+                                         half (/ body-len 2.0)]
+                                     (mapcat (fn [s]
+                                               (ellipse-loop (m/v+ c (m/v* heading (* s half)))
+                                                             side r-across up r-up))
+                                             [1.0 -1.0])))
+                                 (:stick-slots mesh))
+            ;; Vincenzo's rim segments (cage/rim-segments — drawn only when the
+            ;; proxy DECLARES them, :rim-marks?): ribbons on the outer wall,
+            ;; half thickness toward the print face p, the zero broken at 2/3.
+            ;; A hair off the wall (r-off) so they never z-fight the mesh.
+            rim-pieces (mapcat :pieces (cage/rim-segments mesh :r-off 0.15))
+            rim-ribbon (when (seq rim-pieces)
+                         (let [{:keys [verts faces]}
+                               (reduce (fn [{:keys [verts faces]} {:keys [lo hi]}]
+                                         (let [b (count verts)
+                                               s (count lo)]
+                                           {:verts (into (into verts lo) hi)
+                                            :faces (into faces
+                                                         (mapcat (fn [i]
+                                                                   [[(+ b i) (+ b i 1) (+ b s i 1)]
+                                                                    [(+ b i) (+ b s i 1) (+ b s i)]])
+                                                                 (range (dec s))))}))
+                                       {:verts [] :faces []}
+                                       rim-pieces)]
+                           {:type :mesh
+                            :data {:vertices (mapv w verts)
+                                   :faces faces
+                                   :material {:color cage-rim-color :opacity 0.8
+                                              :double-sided true
+                                              :metalness 0.0 :roughness 0.9}}}))
+            rim-edge-pairs (mapcat (fn [{:keys [lo hi]}]
+                                     (concat (map vector lo (rest lo))
+                                             (map vector hi (rest hi))
+                                             [[(first lo) (first hi)]
+                                              [(peek lo) (peek hi)]]))
+                                   rim-pieces)
+            ;; each ring DRESSED in its identity colour — the same colour as
+            ;; its rotation circle in the pose controls (cage-axis-colors), so
+            ;; «quale cerchio muove quale anello» reads at a glance (Vincenzo
+            ;; 5/9). A thin outline alone was invisible against the proxy
+            ;; mesh's own blue (his report: «sempre tutti blu»), so each ring
+            ;; face carries a translucent ANNULUS fill, tab-style, plus the
+            ;; crisp outline at the outer edge. One mesh item per ring —
+            ;; colours can't share a material.
+            ring-basis (fn [axis]
+                         (case axis
+                           :x [[1.0 0.0 0.0] [0.0 1.0 0.0] [0.0 0.0 1.0]]
+                           :y [[0.0 1.0 0.0] [0.0 0.0 1.0] [1.0 0.0 0.0]]
+                           :z [[0.0 0.0 1.0] [1.0 0.0 0.0] [0.0 1.0 0.0]]))
+            ring-circle (fn [c e1 e2 r n]
+                          (mapv (fn [i]
+                                  (let [t (* 2.0 Math/PI (/ (double i) n))]
+                                    (m/v+ c (m/v+ (m/v* e1 (* r (Math/cos t)))
+                                                  (m/v* e2 (* r (Math/sin t)))))))
+                                (range n)))
+            ring-fills (when (:cage-h mesh)
+                         (let [zoff (+ (/ (:cage-h mesh) 2.0) 0.15)
+                               n 48]
+                           (mapv
+                            (fn [{:keys [axis inner outer]}]
+                              (let [[a e1 e2] (ring-basis axis)
+                                    {:keys [verts faces]}
+                                    (reduce
+                                     (fn [{:keys [verts faces]} s]
+                                       (let [c (m/v* a (* s zoff))
+                                             lo (ring-circle c e1 e2 inner n)
+                                             hi (ring-circle c e1 e2 outer n)
+                                             b (count verts)]
+                                         {:verts (into (into verts lo) hi)
+                                          :faces (into faces
+                                                       (mapcat (fn [i]
+                                                                 (let [j (mod (inc i) n)]
+                                                                   [[(+ b i) (+ b j) (+ b n j)]
+                                                                    [(+ b i) (+ b n j) (+ b n i)]]))
+                                                               (range n)))}))
+                                     {:verts [] :faces []}
+                                     [1.0 -1.0])]
+                                {:type :mesh
+                                 :data {:vertices (mapv w verts)
+                                        :faces faces
+                                        ;; 0.8 like the rim ribbons, NOT the
+                                        ;; tabs' 0.35: under the annulus sits
+                                        ;; the proxy mesh's own BLUE, and at
+                                        ;; 0.35 the mix ate the hue — rosso+blu
+                                        ;; = grigio, misurato da Vincenzo
+                                        ;; («X è grigio e basta»). The photo
+                                        ;; is not behind it, the mesh is.
+                                        :material {:color (axis-color-int axis)
+                                                   :opacity 0.8
+                                                   :double-sided true
+                                                   :metalness 0.0 :roughness 0.9}}}))
+                            (:rings mesh))))
+            ring-outlines (when (:cage-h mesh)
+                            (let [h2 (+ (/ (:cage-h mesh) 2.0) 0.15)]
+                              (mapcat
+                               (fn [{:keys [axis outer]}]
+                                 (let [[a e1 e2] (ring-basis axis)
+                                       r (+ outer 0.15)
+                                       col (axis-color-int axis)]
+                                   (mapcat (fn [s]
+                                             (segs (ellipse-loop (m/v* a (* s h2))
+                                                                 e1 r e2 r 48)
+                                                   col))
+                                           [1.0 -1.0])))
+                               (:rings mesh))))]
+        (into (vec ring-fills)
+              (remove nil?)
+              [(solid tab-corners cage-tab-color 0.55)
+               (solid pin-corners cage-key-pin-color 0.85)
+               (solid slot-boxes cage-slot-color 0.5)
+               rim-ribbon
+               {:type :lines
+                :data (vec (concat (segs (mapcat box-edges tab-corners) cage-tab-color)
+                                   (segs (mapcat box-edges pin-corners) cage-key-pin-color)
+                                   (segs (mapcat box-edges slot-boxes) cage-slot-color)
+                                   (segs channel-segs cage-channel-color)
+                                   (segs rim-edge-pairs cage-rim-color)
+                                   ring-outlines))}])))))
+
+(defn- cage-feature-items [] (cage-feature-items* (:proxy-mesh @session)))
 
 (defn- proxy-preview-items
-  "The proxy mesh, plus the traced bezels and placed named marks (appended so they
-   stay visible after leaving :retrace/:mark and reproject as the camera moves).
+  "The proxy mesh, plus the placed named marks (appended so they stay visible
+   after leaving :mark and reproject as the camera moves).
    The SOLID proxy is under the 'v' / 'Nascondi proxy' toggle (Vincenzo 2026-07-23):
    while registering it covers the photo, so it can be dropped to read the photo
    underneath. Marker dots pared back (Vincenzo 2026-07-24: 'ce ne sono troppi'):
@@ -203,13 +549,20 @@
   (let [red-corner (when (= :marker (:mode @session))
                      {:type :dots :data [{:pos (corner-marker-pos) :radius 3.0 :color 0xff3333}]})
         crown (plate-crown-item)
+        ;; the printed features hide together with the proxy ('v'): they are an
+        ;; alignment aid, and 'v' means "let me read the photo naked"
+        cage-features (when-not (:hide-proxy? @session) (cage-feature-items))
+        ;; marks come and go WITH the proxy ('v'): they are part of the virtual
+        ;; cage, not an overlay on the photo (Vincenzo 2026-09-01)
+        cage-marks (when-not (:hide-proxy? @session) (cage-marks-item))
         base (cond-> (if (:hide-proxy? @session)
                        []
                        [{:type :mesh :data (:proxy-mesh @session)}])
+               (seq cage-features) (into cage-features)
+               cage-marks (conj cage-marks)
                crown (conj crown)
                red-corner (conj red-corner))]
-    (conj (into base (trace-items))
-          (mark-dots-item))))
+    (conj base (mark-dots-item))))
 
 ;; ------------------------------------------------------------
 ;; P4b — frustum nel mondo (brief "Le foto, in tre stati", stato 1)
@@ -251,7 +604,7 @@
             (:camera-poses @session)))))
 
 (defn- stage-free-preview-items
-  "Free-orbit stage preview: the object (proxy + ricalchi + marks) plus the ghost
+  "Free-orbit stage preview: the object (proxy + marks) plus the ghost
    camera frustums. Used ONLY in free orbit (enter-stage!/leave-pose!); the in-pose
    and Phase-1 previews stay proxy-preview-items (no frustums)."
   []
@@ -279,9 +632,13 @@
 (defn- parse-session-json [text]
   (let [obj (js/JSON.parse text)]
     {:photos (mapv (fn [[file theta]] {:file file :theta theta})
-                   (js->clj (.-photos obj)))}))
+                   (js->clj (.-photos obj)))
+     ;; the WHOLE document, so appending a grabbed frame rewrites the film without
+     ;; dropping the keys this editor doesn't read (:bootstrap, :caliper — the
+     ;; CLI's, and its own to keep)
+     :doc (js->clj obj :keywordize-keys true)}))
 
-(declare set-status-message!)
+(declare set-status-message! auto-log! corner-labels)
 
 (defn- load-exif-focal!
   "Read the 35mm-equivalent focal length from photo 0's EXIF and adopt it as
@@ -302,9 +659,17 @@
   (let [{:keys [focal-mm focal-source]} @session
         mm (js/Math.round focal-mm)]
     (set-status-message!
-     (if (= focal-source :exif)
-       (str "Focale da EXIF: " mm "mm")
-       (str "EXIF senza focale — uso " mm "mm (regola con lo slider)")))))
+     (case focal-source
+       :exif (str "Focal from EXIF: " mm "mm")
+       ;; measured off the plate itself by a live grab — say WHERE it came from,
+       ;; because "no EXIF" would now be a lie about a number that was measured
+       :live (str "Focal measured off the plate: " mm "mm")
+       :refined (str "Focal refined over all views: " mm "mm")
+       :manual (str "Focal set by hand: " mm "mm")
+       ;; from ~/.ridley/cameras.json — measured on this same camera by a past
+       ;; session; honest about being memory, not a fresh measurement
+       :remembered (str "Focal remembered for this camera: " mm "mm")
+       (str "No focal in EXIF — using " mm "mm (adjust with the slider)")))))
 
 ;; ============================================================
 ;; Transient panel messages (edit-mesh-split's own pattern: capture-println
@@ -314,8 +679,25 @@
 
 (declare update-panel!)
 
-(defn- set-status-message! [msg]
+(defn- set-status-message!
+  "Show `msg` on the panel's status line AND keep a copy in the REPL stream.
+
+   The status line clears itself after four seconds, which is right for a line
+   that must not go stale but wrong for anything worth reading twice — and the
+   messages this channel produces are long, and arrive exactly when the user is
+   looking at the photograph instead of at the panel (Vincenzo, 2026-08-19: 'non
+   faccio in tempo a leggerli che spariscono'). The diagnoses are the whole point
+   of them: which disc was renamed, which ring looks glued round, why a solve was
+   refused. So the flash stays for immediacy and the REPL keeps the record.
+
+   Consecutive duplicates are dropped, since a gesture repeated on the same
+   obstacle (clicking off the declared plane, say) would otherwise fill the
+   stream with one sentence."
+  [msg]
   (when-let [t (:status-msg-timer @session)] (js/clearTimeout t))
+  (when (and msg (not= msg (:last-logged-status @session)))
+    (auto-log! msg)
+    (swap! session assoc :last-logged-status msg))
   (swap! session assoc
          :status-message msg
          :status-msg-timer (js/setTimeout
@@ -376,6 +758,7 @@
        (reduce (fn [acc [g pick]] (update acc g (fnil conj []) pick)) {})))
 
 (declare save-acquire-state!)
+(declare derive-faces-from-pose!)
 
 ;; ============================================================
 ;; Blindato branch lock ('m'): the Klein-twin fix (fix (1) of
@@ -429,6 +812,39 @@
   []
   (boolean (seq (:anchors (:proxy-mesh @session)))))
 
+(defn- cage-proxy?
+  "True when the session's proxy is a registration CAGE. It is a plate-proxy?
+   too — same per-photo PnP on named marks — but the automatic paths (Auto, the
+   batch assignment) are built on the plate's ONE crown plus its zero-index,
+   and a cage has six crowns and no `:zero`. Those paths already refuse it for
+   want of a zero-index; this only lets them say WHY in terms of what the user
+   is holding, instead of advising a plate they deliberately aren't using.
+   The live Grab branches on it too — not to refuse, but to KEEP the frame
+   unregistered (keep-live-frame-unregistered!): a cage frame can only be
+   registered by hand, and only if it is in the film."
+  []
+  (boolean (:cage-d (:proxy-mesh @session))))
+
+(defn- no-auto-on-cage-msg
+  "The one sentence a PLATE-shaped automatic path owes a cage session — the batch
+   assignment, built on the plate's single crown and its zero-index. (The live
+   grab was the other caller until 2026-08-27: it now KEEPS a cage frame
+   unregistered instead of bouncing it — keep-live-frame-unregistered! — so only
+   register-live-frame's defensive branch still says this.)
+
+   It used to say the cage had no automatic recognition at all. It has one since
+   2026-08-24 ('a', see cage-read-and-place!), and it is seeded rather than
+   zero-click for a reason worth passing on rather than hiding: the detector finds
+   the discs, but a crown of twelve equal marks cannot say which of them is mark
+   zero — no photograph can — so four clicks on one ring are what the automatic
+   path is standing on. Sending the user to 'a' costs them four clicks; leaving
+   this sentence stale would cost them the feature."
+  []
+  (str "This automatic path is built for the plate's crown. On a cage: "
+       "click 4 discs on ONE ring with 'p' (the zero-index, if you can see it, counts "
+       "double), then press 'a' — what says how the crown must be read is the rest of the "
+       "cage, not the ring."))
+
 (defn- on-snap!
   "Photo 0: the gizmo just moved the PROXY, camera fixed — apply the refined
    pose to the proxy (bridge/solver-pose->proxy), a rigid transform via
@@ -449,8 +865,8 @@
           result (match/refine-from-pose dims intrinsics picks seed-pose {})]
       (if (or (nil? result) (< (:matched result) min-matched-edges))
         (set-status-message!
-         (str "Snap insufficiente (" (if result (:matched result) 0)
-              " spigoli agganciati, ne servono almeno " min-matched-edges ")"))
+         (str "Snap insufficient (" (if result (:matched result) 0)
+              " edges snapped, need at least " min-matched-edges ")"))
         (let [idx (:current-idx @session)]
           (if (zero? idx)
             (let [new-proxy-pose (bridge/solver-pose->proxy (:pose result) camera-pose)
@@ -468,7 +884,7 @@
           (swap! session assoc-in [:acquire-results idx]
                  {:picks picks :matched (:matched result) :rms-px (:rms-px result)})
           (set-status-message!
-           (str (:matched result) " spigoli agganciati, residuo "
+           (str (:matched result) " edges snapped, residual "
                 (.toFixed (:rms-px result) 2) " px"))
           (save-acquire-state!)))))
   (update-panel!))
@@ -540,8 +956,8 @@
       (viewport/set-camera-pose! (get-in @session [:camera-poses (:current-idx @session)])))
     (set-status-message!
      (if (zero? @predicted)
-       "Fit congiunto: tutte le foto sono già registrate (niente da predire)"
-       (str "Fit congiunto: predette " @predicted " foto non ancora registrate")))
+       "Joint fit: every photo is already registered (nothing to predict)"
+       (str "Joint fit: predicted " @predicted " photos not yet registered")))
     (save-acquire-state!)))
 
 (defn- on-fit-turntable! []
@@ -566,14 +982,14 @@
       (if (< (count photos-with-picks) min-photos-for-turntable-fit)
         (set-status-message!
          (if (and (pos? snapped-total) (zero? (count photos-with-picks)))
-           (str "Fit congiunto non applicabile: le " snapped-total
-                " foto agganciate sono tutte fuori-anello (θ=libera). "
-                "Registra col PnP: premi 'p' e clicca i mark del piatto, non 's'/'f'.")
-           (str "Fit congiunto: servono almeno " min-photos-for-turntable-fit
-                " foto agganciate con 's' (ce ne sono " (count photos-with-picks) ")")))
+           (str "Joint fit not applicable: the " snapped-total
+                " snapped photos are all out-of-ring (θ=free). "
+                "Register with PnP: press 'p' and click the plate's marks, not 's'/'f'.")
+           (str "Joint fit: needs at least " min-photos-for-turntable-fit
+                " photos snapped with 's' (there are " (count photos-with-picks) ")")))
         (if-let [tt-result (match/fit-turntable-seeded dims intrinsics photos-with-picks {:sigma-px 1.0})]
           (apply-turntable-fit! tt-result proxy-pose)
-          (set-status-message! "Fit congiunto: nessuna soluzione trovata")))))
+          (set-status-message! "Joint fit: no solution found")))))
   (update-panel!))
 
 ;; ============================================================
@@ -746,10 +1162,23 @@
                         (let [dir (m/v+ (m/v* ex a) (m/v+ (m/v* ey b) (m/v* ez c)))]
                           [(m/dot dir right-C) (m/dot dir up-C) (m/dot dir heading-C)]))
                 ;; {:axis :sign :offset} plane → remap its normal to the new frame axis.
-                remap-plane (fn [{:keys [axis sign offset]}]
-                              (let [nrm (remap (assoc [0.0 0.0 0.0] axis (double sign)))
-                                    a (apply max-key #(Math/abs ^double (nth nrm %)) [0 1 2])]
-                                {:axis a :sign (if (>= (nth nrm a) 0) 1 -1) :offset offset}))]
+                remap-plane (fn [{:keys [axis sign offset base]}]
+                              ;; a FREELY placed plane may carry no preset at all;
+                              ;; remapping a face that isn't there is what broke the
+                              ;; session open on 2026-08-21
+                              (let [nrm (when (and (number? axis) (number? sign))
+                                          (remap (assoc [0.0 0.0 0.0] axis (double sign))))
+                                    a (when nrm (apply max-key #(Math/abs ^double (nth nrm %)) [0 1 2]))]
+                                (cond-> {:offset offset}
+                                  a (assoc :axis a :sign (if (>= (nth nrm a) 0) 1 -1))
+                                  ;; a FREE plane is a pose, so it rides the same
+                                  ;; remap the marks and normals do — position as a
+                                  ;; point, heading/up as directions
+                                  base (assoc :base
+                                              {:position (m/v+ build-pos
+                                                               (Mv (m/v- (:position base) center)))
+                                               :heading (remap (:heading base))
+                                               :up (remap (:up base))}))))]
             (swap! session update :proxy-mesh
                    (fn [m]
                      (let [xform-pt (fn [v] (m/v+ build-pos (Mv (m/v- v center))))]
@@ -779,10 +1208,6 @@
                                            :heading (Mv (:heading p))
                                            :up (Mv (:up p))}]))
                            cps)))
-            (swap! session update :ricalchi
-                   (fn [rs] (mapv (fn [r] (-> r
-                                              (update :points #(mapv remap %))
-                                              (update :plane remap-plane))) rs)))
             (swap! session update :marks
                    (fn [ms] (mapv (fn [mk] (cond-> (update mk :position remap)
                                              (:normal mk) (update :normal remap))) ms)))
@@ -826,6 +1251,15 @@
     (transport-registered-cameras! old-pose (get-in @session [:proxy-mesh :creation-pose])))
   (viewport/show-preview! (proxy-preview-items))
   (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))
+  ;; The proxy just moved under photo 0's frozen camera: the relative pose
+  ;; changed, so this photo's faces are re-read from it. The other photos'
+  ;; cameras were transported RIGIDLY above, so their readings still hold.
+  (derive-faces-from-pose! (:current-idx @session))
+  ;; …and the aligned pose becomes this photo's EYE SEED: a commit is the
+  ;; human act «prendo in mano la gabbia e la appaio», which is exactly what
+  ;; 'a' may gate its hypotheses by. Only committed poses earn the stamp — a
+  ;; bare turntable seed gating the automatic would kill true readings.
+  (swap! session update :eye-posed (fnil conj #{}) (:current-idx @session))
   ;; Persist the hand-aligned proxy pose. Only the solver paths ('s'/'r'/'f')
   ;; used to save, so a manual gizmo alignment was lost on re-entry — the root of
   ;; "realign the proxy every test" (Vincenzo 2026-07-25). The proxy pose is the
@@ -934,7 +1368,401 @@
     ;; The widget's own live rotation/translation (also just a preview effect)
     ;; needs the same reset, back onto the frozen proxy pose.
     (gizmo/update-pose! (get-in @session [:proxy-mesh :creation-pose]))
+    ;; This photo's camera just moved: re-read its faces from the new pose.
+    (derive-faces-from-pose! idx)
+    ;; a commit is the human act — the pose becomes this photo's eye seed
+    ;; for 'a' (see on-photo0-commit's twin stamp)
+    (swap! session update :eye-posed (fnil conj #{}) idx)
     (save-acquire-state!)))
+
+;; ============================================================
+;; Cursori di posa — il controllo disegnato da Vincenzo (5/9)
+;; ------------------------------------------------------------
+;; «Il proxy è già gizmo di se stesso»: le rotazioni si fanno sul disegno
+;; (fetta successiva), le TRASLAZIONI con tre cursori ai bordi della foto —
+;; in assi SCHERMO, non assi gabbia (concordato 5/9 sera): sinistra = su/giù,
+;; sopra = destra/sinistra, sotto = vicino/lontano. Il vicino/lontano scala
+;; la distanza camera↔pivot lungo la loro congiungente, quindi il pixel del
+;; pivot è INVARIANTE: la gabbia resta ferma sullo schermo e cambia taglia —
+;; la fatica che questo controllo esiste per togliere (misurato su foto 5:
+;; l'allineamento a mano muore oltre il bacino ±12° dei trattini, e i
+;; cursori sono la via per rientrarci). I cursori sono A MOLLA: il drag è
+;; relativo, al rilascio il pomello torna al centro. Un drag muove il
+;; DISEGNO della gabbia: su foto 0 trasla il proxy (le camere registrate
+;; trasportate rigidamente al rilascio, come on-photo0-commit!), sulle
+;; altre muove la CAMERA all'inverso (come apply-inverted). Il rilascio è
+;; un commit umano: :eye-posed, :manual?, save — il seme di 'a'.
+;; ============================================================
+
+(def ^:private pose-sliders-state (atom nil))
+
+(declare refresh-pose-rings-geometry!)
+
+(def ^:private pose-dolly-k
+  "Dolly sensitivity: 300px of drag = ×2 (or ÷2) on the camera↔cage
+   distance. Repeated drags compound, so the full range stays reachable."
+  (/ (js/Math.log 2.0) 300.0))
+
+(defn- remove-pose-sliders! []
+  (when-let [{:keys [els]} @pose-sliders-state]
+    (doseq [^js el els]
+      (some-> (.-parentElement el) (.removeChild el))))
+  (reset! pose-sliders-state nil))
+
+(defn- pose-nudge-world
+  "World-space translation of the PROXY for a screen-frame nudge on the
+   current photo: `dx`/`dy` in IMAGE px (right/up on screen), `dolly`
+   multiplicative on the camera↔pivot distance (1.0 = none). The camera
+   application is the exact inverse (negated), same convention as
+   apply-inverted. nil without an image or a camera."
+  [dx dy dolly]
+  (when-let [[iw ih] (backdrop/image-size)]
+    (when-let [cam (or (get-in @session [:camera-poses (:current-idx @session)])
+                       (current-camera-pose))]
+      (let [{:keys [r u]} (pose-basis cam)
+            fx (:fx (session-intrinsics iw ih))
+            piv (pivot)
+            to-cam (m/v- (:position cam) piv)
+            z (m/magnitude to-cam)
+            mm-per-px (/ z (max 1.0 fx))]
+        (m/v+ (m/v+ (m/v* r (* dx mm-per-px))
+                    (m/v* u (* dy mm-per-px)))
+              (m/v* to-cam (- 1.0 dolly)))))))
+
+(defn- apply-pose-slider-move!
+  "One LIVE drag step. Photo 0 translates the proxy (preview + gizmo follow,
+   transport deferred to the release); photos 1..N move the camera inversely
+   — safe to do live: unlike the gizmo, a slider drag never raycasts through
+   the camera, so there is no feedback loop to break (cf. on-inv-commit!)."
+  [dx dy dolly]
+  (when-let [w (pose-nudge-world dx dy dolly)]
+    (let [idx (:current-idx @session)]
+      (if (zero? idx)
+        (do (swap! session update :proxy-mesh
+                   #(attachment/translate-mesh % w))
+            (viewport/show-preview! (proxy-preview-items)))
+        (let [p (update (camera-pose-for idx) :position #(m/v- % w))]
+          (swap! session assoc-in [:camera-poses idx] p)
+          (viewport/set-camera-pose! p)))
+      ;; a translation moves the projected cage centre: the rotation rings
+      ;; ride it live
+      (refresh-pose-rings-geometry!))))
+
+(defn- commit-pose-slider!
+  "The release of a slider drag — the same human commit as the gizmo's:
+   faces re-read, :eye-posed stamped (the seed of 'a'), state saved. On
+   photo 0 the registered cameras ride along rigidly, transported ONCE with
+   the drag's total delta (pure translation composes)."
+  [proxy-pose-at-start]
+  (when-let [idx (:current-idx @session)]
+    (if (zero? idx)
+      (transport-registered-cameras!
+       proxy-pose-at-start (get-in @session [:proxy-mesh :creation-pose]))
+      (swap! session update-in [:acquire-results idx] merge {:manual? true}))
+    (derive-faces-from-pose! idx)
+    (swap! session update :eye-posed (fnil conj #{}) idx)
+    (refresh-pose-rings-geometry!)
+    (save-acquire-state!)))
+
+(defn- install-pose-sliders!
+  "The three edge sliders over the viewport. Spring-loaded: the thumb
+   follows the drag (clamped to the track) and snaps back on release."
+  []
+  (remove-pose-sliders!)
+  (when-let [^js canvas (viewport/get-canvas)]
+    (when-let [^js parent (.-parentElement canvas)]
+      (when (= "" (.. parent -style -position))
+        (set! (.. parent -style -position) "relative"))
+      (let [mk-el (fn [tag css]
+                    (let [^js el (js/document.createElement tag)]
+                      (set! (.-cssText (.-style el)) css)
+                      el))
+            track-css "position:absolute;z-index:30;background:rgba(20,24,40,0.45);border-radius:10px;touch-action:none;"
+            thumb-css "position:absolute;background:#4455ee;border:2px solid rgba(255,255,255,0.85);border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,0.4);transition:none;pointer-events:none;"
+            ;; anchored to the CANVAS box, in px — the parent also holds the
+            ;; viewport toolbar, so %-of-parent put the top slider over its
+            ;; buttons (smoke 5/9); the top track drops a further 40px to
+            ;; clear the overlay toolbar row
+            cx (.-offsetLeft canvas)
+            cy (.-offsetTop canvas)
+            cw (.-clientWidth canvas)
+            ch (.-clientHeight canvas)
+            sliders
+            [{:title "Move the cage up/down"
+              :track (str track-css "left:" (+ cx 6) "px;top:" (+ cy (* 0.16 ch))
+                          "px;height:" (* 0.68 ch) "px;width:20px;")
+              :thumb (str thumb-css "left:-2px;width:20px;height:44px;top:calc(50% - 22px);")
+              :vertical? true
+              :step (fn [d px->img] (apply-pose-slider-move! 0.0 (* (- d) px->img) 1.0))}
+             {:title "Move the cage right/left"
+              :track (str track-css "top:" (+ cy 40) "px;left:" (+ cx (* 0.16 cw))
+                          "px;width:" (* 0.68 cw) "px;height:20px;")
+              :thumb (str thumb-css "top:-2px;height:20px;width:44px;left:calc(50% - 22px);")
+              :vertical? false
+              :step (fn [d px->img] (apply-pose-slider-move! (* d px->img) 0.0 1.0))}
+             {:title "Closer/farther (the cage stays centred and changes size)"
+              :track (str track-css "top:" (+ cy ch -30) "px;left:" (+ cx (* 0.16 cw))
+                          "px;width:" (* 0.68 cw) "px;height:20px;")
+              :thumb (str thumb-css "top:-2px;height:20px;width:44px;left:calc(50% - 22px);")
+              :vertical? false
+              :step (fn [d _] (apply-pose-slider-move!
+                               0.0 0.0 (js/Math.exp (* (- d) pose-dolly-k))))}]
+            els
+            (doall
+             (for [{:keys [title track thumb vertical? step]} sliders]
+               (let [^js tr (mk-el "div" track)
+                     ^js th (mk-el "div" thumb)
+                     last-pos (atom nil)
+                     total (atom 0.0)]
+                 (set! (.-title tr) title)
+                 (.appendChild tr th)
+                 (.addEventListener
+                  tr "pointerdown"
+                  (fn [^js e]
+                    (.preventDefault e) (.stopPropagation e)
+                    (.setPointerCapture tr (.-pointerId e))
+                    (reset! last-pos (if vertical? (.-clientY e) (.-clientX e)))
+                    (reset! total 0.0)
+                    (swap! pose-sliders-state assoc :start-proxy-pose
+                           (get-in @session [:proxy-mesh :creation-pose]))
+                    (set! (.. th -style -transition) "none")))
+                 (.addEventListener
+                  tr "pointermove"
+                  (fn [^js e]
+                    (when (some? @last-pos)
+                      (let [pos (if vertical? (.-clientY e) (.-clientX e))
+                            d (- pos @last-pos)]
+                        (when-not (zero? d)
+                          (reset! last-pos pos)
+                          (swap! total + d)
+                          ;; thumb follows, clamped to the track
+                          (let [len (if vertical? (.-clientHeight tr) (.-clientWidth tr))
+                                lim (* 0.42 len)
+                                off (max (- lim) (min lim @total))]
+                            (set! (.. th -style -transform)
+                                  (if vertical?
+                                    (str "translateY(" off "px)")
+                                    (str "translateX(" off "px)"))))
+                          (let [px->img
+                                (let [[iw _] (backdrop/image-size)]
+                                  (if (and iw (pos? (.-clientWidth canvas)))
+                                    (/ iw (.-clientWidth canvas))
+                                    1.0))]
+                            (step d px->img)))))))
+                 (doseq [ev ["pointerup" "pointercancel"]]
+                   (.addEventListener
+                    tr ev
+                    (fn [^js _e]
+                      (when (some? @last-pos)
+                        (reset! last-pos nil)
+                        ;; the spring: back to centre, softly
+                        (set! (.. th -style -transition) "transform 140ms ease-out")
+                        (set! (.. th -style -transform) "translate(0,0)")
+                        (commit-pose-slider!
+                         (:start-proxy-pose @pose-sliders-state))))))
+                 (.appendChild parent tr)
+                 tr)))]
+        (swap! pose-sliders-state assoc :els (vec els))))))
+
+;; ── Cerchi di rotazione — la seconda metà dello schizzo (5/9 sera) ──────────
+;; Il gizmo 3D proiettato degenera quando un anello è DI TAGLIO: il suo
+;; cerchio diventa una linea e il guadagno esplode (Vincenzo: «ogni piccolo
+;; movimento viene amplificato»). Questi tre cerchi sono PLANARI ALLO
+;; SCHERMO, concentrici sul centro-gabbia proiettato (Z dentro, Y in mezzo,
+;; X fuori — l'ordine del suo disegno): trascinare lungo un cerchio ruota la
+;; gabbia attorno all'asse MONDO di quell'anello, un grado di trascinamento
+;; = un grado di rotazione, qualunque sia l'orientamento dell'anello. Il
+;; segno segue il puntatore: l'asse può puntare verso o via dalla camera, e
+;; il verso visivo si inverte con lui (sign(dot(asse, verso-camera))).
+;; Stessa applicazione dei cursori: foto 0 ruota il PROXY attorno al pivot,
+;; le altre orbitano la CAMERA all'inverso (il pixel del pivot è invariante
+;; in un'orbita rigida, quindi i cerchi non si muovono durante il drag);
+;; il rilascio è lo stesso commit umano (:eye-posed, save).
+
+(def ^:private pose-rings-state (atom nil))
+
+(def ^:private pose-ring-order
+  "Inner→outer, come nel disegno di Vincenzo: RING Z dentro, Y, X fuori.
+   I colori vengono da cage-axis-colors — la stessa fonte che tinge i
+   contorni degli anelli DISEGNATI, così cerchio e anello si riconoscono."
+  [[:z 1.10] [:y 1.24] [:x 1.38]])
+
+(defn- remove-pose-rings! []
+  (when-let [{:keys [^js svg]} @pose-rings-state]
+    (some-> (.-parentElement svg) (.removeChild svg)))
+  (reset! pose-rings-state nil))
+
+(defn- pose-rings-geometry
+  "Centre (client px + parent-relative px) and base screen radius of the
+   rotation rings: the cage centre projected through the live camera, the
+   radius from the cage's own apparent size. nil without photo/camera or
+   with the pivot outside the frame."
+  []
+  (when-let [^js canvas (viewport/get-canvas)]
+    (when-let [[iw ih] (backdrop/image-size)]
+      (when-let [cam (or (get-in @session [:camera-poses (:current-idx @session)])
+                         (current-camera-pose))]
+        (let [k (session-intrinsics iw ih)
+              pp (get-in @session [:proxy-mesh :creation-pose])
+              sp (bridge/editor->solver-pose cam pp)
+              c-img (pcamera/project k sp [0.0 0.0 0.0])
+              r-cage (* 0.5 (or (:cage-d (:proxy-mesh @session)) 176.0))
+              z (m/magnitude (m/v- (:position cam) (pivot)))
+              r-img (* (:fx k) (/ r-cage (max 1.0 z)))]
+          (when c-img
+            (let [^js three-cam (viewport/get-camera)
+                  c-scr (backdrop/screen-of-pixel canvas three-cam c-img)
+                  e-scr (backdrop/screen-of-pixel
+                         canvas three-cam [(+ (nth c-img 0) r-img) (nth c-img 1)])]
+              (when (and c-scr e-scr)
+                (let [^js parent (.-parentElement canvas)
+                      rect (.getBoundingClientRect parent)
+                      [cx cy] c-scr
+                      radius (js/Math.hypot (- (nth e-scr 0) cx)
+                                            (- (nth e-scr 1) cy))]
+                  {:client [cx cy]
+                   :local [(- cx (.-left rect)) (- cy (.-top rect))]
+                   :radius (max 40.0 radius)})))))))))
+
+(defn- refresh-pose-rings-geometry!
+  "Move the rings onto the CURRENT projected cage centre — after a slider
+   translation (which moves it), live and on commit. Rotation never moves it
+   (rigid orbit about the pivot), but refreshing is cheap and honest."
+  []
+  (when-let [{:keys [circles]} @pose-rings-state]
+    (when-let [{:keys [client local radius]} (pose-rings-geometry)]
+      (swap! pose-rings-state assoc :centre-client client)
+      (let [[lx ly] local]
+        (doseq [{:keys [^js el ^js hit ^js label mult]} circles]
+          (let [r (* radius mult)]
+            (doseq [^js c [el hit]]
+              (.setAttribute c "cx" lx)
+              (.setAttribute c "cy" ly)
+              (.setAttribute c "r" r))
+            (when label
+              (.setAttribute label "x" lx)
+              (.setAttribute label "y" (- ly r 5)))))))))
+
+(defn- pose-ring-rotate!
+  "One LIVE rotation step of `dth` (client-angle rad, clockwise-visual
+   positive) about ring `axis`. The object follows the pointer:
+   φ = −Δθ·sign(dot(asse, verso-camera)) — right-hand rotation about the
+   axis pointing AT the viewer reads counterclockwise on screen, and client
+   angles grow clockwise (y down)."
+  [axis dth]
+  (when-let [cam (or (get-in @session [:camera-poses (:current-idx @session)])
+                     (current-camera-pose))]
+    (let [pp (get-in @session [:proxy-mesh :creation-pose])
+          a (get (bridge/box-basis pp) (case axis :x :ex :y :ey :z :ez))
+          to-cam (m/normalize (m/v- (:position cam) (pivot)))
+          phi (* (- dth) (if (neg? (m/dot a to-cam)) -1.0 1.0))
+          idx (:current-idx @session)]
+      (if (zero? idx)
+        (do (swap! session update :proxy-mesh
+                   #(attachment/rotate-mesh % a phi))
+            (viewport/show-preview! (proxy-preview-items)))
+        (let [p (m/pose-around-axis (camera-pose-for idx) (pivot) a (- phi))]
+          (swap! session assoc-in [:camera-poses idx] p)
+          (viewport/set-camera-pose! p))))))
+
+(defn- install-pose-rings!
+  "The three screen-planar rotation circles over the viewport, centred on
+   the projected cage centre. Visible (with the sliders) only in :gizmo
+   mode — refresh-pose-controls-visibility! hides them under pnp/mark/
+   marker, whose clicks own the frame."
+  []
+  (remove-pose-rings!)
+  (when-let [^js canvas (viewport/get-canvas)]
+    (when-let [^js parent (.-parentElement canvas)]
+      (when-let [{:keys [client local radius]} (pose-rings-geometry)]
+        (let [ns "http://www.w3.org/2000/svg"
+              ^js svg (js/document.createElementNS ns "svg")
+              [lx ly] local]
+          (set! (.-cssText (.-style svg))
+                "position:absolute;left:0;top:0;width:100%;height:100%;z-index:29;pointer-events:none;")
+          (let [circles
+                (doall
+                 (for [[axis mult] pose-ring-order]
+                   (let [color (cage-axis-colors axis)
+                         r (* radius mult)
+                         ^js el (js/document.createElementNS ns "circle")
+                         ^js hit (js/document.createElementNS ns "circle")
+                         ^js label (js/document.createElementNS ns "text")
+                         last-th (atom nil)]
+                     (doseq [[^js c w po] [[el 3.5 "none"]
+                                           [hit 16 "visibleStroke"]]]
+                       (.setAttribute c "cx" lx) (.setAttribute c "cy" ly)
+                       (.setAttribute c "r" r)
+                       (.setAttribute c "fill" "none")
+                       (.setAttribute c "stroke" (if (identical? c el) color "rgba(0,0,0,0)"))
+                       (.setAttribute c "stroke-width" w)
+                       (set! (.-cssText (.-style c))
+                             (str "pointer-events:" po ";"
+                                  (when (identical? c hit) "cursor:grab;"))))
+                     (.setAttribute el "opacity" "0.75")
+                     (.setAttribute label "x" lx)
+                     (.setAttribute label "y" (- ly r 5))
+                     (.setAttribute label "fill" color)
+                     (.setAttribute label "text-anchor" "middle")
+                     (set! (.-cssText (.-style label))
+                           "font:600 12px sans-serif;pointer-events:none;")
+                     (set! (.-textContent label)
+                           (str "rotate " (.toUpperCase (name axis))))
+                     (.addEventListener
+                      hit "pointerdown"
+                      (fn [^js e]
+                        (when (= :gizmo (:mode @session))
+                          (.preventDefault e) (.stopPropagation e)
+                          (.setPointerCapture hit (.-pointerId e))
+                          (let [[cx cy] (:centre-client @pose-rings-state client)]
+                            (reset! last-th (js/Math.atan2 (- (.-clientY e) cy)
+                                                           (- (.-clientX e) cx))))
+                          (swap! pose-rings-state assoc :start-proxy-pose
+                                 (get-in @session [:proxy-mesh :creation-pose]))
+                          (.setAttribute el "stroke-width" 5))))
+                     (.addEventListener
+                      hit "pointermove"
+                      (fn [^js e]
+                        (when (some? @last-th)
+                          (let [[cx cy] (:centre-client @pose-rings-state client)
+                                th (js/Math.atan2 (- (.-clientY e) cy)
+                                                  (- (.-clientX e) cx))
+                                d (- th @last-th)
+                                d (cond (> d js/Math.PI) (- d (* 2 js/Math.PI))
+                                        (< d (- js/Math.PI)) (+ d (* 2 js/Math.PI))
+                                        :else d)]
+                            (when-not (zero? d)
+                              (reset! last-th th)
+                              (pose-ring-rotate! axis d))))))
+                     (doseq [ev ["pointerup" "pointercancel"]]
+                       (.addEventListener
+                        hit ev
+                        (fn [^js _e]
+                          (when (some? @last-th)
+                            (reset! last-th nil)
+                            (.setAttribute el "stroke-width" 3.5)
+                            (commit-pose-slider!
+                             (:start-proxy-pose @pose-rings-state))))))
+                     (.appendChild svg hit)
+                     (.appendChild svg el)
+                     (.appendChild svg label)
+                     {:el el :hit hit :label label :mult mult :axis axis})))]
+            (.appendChild parent svg)
+            (reset! pose-rings-state
+                    {:svg svg :circles (vec circles) :centre-client client})))))))
+
+(defn- refresh-pose-controls-visibility!
+  "Sliders and rotation rings live only in :gizmo mode with the proxy ON
+   SCREEN — every other mode's clicks (pnp discs, marks, marker) own the
+   frame, and a hidden proxy ('v') leaves nothing to align."
+  []
+  (let [d (if (and (= :gizmo (:mode @session))
+                   (not (:hide-proxy? @session)))
+            "" "none")]
+    (when-let [{:keys [els]} @pose-sliders-state]
+      (doseq [^js el els] (set! (.. el -style -display) d)))
+    (when-let [{:keys [^js svg]} @pose-rings-state]
+      (set! (.. svg -style -display) d))))
 
 ;; ============================================================
 ;; Filmstrip navigation
@@ -943,23 +1771,15 @@
 (declare stop-pnp!)
 (declare stop-marker!)
 (declare stop-mark!)
-(declare teardown-retrace-listeners!)
-(declare redraw-retrace!)
 (declare redraw-marks!)
 
-(defn- install-gizmo!
-  "Open the gizmo for photo `idx`. Photo 0's gizmo commits move the PROXY
-   (on-photo0-commit!); photos 1..N-1's commits invert onto the CAMERA
-   (on-inv-commit!). Extracted so PnP mode can tear the gizmo down and put it
-   back without re-loading the photo. Skipped while the proxy is HIDDEN ('v') —
-   the rings would otherwise float over the bare photo with nothing to grab
-   (Vincenzo 2026-07-24); the single guard here covers every install site
-   (enter-photo!, stop-pnp!/retrace!/mark!), so navigation keeps it hidden too."
-  [idx]
-  (when-not (:hide-proxy? @session)
-    (gizmo/enter! (get-in @session [:proxy-mesh :creation-pose])
-                  {:mode :object :handles #{:translate :rotate}}
-                  {:on-commit (if (zero? idx) on-photo0-commit! on-inv-commit!)})))
+;; install-gizmo! è MORTA il 5/9 (decisione di Vincenzo: «toglierei proprio
+;; il gizmo — un doppio modo di fare la stessa cosa rischia di confondere»):
+;; nella vista foto l'allineamento è dei POSE CONTROLS (cursori + cerchi,
+;; sopra). on-photo0-commit!/apply-inverted/on-inv-commit! restano come
+;; riferimento documentato degli invarianti (trasporto rigido, inversione
+;; proxy↔camera) che commit-pose-slider! e pose-ring-rotate! rispettano —
+;; da eliminare quando il gate live dei controlli chiude.
 
 (defn- ensure-photo-pose
   "Camera world-pose for photo `idx`. Photo 0's default vantage is computed ONCE,
@@ -975,28 +1795,47 @@
       start-pose)
     (camera-pose-for idx)))
 
+(declare redraw-mark-names!)
+
 (defn- enter-photo!
-  "Close/reopen the gizmo for photo `idx` — simpler to reason about than
-   special-casing the 0↔1+ boundary, since :nudge-mesh? can only be set at
-   gizmo/enter! time, there's no mutator for it."
+  "Tear down and reinstall the photo-local controls for photo `idx` — the
+   pose controls (sliders + rotation rings) in the aligning mode — simpler to
+   reason about than special-casing the 0↔1+ boundary."
   [idx]
   (stop-pnp!) ; leaving a photo cancels any half-collected PnP session on it
   (stop-marker!) ; and any open marker-click mode (its listener is photo-specific)
   (gizmo/close!)
+  (remove-pose-sliders!)
+  (remove-pose-rings!)
   (swap! session assoc :current-idx idx)
   (let [{:keys [file]} (nth (:photos @session) idx)]
     (viewport/set-camera-pose! (ensure-photo-pose idx))
-    (set-photo-for-current-focal! file)
-    ;; In :retrace the filmstrip is the live-reprojection control: keep the mode,
-    ;; just move the camera onto this photo and re-show the (unchanged) world-space
-    ;; polyline from the new angle — never tear down the retrace to install a gizmo.
+    ;; the photo loads ASYNC, and the rotation rings' geometry needs its pixel
+    ;; size (backdrop/image-size): at the session's FIRST photo the sync
+    ;; install below is a silent no-op — misurato da Vincenzo 5/9: cerchi
+    ;; assenti finché non navighi via e torni. Re-install when the texture is
+    ;; in, guarded to the same photo and mode.
+    (some-> (set-photo-for-current-focal! file)
+            (.then (fn [_]
+                     (when (and @session
+                                (= idx (:current-idx @session))
+                                (= :gizmo (:mode @session))
+                                (not (:stage? @session)))
+                       (install-pose-rings!)))))
     (case (:mode @session)
-      :retrace (redraw-retrace!)
-      ;; :mark is a live-reprojection mode too — the named marks are world/object
+      ;; :mark is a live-reprojection mode — the named marks are world/object
       ;; space, so navigating just re-shows them (and their labels) from this
       ;; photo's camera; never tear it down to install a gizmo.
       :mark (redraw-marks!)
-      (install-gizmo! idx)))
+      ;; the aligning context: Vincenzo's pose controls (edge sliders +
+      ;; screen-planar rotation rings) — the 3D gizmo is GONE from the photo
+      ;; view (his call, 5/9: one way to do one thing); the controls never
+      ;; live over :mark, whose clicks own the frame
+      (do (install-pose-sliders!)
+          (install-pose-rings!)))
+    ;; the names follow the photo in every mode — checking a cage against a view
+    ;; means stepping through the views with them on
+    (redraw-mark-names!))
   (update-panel!))
 
 ;; ============================================================
@@ -1015,15 +1854,17 @@
 
 (defn- enter-stage!
   "Enter the stage: free the camera to orbit the acquired object. Tears down the
-   Phase-1 registration tools (gizmo / PnP / marker / mark / retrace listeners),
-   drops the per-frame camera lock (the `:edit-acquire` frame callback), hides the
-   photo backdrop, shows the object (proxy + ricalchi + marks) as free-orbit
+   Phase-1 registration tools (gizmo / PnP / marker / mark listeners), drops
+   the per-frame camera lock (the `:edit-acquire` frame callback), hides the
+   photo backdrop, shows the object (proxy + marks) as free-orbit
    reference geometry, and steps the camera BACK to frame the whole shoot — object
    plus the ring of camera frustums — so the coverage reads at a glance. Clicking a
    filmstrip photo (or, later, a frustum) then flies into pose (go-in-pose!)."
   []
-  (stop-pnp!) (stop-marker!) (stop-mark!) (teardown-retrace-listeners!)
+  (stop-pnp!) (stop-marker!) (stop-mark!)
   (gizmo/close!)
+  (remove-pose-sliders!)
+  (remove-pose-rings!)
   (swap! session assoc :stage? true :in-pose? false :mode :gizmo)
   ;; Release the per-frame lock so OrbitControls can drive the camera again;
   ;; there's no gizmo in the stage to re-enable controls behind our back, so
@@ -1169,6 +2010,16 @@
 
 (defn- target-color [i] (nth target-colors (mod i (count target-colors))))
 
+(def ^:private index-target-color
+  "One colour for all six zero-indices, and deliberately not from the rotating
+   palette: the index is not one target among many. It is the only disc on a
+   cage that says WHICH mark is which — a crown of twelve equal marks fits
+   equally well under all 48 readings of itself (measured on a real photograph:
+   every one of them at 32.5px), and a single click on the index cuts that to
+   two, the remaining pair differing only by the 3mm of plastic between the two
+   faces, which the physical guard settles. Worth its own colour."
+  0xffffff)
+
 (defn- pnp-targets
   "The indexed PnP targets for the current photo: bridge/pnp-target-points (the
    8 box corners, OR a proxy plate's named marks when it carries :anchors)
@@ -1178,8 +2029,12 @@
   []
   (vec (map-indexed
         (fn [i t]
-          (assoc t :color (target-color i)
-                 :label (if (keyword? (:id t)) (name (:id t)) (str (inc i)))))
+          (assoc t :color (if (:index? t) index-target-color (target-color i))
+                 ;; the index reads as the thing it is on the print — the double
+                 ;; dot of one face — not as an id with a prefix
+                 :label (cond (:index? t) (str "⊙" (subs (name (:id t)) 5))
+                              (keyword? (:id t)) (name (:id t))
+                              :else (str (inc i)))))
         (bridge/pnp-target-points (:proxy-mesh @session) (current-camera-pose)))))
 
 (defn- pnp-count [] (count (pnp-targets)))
@@ -1188,7 +2043,7 @@
   "What a pickable point is called in the prompts: a box has 'spigoli', a plate
    'marker'."
   []
-  (if (plate-proxy?) "marker" "spigolo"))
+  (if (plate-proxy?) "marker" "edge"))
 
 (defn- corner-world-positions
   "World position of each target at the current proxy pose, indexed the same as
@@ -1244,48 +2099,126 @@
   (get-in @session [:pnp-batch (:current-idx @session)] []))
 
 (defn- visible-corner-set
-  "Indices of the targets actually visible at the current pose (pnp-targets'
-   :visible?) — the only ones offered for picking, so the user is never asked to
-   point at a box vertex hidden behind the part, or a plate mark turned away from
-   the camera (Vincenzo, 2026-07-23). Recomputed from the live camera↔proxy
-   relation, so it tracks as the pose is refined."
+  "Indices of the targets offered for picking: those facing the camera at the
+   current pose, so the user is never asked to point at a box vertex hidden
+   behind the part or a mark turned away (Vincenzo, 2026-07-23).
+
+   UNLESS `:show-all-marks?` is set, and that escape exists because the default
+   is CIRCULAR. Which face is 'visible' is decided by the proxy's pose — and the
+   pose is exactly what the picking is trying to establish. Get it wrong and the
+   editor offers `ym00…` while the user is plainly looking at the `yp` face, with
+   no way to say so: the marks that would correct the pose are the ones the wrong
+   pose has hidden (Vincenzo, 2026-08-23: 'non ho modo di mettere i punti yp0').
+
+   So the cull is a default, not a prison. With it off, every mark is offered and
+   the user's eyes arbitrate — which is the right authority, since a disc they can
+   see is a fact and the pose is still a guess.
+
+   `:cage-face-choice` {axis → 1|-1} is the SHARP form of that escape, proposed by
+   Vincenzo (2026-08-30) after the blunt one had cost three evenings: with
+   show-all-marks the panel offers BOTH faces of every ring and picking the wrong
+   one is as easy as before — «avevo messo p perché mi presentava solo quelli».
+   Declaring the face per RING is the decision he actually makes when he holds the
+   cage up and matches it to the photo, and it is exactly the fact the pose lacks:
+   on a chosen ring only that face's marks are offered, whatever the pose believes;
+   rings left undeclared keep the pose's own culling."
   []
-  (into #{} (keep-indexed (fn [i t] (when (:visible? t) i)) (pnp-targets))))
+  (let [ts (pnp-targets)
+        ;; per PHOTO: each view shows different faces, so a session-wide choice
+        ;; would be wrong the moment you step to the next frame
+        choice (get-in @session [:cage-face-choice (:current-idx @session)])
+        chosen (fn [t] (when (seq choice)
+                         (when-let [p (or (cage/mark-parts (:id t))
+                                          (cage/index-parts (:id t)))]
+                           (when-let [s (get choice (:axis p))]
+                             (= s (:sign p))))))]
+    (into #{} (keep-indexed
+               (fn [i t]
+                 (when (case (chosen t)
+                         true true      ; declared face: always offered
+                         false false    ; the other face of a declared ring: never
+                         (or (:show-all-marks? @session) (:visible? t)))
+                   i))
+               ts))))
 
 (defn- pnp-preview-items
-  "Proxy as a WIREFRAME (not a solid — the real part must show through so the
-   user can click its actual corners in the photo) plus a translucent coloured
-   dot at each VISIBLE corner (occluded ones are never drawn — pointing at a
-   hidden vertex is a blind guess): the armed one enlarged, placed ones in
-   their colour, unplaced ones dimmed, and any corner the robust fit rejected
-   drawn as a big opaque RED dot so the mislabel is obvious (shown even if the
-   refined pose has since occluded it, so it can still be re-clicked)."
+  "The SOLID proxy plus a translucent coloured dot at each VISIBLE corner
+   (occluded ones are never drawn — pointing at a hidden vertex is a blind
+   guess): the armed one enlarged, placed ones in their colour, unplaced ones
+   dimmed, and any corner the robust fit rejected drawn as a big opaque RED dot
+   so the mislabel is obvious (shown even if the refined pose has since
+   occluded it, so it can still be re-clicked).
+
+   Solid since 2026-09-01, wireframe before that. The wireframe was there so the
+   photo showed through and its features stayed clickable — a real constraint
+   while it was the ONLY state. It stopped being one the same day, twice over:
+   'v' now works in the picking (so the proxy comes off whenever it is in the
+   way), and the loupe magnifies the PHOTOGRAPH's own pixels under the cursor,
+   not the render, so a disc stays aimable even with the model drawn over it.
+   What the wireframe cost, meanwhile, was the reading the whole cage exists
+   for: Vincenzo saw solid tabs and slot bodies floating with no rings between
+   them («i ring del proxy si vedono solo nell'alt-drag… devono essere pieni»),
+   and a solid cage OCCLUDES, which is information — a mark behind a ring is
+   behind it on the print too.
+
+   The predicted-position dots FOLLOW the names toggle ('n'): where the model
+   thinks the marks are is exactly where the real discs sit once the pose is
+   close, so on a cage the dots blanket the photograph and cover the very
+   discs being clicked (Vincenzo 2026-08-27). With names off only two kinds
+   survive: the ARMED one (the tool in hand, one dot) and the red outliers
+   (each an error demanding a re-click)."
   []
   (let [armed (:pnp-armed @session)
         placed (pnp-picks)
         outliers (pnp-outliers)
         occluded (pnp-occluded)
-        visible (visible-corner-set)]
-    (into
-     [{:type :wireframe :data (:proxy-mesh @session)}
-      {:type :dots
-       :data (vec (keep-indexed
-                   (fn [i pos]
-                     (cond
-                       (contains? outliers i)
-                       {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
-                       ;; marked hidden-by-the-part: a faint grey dot, so it reads
-                       ;; as "dismissed" and no longer solicits a click
-                       (contains? occluded i)
-                       {:pos pos :radius 1.6 :color 0x555555 :opacity 0.2}
-                       (contains? visible i)
-                       {:pos pos
-                        :radius (if (= i armed) 4.4 2.4)
-                        :opacity 0.3
-                        :color (if (or (= i armed) (contains? placed i))
-                                 (target-color i) 0x808080)}))
-                   (corner-world-positions)))}]
-     (trace-items))))
+        visible (visible-corner-set)
+        names? (:show-names? @session)
+        ;; 'v' works here too since the tabs became solid (see toggle-proxy!):
+        ;; cage, printed features and predicted dots go down together; the
+        ;; PLACED clicks live in the DOM overlay and never hide — they are the
+        ;; user's data, not the model's drawing
+        hide? (:hide-proxy? @session)
+        features (when-not hide? (cage-feature-items))
+        ;; the cage's own marks — azzurro crowns and the ORANGE double pallini —
+        ;; ride the proxy here exactly as in the alignment view. They were
+        ;; missing from the picking, which is where they are needed most: the
+        ;; picking is when you must know WHICH disc you are about to name, and
+        ;; the pair is what says so (Vincenzo 2026-09-01). Distinct from the
+        ;; pick-target dots below: those are the tool in hand (armed, placed,
+        ;; rejected), these are the cage the model believes in.
+        marks (when-not hide? (cage-marks-item))]
+    (cond-> []
+       (not hide?) (conj {:type :mesh :data (:proxy-mesh @session)})
+       (seq features) (into features)
+       marks (conj marks)
+       ;; the predicted dots are the MODEL's drawing as much as the wireframe:
+       ;; under 'v' they go too, or three crowns of dots keep painting the cage
+       ;; over the naked photo (Vincenzo 2026-09-01: «nasconde solo le tacche
+       ;; verdi, non tutta la gabbia»). The user's PLACED clicks live in the DOM
+       ;; overlay (redraw-overlay-dots!) and stay — they are his data, not the
+       ;; model's guess.
+       (not hide?)
+       (conj {:type :dots
+              :data (vec (keep-indexed
+                          (fn [i pos]
+                            (cond
+                              (contains? outliers i)
+                              {:pos pos :radius 5.5 :color 0xff2020 :opacity 0.7}
+                              (and (= i armed) (contains? visible i))
+                              {:pos pos :radius 4.4 :opacity 0.3 :color (target-color i)}
+                              (not names?) nil
+                              ;; marked hidden-by-the-part: a faint grey dot, so it
+                              ;; reads as "dismissed" and no longer solicits a click
+                              (contains? occluded i)
+                              {:pos pos :radius 1.6 :color 0x555555 :opacity 0.2}
+                              (contains? visible i)
+                              {:pos pos
+                               :radius 2.4
+                               :opacity 0.3
+                               :color (if (contains? placed i)
+                                        (target-color i) 0x808080)}))
+                          (corner-world-positions)))}))))
 
 (defn- redraw-pnp-preview! [] (viewport/show-preview! (pnp-preview-items)))
 
@@ -1397,6 +2330,68 @@
       (set! (.-textContent dot) label))
     (.appendChild ov dot)))
 
+(defn- append-overlay-name!
+  "The NAME of a mark, printed beside where the model says that mark shows in the
+   photo."
+  [ov rect cx cy colour text]
+  (let [tag (.createElement js/document "div")
+        st (.-style tag)]
+    (set! (.-position st) "absolute")
+    (set! (.-left st) (str (- cx (.-left rect) -10) "px"))
+    (set! (.-top st) (str (- cy (.-top rect) 8) "px"))
+    (set! (.-fontSize st) "11px")
+    (set! (.-fontWeight st) "700")
+    (set! (.-whiteSpace st) "nowrap")
+    (set! (.-pointerEvents st) "none")
+    (set! (.-color st) colour)
+    (set! (.-textShadow st) "0 0 3px #000, 0 0 3px #000")
+    (set! (.-textContent tag) text)
+    (.appendChild ov tag)))
+
+(defn- draw-mark-names!
+  "Write every visible mark's NAME on the photograph, where the model currently
+   says that mark is ('n' / the Nomi button).
+
+   The editor draws a dot per mark but never says WHICH mark, and on a cage that
+   is the whole difficulty: three rings' crowns cross in one frame, both faces of
+   a ring carry identical discs, and the numbering reverses between them. So the
+   user counts — and on 2026-08-20 counting put six clicks of one crown onto
+   discs of three different rings, which no relabelling could undo and which cost
+   two sessions to diagnose. The names were derivable the whole time; they were
+   simply never shown.
+
+   It reads exactly what the solver reads, so it is honest about being wrong: with
+   the proxy out of pose the names land nowhere near the discs, and that is itself
+   the reading — align first, then trust them. Once one crown is registered (four
+   clicks are enough) they land on the right discs everywhere, including rings
+   with no picks at all."
+  [ov rect]
+  (when (and (:show-names? @session)
+             ;; in the picking, 'v' hides the model's whole drawing — and the
+             ;; names are predictions exactly like the dots they label
+             ;; (2026-09-01). Other modes keep their own rules.
+             (not (and (= :pnp (:mode @session)) (:hide-proxy? @session))))
+    (doseq [t (pnp-targets)
+            :when (:visible? t)
+            :let [pos (viewport/world->screen (:world t))]
+            :when pos]
+      (append-overlay-name! ov rect (nth pos 0) (nth pos 1)
+                            (hex->css (:color t)) (:label t)))))
+
+(defn- redraw-mark-names!
+  "Rebuild the names overlay on its own, for the modes that have no picks to draw.
+
+   'n' started as a PnP aid — name the disc you are about to click. It is just as
+   useful BEFORE placing anything: stepping through the photos with the names on
+   is how you check that the cage the model believes in is the cage in the
+   photograph, which is the sanity test that catches a badly registered view
+   (Vincenzo, 2026-08-21). So it works everywhere, not only where it was born."
+  []
+  (when (and @session (not= :pnp (:mode @session)))
+    (let [ov (ensure-pnp-overlay!)]
+      (set! (.-innerHTML ov) "")
+      (draw-mark-names! ov (canvas-rect)))))
+
 (defn- redraw-overlay-dots! []
   (let [ov (ensure-pnp-overlay!)
         rect (canvas-rect)
@@ -1416,7 +2411,217 @@
     (doseq [[i {:keys [px screen]}] (map-indexed vector (pnp-batch))
             :let [[cx cy] (or (and px (backdrop/screen-of-pixel cv cam px)) screen)]
             :when (and cx cy)]
-      (append-overlay-dot! ov rect cx cy "rgba(255,255,255,0.35)" (str (inc i))))))
+      (append-overlay-dot! ov rect cx cy "rgba(255,255,255,0.35)" (str (inc i))))
+    (draw-mark-names! ov rect)))
+
+(defn- toggle-all-marks! []
+  (swap! session update :show-all-marks? not)
+  (redraw-pnp-preview!)
+  (redraw-overlay-dots!)
+  (update-panel!)
+  (set-status-message!
+   (if (:show-all-marks? @session)
+     (str "every mark is now selectable, including those the model believes are turned "
+          "the other way — click the ones you SEE: it is the pose that is in doubt, "
+          "not your eyes")
+     "back to only the marks facing you")))
+
+(defn- reface-picks-to-declaration!
+  "Move photo `idx`'s picks on ring `axis` onto the DECLARED face, and say what
+   moved. Returns [n-moved n-dropped].
+
+   Declaring a face used to change only what the panel OFFERS, which quietly left
+   the picks already made on the other face sitting in the set. That is not a
+   cosmetic inconsistency: the two faces of a ring are 3mm apart through the
+   plastic and point OPPOSITE WAYS, so a set holding `yp03` and `zero-ym`
+   describes a cage seen from both sides at once. No pose can satisfy it — the
+   camera is behind one of them whichever way it faces — and no ring-level
+   rescue can cure it either, because flipping the ring carries the contradiction
+   along with it. Every solve is refused, and the refusal blames a click.
+
+   Measured on battiscopa3 grab-04 (2026-08-31): Vincenzo clicked ⊙ym, then
+   declared Yp. Of the eight face combinations of his picks, ZERO were physically
+   possible; with the stale ⊙ym renamed, one is. He had done nothing wrong — the
+   declaration simply did not reach backwards.
+
+   The pixel never moves: the same disc is on both faces, so only the NAME
+   changes. A pick whose new name is already taken is dropped instead — two marks
+   on one disc wreck the whole pose, not just that point."
+  [idx axis sign]
+  (let [targets (pnp-targets)
+        ;; cage-crown-count is defined further down; same expression
+        n (or (:cage-marks (:proxy-mesh @session)) 12)
+        id->ci (into {} (map-indexed (fn [i t] [(:id t) i])) targets)
+        face-of (fn [ci] (let [id (:id (nth targets ci))]
+                           (:sign (or (cage/mark-parts id) (cage/index-parts id)))))
+        ring-of (fn [ci] (cage/anchor-axis (:id (nth targets ci))))
+        picks (get-in @session [:pnp-picks idx] {})
+        wrong (filterv (fn [ci] (and (= axis (ring-of ci))
+                                     (= (- sign) (face-of ci))))
+                       (keys picks))
+        flipped (into {} (keep (fn [ci]
+                                 (when-let [j (id->ci (cage/relabel
+                                                       (:id (nth targets ci))
+                                                       {:flip-face? true :mirror? false :rot 0} n))]
+                                   [ci j]))
+                               wrong))
+        taken (set (remove (set wrong) (keys picks)))
+        moves (into {} (remove (fn [[_ j]] (contains? taken j)) flipped))
+        drops (into #{} (remove (set (keys moves))) wrong)]
+    (when (seq wrong)
+      (swap! session update-in [:pnp-picks idx]
+             (fn [m] (-> (apply dissoc m wrong)
+                         (into (map (fn [[ci j]] [j (get m ci)])) moves))))
+      ;; the stale flags describe names that no longer exist
+      (swap! session update-in [:pnp-residuals idx] #(apply dissoc % wrong))
+      (swap! session update-in [:pnp-outliers idx] #(when % (into #{} (remove (set wrong)) %)))
+      (swap! session update-in [:pnp-occluded idx]
+             #(when % (into #{} (keep (fn [ci] (if (contains? (set wrong) ci) (moves ci) ci))) %))))
+    [(count moves) (count drops)]))
+
+(defn- derive-faces-from-pose!
+  "Read photo `idx`'s ring faces off the pose the user just made BY EYE with the
+   gizmo, and make them this photo's face declaration — the decision of
+   2026-08-31, after thirteen live rounds in which hand-declared faces were
+   wrong on three photos in a row and every face error poisoned the solve and
+   every diagnosis downstream. The physical gesture «prendo in mano la gabbia e
+   la appaio alla foto» is now the virtual one: orient the cage until it
+   matches, and the faces are READ from the pose, no longer declared.
+
+   Runs on every gizmo commit (both handlers — photo 0 moves the proxy, later
+   photos invert onto the camera; either way the RELATIVE pose just changed,
+   and it is the relative pose the faces live on). The derived choice REPLACES
+   whatever was in :cage-face-choice for this photo, manual overrides included:
+   the last human act wins, and a commit IS a human act — the pose is his. The
+   three buttons stay, as display of the derived value and as override for «mi
+   fido dei tuoi occhi, non della posa»; a ring below the profile guard
+   (bridge/cage-face-margin-deg) declares NOTHING — the pose's own per-mark
+   culling stays in charge and the message says why, with the degrees, so the
+   verdict is never stronger than its evidence.
+
+   Each derived face is carried BACKWARDS over the picks already made
+   (reface-picks-to-declaration!) — same medicine as the manual toggle, same
+   grab-04 disease behind it."
+  [idx]
+  (when (cage-proxy?)
+    (when-let [cam (get-in @session [:camera-poses idx])]
+      (let [faces (bridge/cage-faces-from-pose (:proxy-mesh @session) cam)
+            derived (into {} (keep (fn [[a {:keys [sign]}]] (when sign [a sign])) faces))
+            prev (get-in @session [:cage-face-choice idx])
+            profile (sort-by (comp str first)
+                             (keep (fn [[a {:keys [sign geo-sign elev-deg]}]]
+                                     (when-not sign [a elev-deg geo-sign]))
+                                   faces))
+            [moved dropped]
+            (reduce (fn [[mv dv] [a s]]
+                      (let [[m d] (reface-picks-to-declaration! idx a s)]
+                        [(+ mv m) (+ dv d)]))
+                    [0 0]
+                    (sort-by (comp str key) derived))]
+        (swap! session assoc-in [:cage-face-choice idx] derived)
+        ;; an armed mark on a face just hidden would keep the old name in hand —
+        ;; only meaningful while the picking UI is live
+        (when (= :pnp (:mode @session))
+          (when-let [a (:pnp-armed @session)]
+            (when-not (contains? (visible-corner-set) a)
+              (swap! session assoc :pnp-armed nil)))
+          (redraw-pnp-preview!)
+          (redraw-overlay-dots!))
+        (update-panel!)
+        ;; DIETA (direttiva di Vincenzo 5/9, «meno loquace l'operatività»):
+        ;; questa riga usciva a OGNI commit dei controlli di posa e dominava
+        ;; il log — decine di righe identiche per un allineamento. Parla solo
+        ;; quando la lettura CAMBIA la dichiarazione della foto, o quando ha
+        ;; spostato/tolto dei click (un atto va sempre detto). Silenzio =
+        ;; niente di nuovo.
+        (when (or (not= prev derived) (pos? moved) (pos? dropped))
+          (set-status-message!
+           (str "faces read from the pose: "
+                (if (seq derived)
+                  (str/join " " (for [[a s] (sort-by (comp str key) derived)]
+                                  (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+                  "nessuna")
+                (when (seq profile)
+                  (str " · " (str/join " · "
+                                       (for [[a e s] profile
+                                             :let [nm (str/upper-case (name a))]]
+                                         (str nm " nearly edge-on (" (.toFixed e 0)
+                                              "°): I will not declare it — it would say "
+                                              nm (if (pos? s) "p" "m")
+                                              ", press it yourself if you confirm it")))))
+                (when (pos? moved)
+                  (str " · " moved " clicks you had on the other face "
+                       (if (> moved 1) "moved" "moved")
+                       " to this one: same disc through the plastic, only the name changes"))
+                (when (pos? dropped)
+                  (str " · " dropped " " (if (> dropped 1) "clicks were" "click was")
+                       " on the other face and the new name was already taken: "
+                       (if (> dropped 1) "tolti" "tolto"))))))))))
+
+(defn- toggle-cage-face!
+  "Declare (or un-declare) which FACE of ring `axis` this photo shows — the
+   judgement Vincenzo makes by holding the cage up to the picture, which the
+   pose cannot make for him (2026-08-30). Declared: only that face's marks are
+   offered on that ring, whatever the pose believes. Pressed again: back to the
+   pose's own culling."
+  [axis sign]
+  (let [idx (:current-idx @session)
+        on? (not= sign (get-in @session [:cage-face-choice idx axis]))]
+    (swap! session update-in [:cage-face-choice idx]
+           (fn [c] (let [c (or c {})]
+                     (if (= sign (get c axis)) (dissoc c axis) (assoc c axis sign)))))
+    ;; The declaration reaches BACKWARDS over the picks already made, not only
+    ;; forwards over what the panel offers. See reface-picks-to-declaration!.
+    (let [[moved dropped] (if on? (reface-picks-to-declaration! idx axis sign) [0 0])]
+      ;; an armed mark on the face just hidden would keep the old name in hand
+      (when-let [a (:pnp-armed @session)]
+        (when-not (contains? (visible-corner-set) a)
+          (swap! session assoc :pnp-armed nil)))
+      (redraw-pnp-preview!)
+      (redraw-overlay-dots!)
+      (update-panel!)
+      (when (or (pos? moved) (pos? dropped)) (save-acquire-state!))
+      (let [c (get-in @session [:cage-face-choice idx])]
+        (set-status-message!
+         (str
+          (if (seq c)
+            (str "faces declared by you: "
+                 (str/join " " (for [[a s] (sort-by (comp str key) c)]
+                                 (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+                 " — on those rings I offer only that face, whatever the pose believes")
+            "faces decided by the pose again (no ring declared)")
+          (when (pos? moved)
+            (str " · " moved " clicks you had already placed on the other face of "
+                 (str/upper-case (name axis)) " " (if (> moved 1) "moved" "moved")
+                 " to this one: same disc through the plastic, only the name changes"))
+          (when (pos? dropped)
+            (str " · " dropped " " (if (> dropped 1) "clicks were" "click was")
+                 " on the other face and the new name was already taken: "
+                 (if (> dropped 1) "tolti" "tolto")
+                 " (two marks on the same disc knock the pose over)"))))))))
+
+(defn- toggle-mark-names! []
+  (swap! session update :show-names? not)
+  ;; the predicted dots follow this toggle and live in the 3D preview, so the
+  ;; preview of whichever mode draws them must rebuild along with the overlay:
+  ;; :pnp (its own dots) and gizmo/marker (the crown item). :retrace/:mark/stage
+  ;; previews carry no predicted dots — repainting them here would clobber the
+  ;; plane quad / frustum scenes they own, so they keep the names-only redraw.
+  (cond
+    (= :pnp (:mode @session))
+    (do (redraw-pnp-preview!) (redraw-overlay-dots!))
+
+    (and (not (:stage? @session)) (contains? #{:gizmo :marker} (:mode @session)))
+    (do (viewport/show-preview! (proxy-preview-items)) (redraw-mark-names!))
+
+    :else (redraw-mark-names!))
+  (update-panel!)
+  (set-status-message!
+   (if (:show-names? @session)
+     (str "mark names ON THE PHOTO. If they land far from the discs, it is the proxy that is "
+          "out of pose: register one crown first (4 clicks are enough), then "
+          "they will fall into place on every ring")
+     "mark names hidden")))
 
 (def min-plate-picks
   "A plate registers by the planar homography, which is exactly determined by 4
@@ -1432,6 +2637,14 @@
    disc plus margin (mean-shift recentres if the click was off) without reaching
    a neighbour."
   50)
+
+(def ^:private duplicate-pick-px
+  "Two picks closer than this are on the SAME disc, whatever their labels say.
+   Clicks snap to a blob centroid, so two claims on one disc come back within a
+   pixel or two of each other; distinct marks are hundreds of pixels apart even
+   on a ring seen well off-square. Six leaves room for the small difference
+   between a hand click's snap window and an auto-proposal's."
+  6.0)
 
 (def ^:private suspicious-snap-px
   "A snap that moves the click further than this has probably latched onto
@@ -1451,7 +2664,9 @@
       raw))
 
 (defn- click-pixel
-  "The pixel a click means: snapped to the disc under it, unless ALT is held.
+  "The pixel a click means: snapped to the disc under it, unless ALT is held —
+   and on a cage, ALT only reaches here while the proxy is HIDDEN, since with
+   it on screen ALT rolls the cage instead (pnp-on-pointerdown).
 
    The snap is right almost always and wrong in a way the user cannot argue
    with: when the mark touches something of a similar grey — the dark object
@@ -1460,60 +2675,125 @@
    clicked (Vincenzo 2026-08-01, foto 10 / mark 11). No amount of aim fixes that,
    so there has to be a way to say 'take my click literally'.
 
-   And because a user who does not know the override cannot ask for it, a snap
-   that travelled suspiciously far ANNOUNCES itself and names the way out — the
-   affordance is offered at the moment it is needed rather than hidden in a
-   keymap."
-  [raw ^js e]
-  (if (.-altKey e)
-    (do (set-status-message! "click preso alla lettera (Alt): nessuno snap")
-        raw)
-    (let [px (snap-plate-click raw)
-          d (Math/hypot (- (nth px 0) (nth raw 0)) (- (nth px 1) (nth raw 1)))]
-      (when (> d suspicious-snap-px)
-        (set-status-message!
-         (str "lo snap ha spostato il click di " (modal/fmt-number d) "px — se ha agganciato "
-              "la cosa sbagliata (un bordo scuro lì vicino), riclicca tenendo ALT "
-              "per prenderlo alla lettera")))
-      px)))
+   `label` names the mark being placed, and it is not decoration. The snap is
+   reported at the moment of clicking, while the eye is on the photograph and
+   several marks have just been placed in a row; without a name the report is
+   unanswerable — 'lo snap ha spostato il click di 76px, di quale click parla?'
+   (Vincenzo, 2026-08-20).
+
+   A snap that travels FURTHER THAN THE WINDOW it started in is not refinement,
+   it is a different feature: `blob/snap-to-blob` is a mean-shift, so it walks,
+   and once it has walked past its own radius the disc under the cursor is no
+   longer what it settled on. There the click is taken literally without being
+   asked — a literal click is wrong by a few pixels, a snap onto the neighbouring
+   disc is wrong by a whole mark, and one bad correspondence does not degrade a
+   pose, it destroys it."
+  [raw ^js e label]
+  (let [named (if label (str " (" label ")") "")]
+    (if (.-altKey e)
+      (do (set-status-message! (str "click" named " taken literally (Alt): no snap"))
+          raw)
+      (let [px (snap-plate-click raw)
+            d (Math/hypot (- (nth px 0) (nth raw 0)) (- (nth px 1) (nth raw 1)))]
+        (cond
+          (> d plate-click-snap-radius)
+          (do (set-status-message!
+               (str "the click" named " taken LITERALLY: the automatic snap was drifting "
+                    "away by " (modal/fmt-number d) "px, i.e. outside its own "
+                    "window — at that distance it was no longer refining your disc "
+                    "but snapping onto another one"))
+              raw)
+
+          (> d suspicious-snap-px)
+          (do (set-status-message!
+               (str "the automatic snap moved the click" named " by "
+                    (modal/fmt-number d) "px — if it grabbed the wrong thing (a dark edge "
+                    "nearby), click again holding ALT to take it literally"
+                    ;; with the cage on screen ALT rolls it instead (see
+                    ;; pnp-on-pointerdown), so the advice needs its first step
+                    (when-not (:hide-proxy? @session)
+                      ": press 'v' first to hide the cage, otherwise ALT rolls it")))
+              px)
+
+          :else px)))))
 
 (defn- screen-for [px client-fallback]
   (or (backdrop/screen-of-pixel (viewport/get-canvas) (viewport/get-camera) px) client-fallback))
 
+(declare pnp-start-peek!)
+
 (defn- pnp-on-pointerdown [^js e]
   (when (and @session (= :pnp (:mode @session)) (zero? (.-button e)))
-    (when-let [raw (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
-      (let [idx (:current-idx @session)]
-        (cond
-          ;; fetta B: identity-free batch — every click is just another disc
-          ;; centroid appended to the batch (no armed target); 'r' assigns them.
-          (batch-mode?)
-          (do
-            (.preventDefault e) (.stopPropagation e)
-            (let [px (click-pixel raw e)]
-              (swap! session update-in [:pnp-batch idx] (fnil conj [])
-                     {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
-              (redraw-overlay-dots!)
-              (update-panel!)))
+    (if (and (.-altKey e) (not (:hide-proxy? @session)))
+      ;; Alt+drag = sbirciatina, but ONLY while the cage is on screen. Alt was
+      ;; taken: it has meant "this click, literally, no snap" since the plate
+      ;; (click-pixel), and the peek stole it — reported the same evening it
+      ;; shipped. Vincenzo's rule, adopted verbatim: cage visible → Alt rolls
+      ;; the cage; cage hidden ('v') → Alt is the literal click again, and the
+      ;; peek must NOT bring the cage back by itself. It divides cleanly
+      ;; because each gesture is useless in the other's state — there is
+      ;; nothing to roll when the cage is hidden, and a literal click is what
+      ;; you want on the naked photo.
+      (do (.preventDefault e)
+          (.stopPropagation e)
+          (pnp-start-peek! e))
+      (when-let [raw (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+        (let [idx (:current-idx @session)]
+          (cond
+            ;; fetta B: identity-free batch — every click is just another disc
+            ;; centroid appended to the batch (no armed target); 'r' assigns them.
+            (batch-mode?)
+            (do
+              (.preventDefault e) (.stopPropagation e)
+              (let [px (click-pixel raw e nil)]
+                (swap! session update-in [:pnp-batch idx] (fnil conj [])
+                       {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
+                (redraw-overlay-dots!)
+                (update-panel!)))
 
-          ;; fetta A / box: place the armed target; ignore clicks when unarmed
-          (:pnp-armed @session)
-          (let [ci (:pnp-armed @session)
-                px (click-pixel raw e)]
-            (.preventDefault e) (.stopPropagation e)
-            (swap! session assoc-in [:pnp-picks idx ci]
-                   {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
-            ;; a new click makes the last solve's residuals/outliers stale — drop
-            ;; them so the red flags clear until the user re-solves
-            (swap! session update :pnp-residuals dissoc idx)
-            (swap! session update :pnp-outliers dissoc idx)
-            (redraw-overlay-dots!)
-            ;; arm the next SPREAD marker (farthest from those placed) so a few seed
-            ;; clicks fan out around the ring instead of clustering; nil once every
-            ;; non-occluded marker is placed (panel then says "premi 'r'")
-            (if-let [nxt (next-seed-corner)]
-              (arm-corner! nxt)
-              (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!)))))))))
+            ;; fetta A / box: place the armed target; ignore clicks when unarmed
+            (:pnp-armed @session)
+            (let [ci (:pnp-armed @session)
+                  px (click-pixel raw e (:label (nth (pnp-targets) ci nil)))
+                  ;; A disc belongs to ONE mark. If this click lands on a disc some
+                  ;; other mark already holds, the two cannot both be right, and
+                  ;; keeping both hands the solver a contradiction that wrecks the
+                  ;; pose rather than showing up as one bad point (2026-08-19: three
+                  ;; marks on one disc, rms 453px; later a fourth pair, 795px).
+                  ;; The click just said what this disc IS, so the newer claim wins
+                  ;; and the older one is released — never silently, since the
+                  ;; released mark now needs placing again.
+                  same-disc (vec (keep (fn [[other v]]
+                                         (let [q (:px v)]
+                                           (when (and (not= other ci)
+                                                      (< (Math/hypot (- (nth px 0) (nth q 0))
+                                                                     (- (nth px 1) (nth q 1)))
+                                                         duplicate-pick-px))
+                                             other)))
+                                       (pnp-picks)))]
+              (.preventDefault e) (.stopPropagation e)
+              (doseq [other same-disc]
+                (swap! session update-in [:pnp-picks idx] dissoc other))
+              (when (seq same-disc)
+                (set-status-message!
+                 (str "that disc was already assigned to " (corner-labels same-disc)
+                      ": now it is " (corner-labels [ci]) ", e "
+                      (if (> (count same-disc) 1) "those remain" "that one remains")
+                      " to be re-placed — two marks on the same disc knock"
+                      " the whole pose over, not just that point")))
+              (swap! session assoc-in [:pnp-picks idx ci]
+                     {:px px :screen (screen-for px [(.-clientX e) (.-clientY e)])})
+              ;; a new click makes the last solve's residuals/outliers stale — drop
+              ;; them so the red flags clear until the user re-solves
+              (swap! session update :pnp-residuals dissoc idx)
+              (swap! session update :pnp-outliers dissoc idx)
+              (redraw-overlay-dots!)
+              ;; arm the next SPREAD marker (farthest from those placed) so a few seed
+              ;; clicks fan out around the ring instead of clustering; nil once every
+              ;; non-occluded marker is placed (panel then says "premi 'r'")
+              (if-let [nxt (next-seed-corner)]
+                (arm-corner! nxt)
+                (do (swap! session assoc :pnp-armed nil) (redraw-pnp-preview!) (update-panel!))))))))))
 
 ;; --- loupe: a magnifier that expands the pixels under the cursor so a corner
 ;; can be placed on the exact edge despite the translucent proxy over it
@@ -1561,6 +2841,9 @@
         st (.-style cv)]
     (if-let [[ix iy] (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
       (do
+        ;; remembered for the keyboard half of the eraser: Backspace deletes the
+        ;; pick nearest where the cursor last was (see erase-pick-at!)
+        (swap! session assoc :pnp-cursor-px [ix iy])
         (backdrop/draw-loupe! cv ix iy (loupe-zoom))
         ;; up-right of the cursor by default, clamped into the window so it
         ;; never runs off-screen near an edge
@@ -1571,9 +2854,106 @@
           (set! (.-display st) "block")))
       (set! (.-display st) "none"))))
 
+;; --- Alt+trascina: sbircia la gabbia virtuale, poi torna da sola ------------
+;;
+;; In the picking the photo often hides a mark — a stick, the part, glare — and
+;; counting discs on the photograph is where crowns are misread. The virtual
+;; cage knows where every mark is, but it sits locked in the registered pose.
+;; Vincenzo's proposal (2026-09-01), his own variant: no gizmo handles — hold
+;; Alt and drag anywhere to roll the virtual cage like a ball in hand, look at
+;; where the marks are, release, and after a moment it springs back to the
+;; registered pose. He chose Alt+drag over a pnp gizmo deliberately («molto
+;; più chiaro»): no handles sitting over the discs being clicked.
+;;
+;; NOTHING is ever committed: the rolled cage is a preview built from a
+;; rotated COPY of the proxy — the session pose is untouched by construction,
+;; so the snap-back is a delayed redraw, not a restore.
+
+(def ^:private peek-deg-per-px
+  "Trackball gain: degrees of cage roll per pixel of drag. 0.4 turns a
+   250px swipe into a quarter turn."
+  0.4)
+
+(def ^:private peek-return-ms
+  "How long the peeked cage lingers after release before springing back —
+   Vincenzo's «dopo un secondo o due»."
+  1200)
+
+(defn- pnp-peek-active? [] (some? (:pnp-peek-drag @session)))
+
+(defn- pnp-peek-items
+  "Preview of the peeked cage: the SOLID cage + printed features + every
+   front-face mark. The marks show here even though the normal picking preview
+   leaves them to the overlay — seeing where they are is the whole point of the
+   gesture — and their culling follows the rotated copy, so faces rolling
+   toward the camera reveal their crowns like the print would in hand.
+
+   Solid, not the picking mode's see-through wireframe (Vincenzo 2026-09-01:
+   «il proxy è disegnato in wireframe, non pieno»): the wireframe is see-through
+   so that discs can be clicked underneath it, and here nothing is being clicked
+   — it is the object being looked at. Solid also OCCLUDES, which is the reading
+   itself: a mark hidden behind a ring of the rolled cage is hidden on the print
+   too, from that side."
+  []
+  (let [{:keys [ax ay]} (:pnp-peek @session)
+        {:keys [r u]} (pose-basis (current-camera-pose))
+        mesh (-> (:proxy-mesh @session)
+                 (attachment/rotate-mesh u (deg->rad (or ax 0.0)))
+                 (attachment/rotate-mesh r (deg->rad (or ay 0.0))))]
+    (into [{:type :mesh :data mesh}]
+          (concat (cage-feature-items* mesh)
+                  (some-> (cage-marks-item* mesh) vector)))))
+
+(defn- pnp-start-peek! [^js e]
+  (when-let [t (:pnp-peek-timer @session)] (js/clearTimeout t))
+  ;; capture the pointer so the release is heard even off-canvas — without it
+  ;; a drag ending outside the photo would leave the cage rolled forever
+  (try (.setPointerCapture (viewport/get-canvas) (.-pointerId e)) (catch :default _))
+  (swap! session assoc
+         :pnp-peek-drag {:x (.-clientX e) :y (.-clientY e)}
+         :pnp-peek (or (:pnp-peek @session) {:ax 0.0 :ay 0.0})
+         :pnp-peek-timer nil)
+  (hide-pnp-loupe!)
+  (viewport/show-preview! (pnp-peek-items)))
+
+(defn- pnp-move-peek! [^js e]
+  (let [{:keys [x y]} (:pnp-peek-drag @session)]
+    (swap! session
+           (fn [s]
+             (-> s
+                 (update-in [:pnp-peek :ax] (fnil + 0.0)
+                            (* peek-deg-per-px (- (.-clientX e) x)))
+                 (update-in [:pnp-peek :ay] (fnil + 0.0)
+                            (* peek-deg-per-px (- (.-clientY e) y)))
+                 (assoc :pnp-peek-drag {:x (.-clientX e) :y (.-clientY e)}))))
+    (viewport/show-preview! (pnp-peek-items))))
+
+(defn- pnp-end-peek! []
+  (when (pnp-peek-active?)
+    (swap! session dissoc :pnp-peek-drag)
+    ;; a new Alt+drag inside the window clears this timer and rolls on from
+    ;; where the cage is; only a quiet second sends it home
+    (swap! session assoc :pnp-peek-timer
+           (js/setTimeout
+            (fn []
+              (when (and @session (= :pnp (:mode @session)) (not (pnp-peek-active?)))
+                (swap! session dissoc :pnp-peek :pnp-peek-timer)
+                (redraw-pnp-preview!)))
+            peek-return-ms))))
+
+(defn- pnp-on-pointerup [^js e]
+  (when (and @session (= :pnp (:mode @session)) (pnp-peek-active?))
+    (.preventDefault e)
+    (.stopPropagation e)
+    (pnp-end-peek!)))
+
 (defn- pnp-on-pointermove [^js e]
   (when (and @session (= :pnp (:mode @session)))
-    (update-loupe! e)))
+    (if (pnp-peek-active?)
+      (do (.preventDefault e)
+          (.stopPropagation e)
+          (pnp-move-peek! e))
+      (update-loupe! e))))
 
 (defn- pnp-on-wheel
   "Wheel over the photo tunes the LOUPE zoom (the camera is locked, so the wheel
@@ -1591,16 +2971,110 @@
       (swap! session assoc :pnp-loupe-zoom z')
       (update-loupe! e))))
 
+;; --- the eraser: a poisoned pick must be REMOVABLE, one at a time -----------
+;;
+;; Until 2026-08-28 there was no gesture to delete a single pick: a photo with a
+;; doubled disc (see propose-clear-px) or a click on the wrong feature could
+;; only be repaired by Azzera — throwing away every good click with the bad one.
+;; Right-click on the dot (or Backspace with the cursor near it) removes just
+;; that one, hand click or proposal alike.
+
+(def ^:private eraser-radius-px
+  "How far (image px) from the cursor the eraser reaches for a pick. Generous —
+   aiming a right-click at a 2.5mm disc should not require the loupe — but well
+   under the 200-500px between neighbouring marks, so it cannot grab the wrong
+   dot: whatever is nearest within this ring is what the user is pointing at."
+  40.0)
+
+(defn- erase-pick-at!
+  "Delete the ONE pick nearest `px` (within eraser-radius-px): a hand click, a
+   proposal, or in batch mode an identity-free click. Clears that pick's stale
+   fit flags, says what was removed and how to put it back, persists."
+  [px]
+  (let [idx (:current-idx @session)
+        d (fn [q] (Math/hypot (- (nth px 0) (nth q 0)) (- (nth px 1) (nth q 1))))]
+    (if (batch-mode?)
+      (let [batch (vec (pnp-batch))
+            i (when (seq batch)
+                (apply min-key #(d (:px (nth batch %))) (range (count batch))))]
+        (if (and i (<= (d (:px (nth batch i))) eraser-radius-px))
+          (do (swap! session assoc-in [:pnp-batch idx]
+                     (vec (concat (subvec batch 0 i) (subvec batch (inc i)))))
+              (set-status-message! "eraser: removed a batch click")
+              (redraw-overlay-dots!)
+              (update-panel!))
+          (set-status-message!
+           "eraser: no click under here — move the cursor closer to the dot to remove")))
+      (let [picks (pnp-picks)
+            best (when (seq picks)
+                   (apply min-key (fn [[_ v]] (d (:px v))) (vec picks)))]
+        (if (and best (<= (d (:px (val best))) eraser-radius-px))
+          (let [[ci v] best
+                lbl (:label (nth (pnp-targets) ci nil))]
+            (swap! session update-in [:pnp-picks idx] dissoc ci)
+            (swap! session update-in [:pnp-outliers idx] (fnil disj #{}) ci)
+            (swap! session update-in [:pnp-residuals idx] dissoc ci)
+            (set-status-message!
+             (str "eraser: removed " lbl
+                  (if (:proposed? v) " (it was an automatic proposal)" " (it was your click)")
+                  " — 'r' to register on the remaining ones; to put it back click its "
+                  "button in the panel, then the point in the photo"))
+            (redraw-pnp-preview!)
+            (redraw-overlay-dots!)
+            (update-panel!)
+            (save-acquire-state!))
+          (set-status-message!
+           "eraser: no pick under here — move the cursor closer to the dot to remove"))))))
+
+(defn- pnp-on-contextmenu
+  "Right-click in PnP mode IS the eraser — the camera is locked on the photo, so
+   the right button has no other job here, and an eraser wants to be aimed."
+  [^js e]
+  (when (and @session (= :pnp (:mode @session)))
+    (.preventDefault e)
+    (.stopPropagation e)
+    (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
+      (erase-pick-at! px))))
+
 (defn- start-pnp! []
   (when (and @session (not= :pnp (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :pnp)
+    (refresh-pose-controls-visibility!)
     (swap! session dissoc :pnp-batch-mode?)   ; always open in the armed flow
+    ;; On a CAGE with no face declaration yet for this photo, read one off the
+    ;; photo's current pose on the way in, so the panel opens with the toggles
+    ;; already lit and offers the faces actually in the picture — Vincenzo asked
+    ;; whether the six buttons set themselves (2026-09-01), and before this they
+    ;; only did after a gizmo COMMIT on this same photo, which a photo you never
+    ;; drag (the turntable seed is close) never gets. Entry-only, never
+    ;; overwrites an existing choice, and never touches picks: refacing stays
+    ;; tied to the gizmo commits, where the pose is explicitly the user's own
+    ;; (derive-faces-from-pose!). BEFORE arm-corner!, so the first armed target
+    ;; already respects the derived offer.
+    (let [idx (:current-idx @session)]
+      (when (and (cage-proxy?)
+                 (nil? (get-in @session [:cage-face-choice idx])))
+        (when-let [cam (get-in @session [:camera-poses idx])]
+          (let [faces (bridge/cage-faces-from-pose (:proxy-mesh @session) cam)
+                derived (into {} (keep (fn [[a {:keys [sign]}]] (when sign [a sign]))) faces)]
+            (when (seq derived)
+              (swap! session assoc-in [:cage-face-choice idx] derived)
+              (set-status-message!
+               (str "faces read from the pose: "
+                    (str/join " " (for [[a s] (sort-by (comp str key) derived)]
+                                    (str (str/upper-case (name a)) (if (pos? s) "p" "m"))))
+                    " — if your eyes say otherwise, correct them with the buttons")))))))
     (arm-corner! (next-unplaced-corner 0))
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" pnp-on-pointerdown true)
       (.addEventListener canvas "pointermove" pnp-on-pointermove true)
+      ;; pointerup/cancel end the Alt+drag peek; with the pointer captured at
+      ;; peek start they are heard even when the drag ends off-canvas
+      (.addEventListener canvas "pointerup" pnp-on-pointerup true)
+      (.addEventListener canvas "pointercancel" pnp-on-pointerup true)
       (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.addEventListener canvas "contextmenu" pnp-on-contextmenu true)
       (.addEventListener canvas "wheel" pnp-on-wheel #js {:capture true :passive false}))
     (redraw-overlay-dots!)
     (redraw-pnp-preview!)
@@ -1611,16 +3085,23 @@
     (let [^js canvas (viewport/get-canvas)]
       (.removeEventListener canvas "pointerdown" pnp-on-pointerdown true)
       (.removeEventListener canvas "pointermove" pnp-on-pointermove true)
+      (.removeEventListener canvas "pointerup" pnp-on-pointerup true)
+      (.removeEventListener canvas "pointercancel" pnp-on-pointerup true)
       (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
+      (.removeEventListener canvas "contextmenu" pnp-on-contextmenu true)
       (.removeEventListener canvas "wheel" pnp-on-wheel true))
+    ;; a peek must not outlive the mode: kill the timer and drop the angles, or
+    ;; the delayed snap-back would fire into whatever preview came next
+    (when-let [t (:pnp-peek-timer @session)] (js/clearTimeout t))
+    (swap! session dissoc :pnp-peek :pnp-peek-drag :pnp-peek-timer)
     (remove-pnp-overlay!)
     (remove-pnp-loupe!)
     ;; batch (fetta B) state is transient pre-assign scaffolding, not persisted —
     ;; drop it on exit so re-entering PnP opens clean in the armed flow
     (swap! session dissoc :pnp-batch :pnp-batch-mode?)
     (swap! session assoc :mode :gizmo)
+    (refresh-pose-controls-visibility!)
     (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
 (defn- undo-batch-click!
@@ -1642,12 +3123,12 @@
     (if on?
       (do (swap! session assoc :pnp-armed nil)
           (set-status-message!
-           (str "Batch (senza identità): clicca almeno " min-plate-picks
-                " dischetti QUALSIASI, ben sparsi attorno al piatto, poi 'r'. "
-                "'b' per tornare alla modalità armata."))
+           (str "Batch (no identities): click at least " min-plate-picks
+                " discs, ANY of them, well spread around the plate, then 'r'. "
+                "'b' to go back to armed mode."))
           (redraw-pnp-preview!))
       (do (arm-corner! (next-unplaced-corner 0))
-          (set-status-message! "Modalità armata: evidenzia un marker, clicca dov'è, poi 'r'.")))
+          (set-status-message! "Armed mode: highlight a marker, click where it is, then 'r'.")))
     (redraw-overlay-dots!)
     (update-panel!)))
 
@@ -1683,8 +3164,8 @@
       (update-panel!)
       (save-acquire-state!)
       (set-status-message!
-       (str (str/capitalize (pnp-noun)) " #" lbl " scartato — "
-            "premi 'r' per registrare sui restanti")))))
+       (str (str/capitalize (pnp-noun)) " #" lbl " discarded — "
+            "press 'r' to register on the remaining ones")))))
 
 (defn- corner-labels [cis]
   (let [targets (pnp-targets)]
@@ -1694,24 +3175,368 @@
   "Plain-language verdict from a robust PnP solve — the answer to 'why won't the
    rms drop': corner(s) rejected as mislabels (re-click them); a fit still dirty
    with nothing left to drop (systematic — a wrong declared face or lens
-   distortion, not a single click); or a clean fit."
+   distortion, not a single click); or a clean fit.
+
+   The rejected points may be named as CULPRITS only when dropping them actually
+   bought a clean fit. `accept-rms-px` says why in its own docstring: a mislabel
+   spreads its damage over every residual, so the tell is that the rms COLLAPSES
+   under the bar when the guilty point goes. If it does not collapse, the
+   greedy cleaner simply removed the worst two of a uniformly bad fit — and they
+   are arbitrary, which is exactly how it looks from the outside. Measured on
+   battiscopa3 grab-01 (2026-08-30): 15.5 → 14.6 → 13.8px, nine tenths of a
+   pixel per rejection, four solves in a row naming four DIFFERENT pairs, every
+   one of them a point Vincenzo had clicked dead on a detected disc. He said the
+   accused points looked right to him. They were.
+
+   And a rejected point that the user never placed cannot be re-clicked: an
+   automatic proposal is a guess of the previous pose, so the move there is to
+   drop it, not to aim better. Naming it in the same breath as a hand click sent
+   him hunting for a mark he had never touched."
   [sol]
   (let [rms (:rms-px sol)
-        out (mapv :ci (:outliers sol))]
+        out (mapv :ci (:outliers sol))
+        picks (pnp-picks)
+        prop? (fn [ci] (boolean (:proposed? (get picks ci))))
+        clicked (filterv (complement prop?) out)
+        guessed (filterv prop? out)
+        clean? (<= rms pnp/accept-rms-px)]
     (cond
-      (seq out)
-      (str "registrata sui restanti (" (.toFixed rms 1) "px), "
-           (if (> (count out) 1) "scartati i punti " "scartato il punto ")
-           (corner-labels out) ": riclicca" (if (> (count out) 1) "li" "lo")
-           " più preciso, o 'o' per scartarl" (if (> (count out) 1) "i" "o")
-           " (nascosto o non allineabile), poi 'r' — o vai avanti così")
+      ;; the drops bought a clean fit: they WERE the culprits, say so
+      (and (seq out) clean?)
+      (str "registered on the remaining ones (" (.toFixed rms 1) "px)"
+           ;; a proposal excluded from the FIT is still on screen as a pick —
+           ;; say "escluse dal calcolo", not "tolte", and say who put them there
+           (when (seq guessed)
+             (str ", excluded from the fit " (if (> (count guessed) 1) "the automatic proposals "
+                                               "the automatic proposal ")
+                  (corner-labels guessed)
+                  " (" (if (> (count guessed) 1) "the program placed them" "the program placed it")
+                  ", nothing to re-click)"))
+           (when (seq clicked)
+             (str ", discarded " (if (> (count clicked) 1) "the points " "the point ")
+                  (corner-labels clicked)
+                  ": click " (if (> (count clicked) 1) "them" "it")
+                  " again more precisely, or 'o' to skip " (if (> (count clicked) 1) "them" "it")
+                  " (hidden or not alignable), then 'r' — or carry on as is")))
+      ;; the rms did NOT collapse: nothing here is a single culprit
       (> rms pnp/accept-rms-px)
-      (str "rms alto (" (.toFixed rms 1) "px) senza un singolo colpevole: clicca più "
-           "preciso, o la faccia dichiarata è sbagliata; se resta, segnalamelo")
+      (str "high rms (" (.toFixed rms 1) "px)"
+           (when (seq out)
+             (str " even removing " (corner-labels out)))
+           ": it is NOT a single point — the error is spread over all of them, and removing the"
+           " worst ones does not make it collapse. Do not re-click at random: check the"
+           " declared FACE of the rings and the focal; if those hold,"
+           " report it to me")
       :else
-      (str "fit pulito, rms " (.toFixed rms 2) "px"))))
+      (str "clean fit, rms " (.toFixed rms 2) "px"))))
 
 (defn- min-pnp-picks [] (if (plate-proxy?) min-plate-picks pnp/min-correspondences))
+
+(defn- cage-crown-count
+  "Marks per crown on the session's cage proxy."
+  []
+  (or (:cage-marks (:proxy-mesh @session)) 12))
+
+(defn- best-misreading
+  "For ONE ring's picks, the entry of `cage/crown-misreadings` that puts them
+   closest to where `pose` says their discs are — among the readings that are
+   PHYSICALLY POSSIBLE from that pose. Returns {:t :err :pairs :possible?} with
+   `pairs` as [correspondence new-ci], or nil when no candidate maps cleanly.
+
+   Possible-first, and it is the whole point. Reprojection error cannot see a
+   change of face: the two faces are the same discs 3mm apart through the
+   plastic, so swapping them moves a point by 3mm — about 19px at arm's length —
+   and ALWAYS uphill from a reading that already sits on the pixels. Ranking by
+   error alone therefore hands back the reading whose discs face away from the
+   camera, every time, and the guard downstream can then only refuse the whole
+   solve. Which is what a user saw: a ring offered on the wrong face, no way to
+   put the right names in, and a refusal at the end (Vincenzo, 2026-08-23).
+   So the guard chooses the candidate SET and the error picks within it. If no
+   reading is possible the ranking degrades to error alone, exactly as before."
+  [group pose k targets id->ci n]
+  (let [id-of (fn [ci] (:id (nth targets ci)))
+        obj-of (fn [ci] (:obj (nth targets ci)))]
+    (->> (cage/crown-misreadings n)
+         (keep (fn [t]
+                 (let [pairs (mapv (fn [c]
+                                     (when-let [nci (id->ci (cage/relabel (id-of (:ci c)) t n))]
+                                       [c nci]))
+                                   group)]
+                   (when (every? some? pairs)
+                     {:t t
+                      :pairs pairs
+                      :possible? (boolean (bridge/camera-sees-marks?
+                                           targets (mapv second pairs) pose))
+                      :err (/ (reduce + (map (fn [[c nci]]
+                                               (if-let [q (pcamera/project k pose (obj-of nci))]
+                                                 (Math/hypot (- (nth q 0) (nth (:px c) 0))
+                                                             (- (nth q 1) (nth (:px c) 1)))
+                                                 1e9))
+                                             pairs))
+                              (count pairs))}))))
+         (reduce (fn [a b]
+                   (cond (nil? a) b
+                         ;; possible beats impossible, whatever the pixels say
+                         (not= (:possible? a) (:possible? b)) (if (:possible? b) b a)
+                         (< (:err b) (:err a)) b
+                         :else a))
+                 nil))))
+
+(def ^:private gross-pick-px
+  "A rejected pick above this many image px is not click noise — it is a pick
+   that means something else entirely: a wrong name, a disc of another ring, a
+   click nowhere near a disc. Five times the acceptance bar, so it can never
+   fire on ordinary hand scatter.
+
+   It exists to bound what a RESCUE may claim. A relabelling search reaches its
+   rms by dropping points; dropping one at 508px means the pose it kept was
+   dragged by that point before it went, and such a pose cannot arbitrate which
+   FACE of a ring the camera saw — a question decided by a sign. Measured on
+   battiscopa3 grab-05 (2026-08-31): the bench told Vincenzo the Z ring read on
+   the m face, with a comfortable 43° margin, from exactly such a set; he read
+   the chirality off the printed part and said p. His witness is the better one,
+   and the message had claimed 'the ONLY physically possible reading'."
+  (* 5.0 pnp/accept-rms-px))
+
+(defn- rescue-face-phrase
+  "The relabel search's answer as a THING TO PRESS. Given `flip` (the search's
+   ci→ci permutation) and the faces the user has already declared, return the
+   DELTA — the face buttons that must change — not the full reading.
+
+   Stating all three faces made the user diff them against his own declaration
+   in his head, and he did not (Vincenzo, grab-05, 31/8: the message said 'legge
+   X sulla faccia m, Z sulla faccia m', he had declared Xm Ym Zp, the answer was
+   the single button Zm, and what he reported was «ho provato a rifarla ma non
+   va»). A correct answer nobody can act on is not an answer.
+
+   Returns nil when the reading agrees with what is already declared — there the
+   faces are not the story and saying anything about them would mislead."
+  [flip targets cis declared]
+  (let [face (fn [ci] (let [id (:id (nth targets ci))]
+                        (or (cage/mark-parts id) (cage/index-parts id))))
+        by-axis (into (sorted-map)
+                      (keep (fn [ci] (when-let [p (face (flip ci))]
+                                       [(:axis p) (:sign p)])))
+                      cis)
+        btn (fn [a s] (str (str/upper-case (name a)) (if (pos? s) "p" "m")))
+        changed (filterv (fn [[a s]] (not= s (get declared a))) by-axis)]
+    (cond
+      (empty? by-axis) nil
+      ;; every ring already declared the way the search reads it
+      (empty? changed) nil
+      ;; only some rings differ, and the rest are declared and agree
+      :else
+      ;; Name the button to press AND what is set now. "cambia il bottone Zm"
+      ;; reads as "change the Zm button" — and when the panel shows Zp there is
+      ;; no Zm button to change, so the instruction is nonsense at the very
+      ;; moment it matters (Vincenzo, 31/8: «mi dice di cambiare il bottone Zm
+      ;; (ma è già Zp)»). From → to, explicitly.
+      (str "press " (if (> (count changed) 1) "the buttons " "the button ")
+           (str/join " and " (map (fn [[a s]]
+                                  (str (btn a s)
+                                       (when-let [had (get declared a)]
+                                         (str " instead of " (btn a had)))))
+                                changed))
+           (when-let [ok (seq (remove (fn [[a _]] (contains? (set (map key changed)) a))
+                                      by-axis))]
+             (str " (" (str/join " " (map (fn [[a s]] (btn a s)) ok)) " "
+                  (if (> (count ok) 1) "stay" "stays") " as "
+                  (if (> (count ok) 1) "they are" "it is") ")"))))))
+
+(defn- cage-relabel-rescue
+  "Recover a solve whose picks are RIGHT and whose labels are misread, one ring
+   at a time.
+
+   The cage makes this failure ordinary rather than careless. Both faces of a
+   ring carry the same discs at the same angles, so no photograph tells you which
+   face you are looking at, and from the far side the crown numbers run backwards.
+   Worse, the marks the editor OFFERS are chosen from where the proxy currently
+   sits, not from the photograph — so a proxy that is merely out of pose hands the
+   user labels from the wrong faces, and both faces look identical, so nothing on
+   screen can give it away. Found on the first real session (2026-08-19): twelve
+   clicks all dead centre on real discs, and an rms of 1007px.
+
+   Fixing every label together is not enough, and that is the whole design here.
+   In that same photograph the largest ring was numbered CORRECTLY while the
+   middle one was mirrored, because the camera sat on opposite sides of the two —
+   the normal condition for a cage. So: trust the ring with the most picks, solve
+   from it alone, then let every ring choose its own misreading against that pose,
+   and refit. Same clicks, better names (1007px → 18px on that photograph).
+
+   Returns {:sol :flip :changed} — `flip` a ci→ci permutation for
+   `relabel-picks!` — or nil when nothing better was found.
+
+   WHAT ADOPTS IT: the physical guard, and only the guard. The rms is a
+   non-regression check, not evidence. It used to be the evidence — the new
+   names had to beat HALF the old rms — and that quietly excluded the most
+   ordinary misreading of all. A ring assembled the other way round maps its
+   crown ONTO ITSELF: the discs are in the same places, only the identities and
+   the printed faces permute. So the fit was already perfect and could not
+   improve on itself. Measured on that exact case: first fit 0.000px, guard
+   failed, threshold demanded '< 0.000px', and the correct relabelling —
+   which the search HAD found — was thrown away, leaving the user with a
+   refusal and no way forward (Vincenzo, 2026-08-23). Asking a failure for
+   evidence it cannot produce is not conservatism."
+  [correspondences targets k baseline-rms extra-poses]
+  (let [n (cage-crown-count)
+        id->ci (into {} (map-indexed (fn [i t] [(:id t) i])) targets)
+        obj-of (fn [ci] (:obj (nth targets ci)))
+        axis-of (fn [ci] (cage/anchor-axis (:id (nth targets ci))))
+        groups (vals (group-by #(axis-of (:ci %)) correspondences))
+        anchor (reduce (fn [a b] (if (> (count b) (count a)) b a)) (first groups) groups)]
+    (when (and (seq anchor) (>= (count anchor) 4) (> (count groups) 1))
+      (let [;; poses to try the rings against: the anchor ring on its own (both
+            ;; faces — flipping which face its discs are on is what decides which
+            ;; side of them the camera must have been, at a cost of 3mm of
+            ;; geometry), plus whatever the caller already has in hand
+            anchor-poses
+            (keep identity
+                  (for [t [{:flip-face? false :mirror? false :rot 0}
+                           {:flip-face? true :mirror? false :rot 0}]]
+                    (let [corr (keep (fn [c]
+                                       (when-let [nci (id->ci (cage/relabel
+                                                               (:id (nth targets (:ci c))) t n))]
+                                         {:ci nci :world (obj-of nci) :px (:px c)}))
+                                     anchor)]
+                      (when (= (count corr) (count anchor))
+                        (:pose (pnp/solve-pnp (vec corr) k {}))))))
+            candidates
+            (keep (fn [pose]
+                    (let [picked (map #(best-misreading % pose k targets id->ci n) groups)]
+                      (when (every? some? picked)
+                        (let [by-axis (into {} (map (fn [g m] [(axis-of (:ci (first g))) (:t m)])
+                                                    groups picked))
+                              corr (vec (for [[c nci] (mapcat :pairs picked)]
+                                          {:ci nci :world (obj-of nci) :px (:px c)}))
+                              sol (pnp/solve-pnp corr k {})]
+                          ;; the physical guard has to be asked about the NEW
+                          ;; names: a disc's printed face is what decides which
+                          ;; side of it the camera can have been, so judging a
+                          ;; relabelled solve by the old labels' normals answers
+                          ;; a question nobody asked
+                          (when (and sol (bridge/camera-sees-marks?
+                                          targets (mapv :ci corr) (:pose sol)))
+                            {:sol sol
+                             :by-axis by-axis
+                             :changed (count (remove (fn [[c nci]] (= nci (:ci c)))
+                                                     (mapcat :pairs picked)))})))))
+                  (concat anchor-poses extra-poses))
+            best (reduce (fn [a b] (if (or (nil? a) (< (:rms-px (:sol b)) (:rms-px (:sol a)))) b a))
+                         nil candidates)]
+        (when (and best (pos? (:changed best)))
+          ;; `:adoptable?` is the old gate, unchanged: no worse than what the
+          ;; user had, or good in absolute terms — the guard above already
+          ;; established that this is the physically possible reading and the
+          ;; old one was not. What changed (2026-08-31) is that a candidate
+          ;; failing it is RETURNED rather than swallowed. Both callers ask
+          ;; `rename-worthy?` before adopting, so nothing is adopted that was
+          ;; not adopted before — but the refusal can now say what the only
+          ;; possible reading was and how far off it sat, instead of "non
+          ;; basta". Measured on battiscopa3 grab-04: the sole physically
+          ;; possible reading of Vincenzo's thirteen clicks was 14.0px against
+          ;; a bar of 12, and the whole search result was thrown away for those
+          ;; two pixels while he was told to hunt for a bad click.
+          {:sol (:sol best)
+           :changed (:changed best)
+           :adoptable? (<= (:rms-px (:sol best)) (max baseline-rms pnp/accept-rms-px))
+           :flip (fn [ci]
+                   (or (when-let [t (get (:by-axis best) (axis-of ci))]
+                         (id->ci (cage/relabel (:id (nth targets ci)) t n)))
+                       ci))})))))
+
+(defn- cage-zero-phase-rescue!
+  "A hand-clicked zero-index the solve wants to discard as an outlier gets the
+   k-step re-reading of its ring first (match-cage/rescue-hand-zeros) — as a
+   DIAGNOSIS, never as a substitute for the declaration. Vincenzo's call
+   (2026-08-28), overturning this function's first draft, which adopted the
+   re-solve and registered the photo as if the phase were declared: «non mi
+   sembra una cosa furba supplire alla mancanza di :phases — ci accolliamo
+   lavoro e incertezza in più per niente: la gabbia deve essere giusta».
+   A session that half-believes two geometries (the fit on the turned zero,
+   the predictions on the model) is exactly that uncertainty.
+
+   So the solve that discarded the zero STANDS — the zero stays an honest
+   outlier of the model in use — and what the probe measured goes in `:note`
+   and the log: which ring, how many steps, and the rms the declaration would
+   buy (the trial re-solve runs as EVIDENCE, so the suggestion is never a
+   guess), with the exact `:phases` line to declare. `:zero-phases` tags the
+   diagnosis so the phase report skips the stale zero. Cage only; anything
+   else passes through untouched, ::refused included."
+  [sol correspondences targets k]
+  (if-not (and (map? sol) (:pose sol) (cage-proxy?))
+    sol
+    (let [picks (pnp-picks)
+          index-axis (fn [ci] (some-> (nth targets ci nil) :id cage/index-parts :axis))
+          hand-zero (fn [ci] (when-not (:proposed? (get picks ci)) (index-axis ci)))
+          r (match-cage/rescue-hand-zeros sol correspondences k (cage-crown-count)
+                                          hand-zero index-axis)]
+      (if-not r
+        sol
+        (let [phrase (str/join ", " (for [[axis {:keys [steps deg]}] (sort-by key (:phases r))]
+                                      (str (str/upper-case (name axis)) " by " steps
+                                           " steps (" (.toFixed deg 0) "°)")))
+              ;; the declaration to suggest is the TOTAL mounting: what the proxy
+              ;; already declares plus what this photo just measured on top of it
+              declared (into {} (map (fn [[a v]] [a (double v)])
+                                     (or (:cage-phases (:proxy-mesh @session)) {})))
+              total (merge-with + declared
+                                (into {} (map (fn [[a p]] [a (:deg p)]) (:phases r))))
+              decl (str/join " " (for [[axis deg] (sort-by key total)]
+                                   (str ":" (name axis) " " (.toFixed deg 0))))]
+          (auto-log! (str "  ring mounted turned, measured from the clicked zero: " phrase
+                          " · with :phases declared the fit would close at "
+                          (.toFixed (:rms-px (:sol r)) 1) "px with the zero in (now "
+                          (.toFixed (:rms-px sol) 1) "px discarding it)"))
+          (assoc sol
+                 :zero-phases (:phases r)
+                 :note (str (when-let [n (:note sol)] (str n " · "))
+                            "the zero you clicked is not wrong: ring " phrase
+                            " turns out MOUNTED turned (the discs land on other "
+                            "discs, only the zero can tell). I do not compensate for it: "
+                            "declare the phase and reopen the session with "
+                            "(registration-cage :d "
+                            (or (:cage-d (:proxy-mesh @session)) "…")
+                            " :phases {" decl "}) — then the fit closes at "
+                            (.toFixed (:rms-px (:sol r)) 1)
+                            "px with the zero in (measured, not guessed). "
+                            "For now the zero stays out of the fit here.")))))))
+
+(defn- session-rms-median
+  "Median reprojection rms of the OTHER registered photos — what 'a good fit'
+   means in THIS session, measured rather than assumed. nil when no other photo
+   is registered (a young session has no opinion yet)."
+  [skip-idx]
+  (let [rs (vec (sort (keep (fn [[i r]]
+                              (when (and (not= i skip-idx) (registered-result? r))
+                                (:rms-px r)))
+                            (:acquire-results @session))))]
+    (when (seq rs) (nth rs (quot (dec (count rs)) 2)))))
+
+(defn- outlier-budget
+  "Proportional outlier budget for a per-photo solve: 40% of the picks, floor 2.
+   The historic cap of 2 is sized for the occasional mis-click and stays right
+   for a handful of hand picks (below 8 picks this IS 2) — but picks born from
+   an ASSIGNMENT made at the wrong lens carry far more (battiscopa4, 3/9:
+   7-8 wrong labels per photo out of 20-30), and with the cap the survivors
+   drag every later solve and the joint R toward the wrong lens's basin. The
+   generous budget cannot buy a wrong hypothesis a pass: at the wrong lens (or
+   under wrong names) the error spreads over EVERY residual — the mislabeled-
+   mark signature in pnp's docstring — so gross-outlier? finds nothing to drop
+   and the greedy loop stops; only under the right hypothesis do the bad picks
+   stand out individually and fall (measured, CAGE_AUTO_BUDGET probe: foto2 at
+   f34 dropped 1 with budget 9 and stayed at 6.4px; at f27.35 it dropped its
+   2 and every photo agreed at 1.5-2.6px). NOT used by cage-relabel-rescue:
+   there the solve JUDGES a naming hypothesis, and a naming must not earn its
+   acceptance by shedding the picks that contradict it."
+  [corr]
+  (max 2 (quot (* 2 (count corr)) 5)))
+
+(defn- solve-photo
+  "pnp/solve-pnp with the per-photo proportional outlier budget. `opts` may
+   still override :max-outliers explicitly."
+  ([corr k] (solve-photo corr k {}))
+  ([corr k opts]
+   (pnp/solve-pnp corr k (merge {:max-outliers (outlier-budget corr)} opts))))
 
 (defn- solve-and-apply!
   "Solve the current photo's placed correspondences and APPLY the pose (move the
@@ -1727,12 +3552,25 @@
         targets (pnp-targets)
         correspondences (vec (for [[ci {:keys [px]}] (pnp-picks)]
                                {:ci ci :world (:obj (nth targets ci)) :px px}))
-        camera-pose (current-camera-pose)]
-    (let [sol (let [k (session-intrinsics iw ih)
-                    first-try (pnp/solve-pnp correspondences k {})
+        camera-pose (current-camera-pose)
+        k (session-intrinsics iw ih)]
+    (let [sol (let [first-try (solve-photo correspondences k)
                     detect (bridge/plate-detect (:proxy-mesh @session))
                     sees? (fn [s] (and s (bridge/camera-sees-marked-face?
-                                          detect (:pose s))))]
+                                          detect (:pose s))))
+                    ;; A proxy whose marks face DIFFERENT ways — a cage — has no
+                    ;; single marked face, so plate-detect is nil and the plate's
+                    ;; test above never fires. The physical constraint is the
+                    ;; same one and still available per mark: each disc that was
+                    ;; clicked was photographed, so the camera was in front of it.
+                    ;; Without this a cage would be the one proxy with NO guard,
+                    ;; and it needs one exactly when the picks all land on a
+                    ;; single ring — coplanar again, planar solver again, mirror
+                    ;; twin again, and no crown-wide reflection to rescue it with.
+                    picked-cis (mapv :ci correspondences)
+                    per-mark-faces? (and (nil? detect) (boolean (some :normal targets)))
+                    sees-marks? (fn [s] (and s (bridge/camera-sees-marks?
+                                                targets picked-cis (:pose s))))]
                 ;; A pose that puts the camera BEHIND the printed face is
                 ;; impossible, not improbable — the discs were photographed. For
                 ;; a plate it also has one exact cause: the crown is mirror-
@@ -1745,28 +3583,29 @@
                 ;; overruled arbitrarily: a proxy drawn from an already-flipped
                 ;; pose shows mirrored labels, so clicking them confirms the
                 ;; flip. See bridge/mirror-crown-index.
-                (if (and detect first-try (not (sees? first-try)))
+                (cond
+                  (and detect first-try (not (sees? first-try)))
                   (let [flip #(bridge/mirror-crown-index (count targets) %)
                         mirrored (mapv (fn [c]
                                          (let [j (flip (:ci c))]
                                            (assoc c :ci j :world (:obj (nth targets j)))))
                                        correspondences)
-                        m-sol (pnp/solve-pnp mirrored k {})]
+                        m-sol (solve-photo mirrored k)]
                     (if (sees? m-sol)
                       (do (relabel-picks! idx flip)
                           (assoc m-sol :note
-                                 (str "le etichette erano SPECCHIATE (la corona è simmetrica "
-                                      "e il residuo non le distingue): riflesse attorno a m00, "
-                                      "ora la camera è davanti al piatto")))
+                                 (str "the labels were MIRRORED (the crown is symmetric "
+                                      "and the residual cannot tell them apart): reflected around m00, "
+                                      "now the camera is in front of the plate")))
                       ;; The mirror didn't rescue it either: fall back on
                       ;; refining from the pose the user has on screen.
                       (let [seed (bridge/editor->solver-pose camera-pose proxy-pose)
-                            retry (pnp/solve-pnp correspondences k
-                                                 {:method :seeded :seed seed})]
+                            retry (solve-photo correspondences k
+                                               {:method :seeded :seed seed})]
                         (if (sees? retry)
                           (assoc retry :note
-                                 (str "la prima soluzione metteva la camera dietro il piatto: "
-                                      "ripresa dall'allineamento corrente"))
+                                 (str "the first solution put the camera behind the plate: "
+                                      "resumed from the current alignment"))
                           ;; Every candidate is impossible. APPLYING one would be
                           ;; worse than doing nothing: it silently overwrites
                           ;; whatever the user has aligned by hand — which on
@@ -1775,17 +3614,333 @@
                           ;; that looks like a result. Refuse, keep what is on
                           ;; screen, say why.
                           (do (set-status-message!
-                               (str "NON applicata: su questa foto ogni soluzione mette la camera "
-                                    "dietro il piatto, anche riflettendo le etichette. Lascio la "
-                                    "posa che hai adesso. Girala a mano e usala così, oppure "
-                                    "scarta la foto."))
+                               (str "NOT applied: on this photo every solution puts the camera "
+                                    "behind the plate, even with the labels reflected. I leave the "
+                                    "pose you have now. Turn it by hand and use it as is, or "
+                                    "discard the photo."))
                               ;; NOT nil: nil means 'could not fit' to the caller,
                               ;; which would replace this explanation with the
                               ;; generic 'nessuna soluzione' and hide the real
                               ;; reason. A refusal is a decision, not a failure.
                               (swap! session assoc :last-solve ::refused)
                               ::refused)))))
-                  first-try))]
+
+                  ;; Cage (or any proxy whose marks face different ways): the
+                  ;; solution claims the camera was behind a disc it says was
+                  ;; clicked. There is no crown-wide reflection to try — a cage
+                  ;; has six crowns, not one — but there is the same rescue the
+                  ;; plate falls back on, and here it is the FIRST resort rather
+                  ;; than the last: re-solve seeded from the alignment on screen.
+                  ;;
+                  ;; The cause is worth naming because it is not a bug and it
+                  ;; will recur: shot straight down one of the cage's three axes,
+                  ;; the two rings containing that axis are edge-on and their
+                  ;; marks are literally on the far side of a 3mm slab, so the
+                  ;; picks CAN only come from one ring — coplanar again, planar
+                  ;; solver again, mirror twin again. A few degrees off the axis
+                  ;; brings the others back.
+                  (and per-mark-faces? first-try (not (sees-marks? first-try)))
+                  (let [;; FIRST the cheapest hypothesis, and the one that was
+                        ;; missing: the picks are on the OTHER FACE of their rings.
+                        ;; Both faces carry the same discs through the plastic, so
+                        ;; the clicks stay valid and only the names change — and
+                        ;; the residual cannot arbitrate (measured: 0.00px either
+                        ;; way, the 3mm absorbed by moving the camera 3mm) while
+                        ;; the physical guard can, which is what just fired.
+                        ;; `cage-relabel-rescue` covers this too but needs picks on
+                        ;; two rings to trust one of them; with a single crown —
+                        ;; the normal way to start a photograph — it bails, and
+                        ;; the session refused instead of trying the one thing
+                        ;; that was wrong (Vincenzo, 2026-08-23).
+                        ;; through cage/relabel, which knows that a ZERO-INDEX
+                        ;; changes face like everything else on its ring but does
+                        ;; not move round the crown — there is one per face
+                        flip-face (fn [ci]
+                                    (when-let [flipped (cage/relabel
+                                                        (:id (nth targets ci))
+                                                        {:rot 0 :mirror? false :flip-face? true}
+                                                        (cage-crown-count))]
+                                      (get (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
+                                           flipped)))
+                        flipped (when (every? some? (map (comp flip-face :ci) correspondences))
+                                  (mapv (fn [c] (let [j (flip-face (:ci c))]
+                                                  (assoc c :ci j :world (:obj (nth targets j)))))
+                                        correspondences))
+                        flip-sol (when flipped (solve-photo flipped k))
+                        ;; A rescue may REWRITE the user's names only when the fit
+                        ;; it buys is one the session would accept. Renaming on the
+                        ;; strength of a 100px fit is guessing — and the guess gets
+                        ;; PERSISTED: measured on Vincenzo's session (2026-08-26),
+                        ;; the name rescue rewrote picks on fits of 103 and 118px
+                        ;; while the focal was poisoned at 61mm, corrupting photo
+                        ;; after photo until no single lens satisfied them all and
+                        ;; the joint refinement could only refuse.
+                        ;; the bar a rescue must clear to REWRITE names tightens
+                        ;; with the session's own measured quality: 11.7px is
+                        ;; «acceptable» in the abstract (absolute bar 12) but in
+                        ;; a session whose registered photos sit at 2px it is a
+                        ;; 5.8× outlier wearing a badge — grab-07 (3/9 notte),
+                        ;; where exactly that rescue renamed 6 discs onto the
+                        ;; mirror twin. 3× the median is the same multiplier the
+                        ;; R uses to exclude views; the floor at accept/2 keeps
+                        ;; a very sharp session from refusing every honest new
+                        ;; frame, and with no other photo registered the old
+                        ;; absolute bar stands (a young session has no opinion).
+                        rename-bar (if-let [med (session-rms-median idx)]
+                                     (min pnp/accept-rms-px
+                                          (max (/ pnp/accept-rms-px 2.0) (* 3.0 med)))
+                                     pnp/accept-rms-px)
+                        rename-worthy? (fn [sol] (and sol (<= (:rms-px sol) rename-bar)))
+                        flip-ok? (and flip-sol
+                                      (rename-worthy? flip-sol)
+                                      (bridge/camera-sees-marks?
+                                       targets (mapv :ci flipped) (:pose flip-sol)))
+                        seed (bridge/editor->solver-pose camera-pose proxy-pose)
+                        retry (when-not flip-ok?
+                                (solve-photo correspondences k
+                                             {:method :seeded :seed seed}))
+                        ;; Before blaming the geometry, suspect the NAMES. On a
+                        ;; cage the offered labels come from where the proxy sits,
+                        ;; not from the photograph, and the two faces of a ring
+                        ;; are indistinguishable — so a proxy merely out of pose
+                        ;; produces clicks that are all correct and labels that
+                        ;; are not. Ring by ring, because they are not all wrong
+                        ;; the same way.
+                        rescue (when-not (or flip-ok? (sees-marks? retry))
+                                 (cage-relabel-rescue correspondences targets k
+                                                      (:rms-px first-try)
+                                                      (keep :pose [first-try retry])))]
+                    (if flip-ok?
+                      (do (relabel-picks! idx #(or (flip-face %) %))
+                          (assoc flip-sol :note
+                                 (str "they were on the OTHER FACE of their rings: same discs "
+                                      "(the two faces are the same ones through the plastic), "
+                                      "names corrected. The residual could not notice — it is "
+                                      "identical in both cases — but the camera ended up behind the "
+                                      "discs you had photographed")))
+                      (if (and rescue (:adoptable? rescue) (rename-worthy? (:sol rescue))
+                               (not (sees-marks? retry)))
+                        (do (relabel-picks! idx (:flip rescue))
+                            (assoc (:sol rescue) :note
+                                   (str "it was the NAMES, not the clicks: " (:changed rescue)
+                                        " discs were on the other face of their ring"
+                                        " (or counted the opposite way, which is the same thing"
+                                        " seen from the other side). Renamed ring by ring"
+                                        " — your clicks were not touched")))
+                        (if (sees-marks? retry)
+                          (assoc retry :note
+                                 (str "the first solution put the camera behind the discs "
+                                      "you clicked (they are all on a single ring, and a single ring "
+                                      "has its mirrored twin): resumed from the current "
+                                      "alignment"))
+                      ;; A rescue that exists but could not buy an acceptable
+                      ;; fit is reported, not applied — renaming on its strength
+                      ;; would persist a guess (see rename-worthy? above).
+                      ;; LAST RESORT before refusing: the whole chain again on
+                      ;; the HAND PICKS ALONE. The proposals are the old pose's
+                      ;; own guesses, and they can push the rescue's fit just
+                      ;; over the acceptance bar — measured (grab-04, 30/8):
+                      ;; hand clicks alone 10.9px, with three stale proposals
+                      ;; 13.0 against a bar of 12, so a photograph whose only
+                      ;; fault was a through-plastic face NAME on one ring
+                      ;; refused camera-dietro three times running. Guesses do
+                      ;; not get to outvote the cure.
+                          (let [hand-corr (vec (for [[ci {:keys [px proposed?]}] (pnp-picks)
+                                                     :when (not proposed?)]
+                                                 {:ci ci :world (:obj (nth targets ci)) :px px}))
+                                sees-hand? (fn [s]
+                                             (and s (bridge/camera-sees-marks?
+                                                     targets (mapv :ci hand-corr) (:pose s))))
+                                retry-hand (when (and (< (count hand-corr) (count correspondences))
+                                                      (>= (count hand-corr) (min-pnp-picks)))
+                                             (solve-photo hand-corr k))
+                                hand-flipped (when (and retry-hand
+                                                        (not (sees-hand? retry-hand))
+                                                        (every? some? (map (comp flip-face :ci) hand-corr)))
+                                               (mapv (fn [c] (let [j (flip-face (:ci c))]
+                                                               (assoc c :ci j :world (:obj (nth targets j)))))
+                                                     hand-corr))
+                                hand-flip-sol (when hand-flipped (solve-photo hand-flipped k))
+                                hand-flip-ok? (and hand-flip-sol
+                                                   (rename-worthy? hand-flip-sol)
+                                                   (bridge/camera-sees-marks?
+                                                    targets (mapv :ci hand-flipped) (:pose hand-flip-sol)))
+                                hand-rescue (when (and retry-hand (not hand-flip-ok?)
+                                                       (not (sees-hand? retry-hand)))
+                                              (cage-relabel-rescue hand-corr targets k
+                                                                   (:rms-px retry-hand)
+                                                                   [(:pose retry-hand)]))
+                                drop-proposals! (fn []
+                                                  (swap! session update-in [:pnp-picks idx]
+                                                         (fn [m] (into {} (remove (comp :proposed? val) m)))))
+                                prop-note " The old pose's proposals were working against it: removed."]
+                            (cond
+                              (and retry-hand (sees-hand? retry-hand) (rename-worthy? retry-hand))
+                              (do (drop-proposals!)
+                                  ;; NOT "registrata sui tuoi soli click", which is
+                                  ;; what this said until 2026-09-02: the note rides
+                                  ;; the FIRST solve and is printed at the end of a
+                                  ;; message describing the LAST one, after
+                                  ;; propose-and-snap! has put fresh marks in. On
+                                  ;; Vincenzo's grab-01 that produced one line saying
+                                  ;; both "9 marker agganciati in automatico" and
+                                  ;; "registrata sui tuoi soli click" — the second
+                                  ;; false, and the reader left to guess which. It
+                                  ;; may only report what it did: drop the stale
+                                  ;; proposals. What the final fit stands on is the
+                                  ;; :hand-only clause's business, and that one knows.
+                                  (assoc retry-hand :note
+                                         (str "the old pose's PROPOSALS were blocking the "
+                                              "solve: removed")))
+
+                              hand-flip-ok?
+                              (do (drop-proposals!)
+                                  (relabel-picks! idx #(or (flip-face %) %))
+                                  (assoc hand-flip-sol :note
+                                         (str "they were on the OTHER FACE of their rings: same "
+                                              "discs through the plastic, names corrected."
+                                              prop-note)))
+
+                              (and hand-rescue (:adoptable? hand-rescue)
+                                   (rename-worthy? (:sol hand-rescue)))
+                              (do (drop-proposals!)
+                                  (relabel-picks! idx (:flip hand-rescue))
+                                  (assoc (:sol hand-rescue) :note
+                                         (str "it was the NAMES, not the clicks: " (:changed hand-rescue)
+                                              " discs were on the other face of their ring. "
+                                              "Renamed ring by ring — your clicks were not "
+                                              "touched." prop-note)))
+
+                              :else
+                              ;; Nothing left: not the pose on screen, and not a
+                              ;; misreading of the names either — on the full set
+                              ;; or on the hand picks alone. The refusal PERSISTS
+                              ;; nothing, so the evidence goes in the log the user
+                              ;; already pastes (2026-08-27).
+                              (do
+                                (auto-log!
+                                 (str "  camera-behind refusal · focal "
+                                      (:focal-mm @session) "mm ("
+                                      (name (or (:focal-source @session) :default))
+                                      ") · starting fit "
+                                      (when first-try (.toFixed (:rms-px first-try) 1))
+                                      "px · pick: "
+                                      (pr-str (mapv (fn [{:keys [ci px]}]
+                                                      [(:id (nth targets ci))
+                                                       (mapv #(js/Math.round %) px)])
+                                                    correspondences))))
+                                (set-status-message!
+                                 (str "NOT applied: every solution puts the camera BEHIND at least "
+                                      "one of the discs you clicked, which is impossible — that "
+                                      "disc is in your photograph. "
+                                      ;; The search is not empty just because
+                                      ;; nothing was adoptable. When it found a
+                                      ;; physically possible reading and only the
+                                      ;; bar stopped it, that reading is the most
+                                      ;; useful sentence on the screen: it names
+                                      ;; the faces to declare. Saying "non basta"
+                                      ;; instead threw the answer away (grab-04).
+                                      ;; …and only when it is WITHIN REACH of the
+                                      ;; bar. A physically possible reading at
+                                      ;; 30.8px is not an answer, it is the least
+                                      ;; bad of a set of bad ones, and telling the
+                                      ;; user to declare its faces on that
+                                      ;; strength sends him to redo his face
+                                      ;; buttons for nothing (grab-06, 31/8 — the
+                                      ;; message I added the day before, misfiring
+                                      ;; at 30.8px on a bar of 12). Same rule as
+                                      ;; everywhere else here: above ~2x the bar a
+                                      ;; number is not evidence.
+                                      (if-let [near (->> [hand-rescue rescue]
+                                                         (filter (comp :rms-px :sol))
+                                                         (filter #(<= (:rms-px (:sol %))
+                                                                      (* 2.0 pnp/accept-rms-px)))
+                                                         ;; …and the reading must EXPLAIN the picks,
+                                                         ;; not merely survive them. A candidate that
+                                                         ;; reaches its rms only by discarding a point
+                                                         ;; hundreds of px out is a pose dragged by
+                                                         ;; whatever that point was, and it has no
+                                                         ;; standing to tell the user which FACE he is
+                                                         ;; looking at. Vincenzo read the chirality
+                                                         ;; straight off the print — «nella foto 4 il
+                                                         ;; ring Z è p, i mark girano antiorario» —
+                                                         ;; against a verdict computed from a set
+                                                         ;; holding a 508px pick (grab-05, 31/8). The
+                                                         ;; print is the better witness; the message
+                                                         ;; had claimed 'the ONLY possible reading'.
+                                                         (remove #(some (fn [o] (> (:residual-px o)
+                                                                                   gross-pick-px))
+                                                                        (:outliers (:sol %))))
+                                                         (sort-by (comp :rms-px :sol))
+                                                         first)]
+                                        (if-let [delta (rescue-face-phrase
+                                                        (:flip near) targets
+                                                        (mapv :ci correspondences)
+                                                        (get-in @session [:cage-face-choice idx]))]
+                                          ;; lead with the gesture, then the number
+                                          (str "THE MOVE (if you agree): " delta ", then press 'r' again. "
+                                               "It is the only physically possible reading of your "
+                                               "clicks and it closes at "
+                                               (.toFixed (:rms-px (:sol near)) 1) "px. I do not "
+                                               "apply it on my own because it would rename your clicks "
+                                               "on the strength of a fit above the bar; "
+                                               "if you declare it, no renaming is needed. If that "
+                                               "face is NOT the one you see, then the error is in the "
+                                               "names of the individual clicks. ")
+                                          (str "The only physically possible reading of your clicks "
+                                               "is on the faces you already declared and closes at "
+                                               (.toFixed (:rms-px (:sol near)) 1)
+                                               "px, above the bar: the faces are not the "
+                                               "problem, the names of the individual clicks are. "))
+                                        ;; "I tried and it wasn't enough" is a
+                                        ;; LIE when the search never ran, and it
+                                        ;; sends the user looking for a bad click
+                                        ;; instead of clicking more. The rename
+                                        ;; search needs one ring with at least
+                                        ;; four picks to build a pose from; on
+                                        ;; grab-06 the biggest ring had three and
+                                        ;; the whole rescue returned nil unasked
+                                        ;; (Vincenzo, 31/8).
+                                        (if-let [gross (->> [hand-rescue rescue]
+                                                            (keep :sol)
+                                                            (mapcat :outliers)
+                                                            (filter #(> (:residual-px %) gross-pick-px))
+                                                            (sort-by :residual-px >)
+                                                            first)]
+                                          (str "I will not tell you which face it is, because I do not know: the "
+                                               "best reading gets there only by THROWING AWAY point "
+                                               (corner-labels [(:ci gross)]) ", which lands at "
+                                               (.toFixed (:residual-px gross) 0) "px for it — and a pose "
+                                               "held up by a residual like that has no standing to "
+                                               "judge the faces. Check that click FIRST "
+                                               "(wrong name? disc of another ring?), "
+                                               "remove it with the eraser or with 'o', and press 'r' again. ")
+                                          (let [biggest (->> (mapv :ci correspondences)
+                                                             (keep #(cage/anchor-axis
+                                                                     (:id (nth targets %))))
+                                                             frequencies vals (reduce max 0))]
+                                            (if (< biggest 4)
+                                              (str "And the ring-by-ring renaming COULD NOT be tried: "
+                                                   "to rebuild a pose it needs a ring with "
+                                                   "at least 4 clicks, and your best-stocked one has "
+                                                   biggest ". Click more marks on the SAME ring "
+                                                   "(4 or more) and press 'r' again. ")
+                                              (str "I tried renaming them ring by ring, also "
+                                                   "on your clicks alone, and it is not enough. Two possible "
+                                                   "causes: the points are all on ONE ring "
+                                                   "(click a few marks on a second ring), "
+                                                   "or some click landed on a disc of "
+                                                   "a ring other than the one "
+                                                   "the label says. ")))))
+                                      "For now I leave the pose you have."))
+                                (swap! session assoc :last-solve ::refused)
+                                ::refused)))))))
+
+                  :else first-try))
+          ;; before the outliers become red dots: a hand-clicked zero the solve
+          ;; wants to discard gets the k-step re-reading of its ring first — the
+          ;; one witness of a ring mounted whole steps round (fetta 2026-08-28)
+          sol (cage-zero-phase-rescue! sol correspondences targets k)]
       ;; A refusal must not reach the apply body: (:pose ::refused) is nil, and
       ;; bridge/solver-pose->camera of nil returns a PLAUSIBLE pose (measured:
       ;; {:position [0 0 0] :heading [0 0 1]}) rather than failing — so the
@@ -1820,8 +3975,14 @@
                     :outliers (count outlier-cis)})
             (swap! session assoc-in [:pnp-residuals idx] residuals)
             (swap! session assoc-in [:pnp-outliers idx] outlier-cis)
-            ;; tee up the first rejected corner for an immediate re-click
-            (when (seq outlier-cis)
+            ;; Tee up the first rejected corner for an immediate re-click —
+            ;; but ONLY when dropping it actually bought a clean fit. Above the
+            ;; bar the cleaner has merely removed the worst two of a uniformly
+            ;; bad fit (see pnp-diagnosis), and arming one of them hands the
+            ;; user the very gesture that cannot help: re-click an innocent
+            ;; point. Measured on battiscopa3 grab-01 (2026-08-30) — four solves,
+            ;; four different pairs armed, none of them the disease.
+            (when (and (seq outlier-cis) (<= (:rms-px sol) pnp/accept-rms-px))
               (swap! session assoc :pnp-armed (first (sort outlier-cis))))
             (redraw-pnp-preview!)
             (redraw-overlay-dots!)
@@ -1852,19 +4013,190 @@
                            (reduce min js/Infinity
                                    (for [[j [qx qy]] predicted :when (not= j i)]
                                      (Math/sqrt (+ (* (- ux qx) (- ux qx)) (* (- uy qy) (- uy qy)))))))
-          added (atom 0)]
+          added (atom 0)
+          ;; Every pixel already spoken for — the picks that are there, plus the
+          ;; proposals made in this same pass.
+          claimed (atom (mapv :px (vals (pnp-picks))))]
       (doseq [i (sort visible)
               :when (and (not (contains? placed i)) (not (contains? occ i))
                          (contains? predicted i))]
         (let [px (get predicted i)
-              radius (max 15 (min 90 (* 0.12 (gap-to-nearest i px))))]
+              gap (gap-to-nearest i px)
+              radius (max 15 (min 90 (* 0.12 gap)))]
           (when-let [snap (blob/snap-to-blob backdrop/luminance-at px radius)]
-            (let [c (:center snap)]
-              (swap! session assoc-in [:pnp-picks idx i]
-                     {:px c :screen (backdrop/screen-of-pixel canvas (viewport/get-camera) c)
-                      :proposed? true})
-              (swap! added inc)))))
+            (let [c (:center snap)
+                  ;; TWO marks on ONE disc is not a near miss, it is impossible,
+                  ;; and it is the single most destructive thing that can enter
+                  ;; this map: the solver is handed a contradiction it can only
+                  ;; answer by wrecking the pose. It happened twice on the first
+                  ;; real session (2026-08-19) — once from repeated clicking, and
+                  ;; once from HERE, when a proposal snapped onto a disc another
+                  ;; mark already held and took an 18.7px fit to 795px.
+                  ;;
+                  ;; Half the distance to the nearest predicted neighbour is the
+                  ;; right bar and needs no pixel constant: two DISTINCT marks
+                  ;; are a whole gap apart, so anything closer than half a gap is
+                  ;; the same disc seen twice.
+                  too-close (* 0.5 gap)
+                  clash? (some (fn [q]
+                                 (< (Math/sqrt (+ (* (- (nth c 0) (nth q 0)) (- (nth c 0) (nth q 0)))
+                                                  (* (- (nth c 1) (nth q 1)) (- (nth c 1) (nth q 1)))))
+                                    too-close))
+                               @claimed)]
+              (when-not clash?
+                (swap! claimed conj c)
+                (swap! session assoc-in [:pnp-picks idx i]
+                       {:px c :screen (backdrop/screen-of-pixel canvas (viewport/get-camera) c)
+                        :proposed? true})
+                (swap! added inc))))))
       @added)))
+
+(defn- cage-phase-report!
+  "After a solve on a CAGE, say whether a ring looks GLUED ROUND — the one error
+   the cage's design leaves open, and the one a residual reports without naming.
+
+   The largest ring has no tabs of its own: it is held by the other two pressing
+   on its face and can turn while staying seated, so its rotation is set by hand
+   at glue-up, where finding the point halfway between two marks is genuinely
+   hard (Vincenzo, 2026-08-19) and one degree is 1.5mm at r=85. Measured on a
+   synthetic cage: 4° of it costs 22px of rms and puts the camera 15mm out.
+   Without this report that is just a bad number with no cause attached, and the
+   natural suspect is the solver or the clicking — neither of which is at fault.
+
+   Prints; changes nothing. The fix it points at is `:phases` on
+   `registration-cage`, which is a declaration, so the user makes it."
+  [sol picks-by-ci targets k]
+  (when (and sol (:pose sol) (cage-proxy?))
+    (let [;; a zero the k-step rescue just re-read is turned k steps from the
+          ;; model's anchor: measured against the stale :obj it would read as a
+          ;; huge angular estimate and drown this report's sub-step signal
+          rescued (set (keys (:zero-phases sol)))
+          picks (vec (keep (fn [[ci px]]
+                             (when-let [t (nth targets ci nil)]
+                               (let [ip (cage/index-parts (:id t))]
+                                 (when-not (and ip (contains? rescued (:axis ip)))
+                                   {:axis (cage/anchor-axis (:id t)) :obj (:obj t) :px px}))))
+                           picks-by-ci))
+          ;; the pose that MEASURES a ring is solved without that ring — see
+          ;; cage/phase-from-residuals for why measuring against the full fit
+          ;; reads a third of the truth and blames the innocent rings for the rest
+          solve (fn [subset]
+                  (when (>= (count subset) pnp/min-correspondences)
+                    (when-let [s (pnp/solve-pnp
+                                  (mapv (fn [p] {:world (:obj p) :px (:px p)}) subset)
+                                  k {:max-outliers 0})]
+                      (fn [obj] (pcamera/project k (:pose s) obj)))))
+          report (cage/phase-from-residuals picks solve)
+          ;; a ring is only ACCUSED when its marks agree with each other: a
+          ;; genuine turn shows the same offset on every mark of that ring, while
+          ;; sloppy clicking scatters. Without the agreement test this would blame
+          ;; the geometry for a shaky hand.
+          turned (filter (fn [[_ r]] (and (> (Math/abs (:deg r)) 0.6)
+                                          (> (Math/abs (:deg r)) (* 1.5 (:spread-deg r)))))
+                         report)]
+      (when (seq report)
+        (state/capture-println "  ring phases (from this photo):")
+        (doseq [[axis r] (sort-by key report)]
+          (state/capture-println
+           (str "    ring " (name axis) " (" (:n r) " mark): "
+                (.toFixed (:deg r) 2) "° ±" (.toFixed (:spread-deg r) 2)
+                "  =  " (.toFixed (:mm r) 2) "mm on the crown"
+                (when-not (:held-out? r)
+                  " (CAUTIOUS measure: few marks on the other rings, the true deviation is larger)")))))
+      (when (seq turned)
+        (let [[axis r] (first (sort-by (fn [[_ x]] (- (Math/abs (:deg x)))) turned))]
+          (state/capture-println
+           (str "  → ring " (name axis) " looks GLUED TURNED by "
+                (.toFixed (:deg r) 1) "°, and its marks say so in unison"
+                " (±" (.toFixed (:spread-deg r) 2) "°). It is not the solver and it is not"
+                " the clicks: reopen the session with"))
+          (state/capture-println
+           (str "     {:proxy (registration-cage :d "
+                (or (:cage-d (:proxy-mesh @session)) "<diam>")
+                " :phases {" axis " " (.toFixed (:deg r) 1) "})}"))
+          (state/capture-println
+           "     then re-register this photo: if the residual collapses, that was it."))))))
+
+(defn- retry-on-hand-picks!
+  "When a settled fit sits ABOVE the acceptance bar and part of the picks are
+   automatic proposals, solve again on the HAND CLICKS ALONE — and if THAT is
+   clean, throw the proposals away and keep it.
+
+   A proposal is the previous pose's own guess, blob-snapped to whatever disc
+   was nearest; when the previous pose was wrong the guesses are wrong together,
+   and being the majority they set the fit. Measured on battiscopa3 grab-01
+   (2026-08-30): eleven hand clicks, every one of them within a pixel of a
+   detected disc, fit at 9.2px — clean. The same clicks plus seventeen proposals
+   fit at 13.8px, over the bar, and the cleaner then rejected two of HIS points
+   (one of which was itself a proposal he had never placed). Four solves in a
+   row, four different pairs accused, the photograph never registering.
+
+   The camera-behind rescue already learned this (grab-04, 30/8) and does the
+   same thing at the end of its chain. This is the plain over-the-bar case,
+   which is far commoner and had no such fallback. Guesses do not get to
+   outvote the clicks.
+
+   Returns the new solve when it took over, nil otherwise. Nothing is dropped
+   unless the hand-only fit is BOTH clean and physically possible — a smaller
+   point set is easier to fit, so 'better rms' alone would be no evidence."
+  [sol iw ih]
+  (let [idx (:current-idx @session)
+        picks (pnp-picks)
+        hand (into {} (remove (comp :proposed? val) picks))]
+    (when (and sol
+               ;; two triggers, same medicine: the fit WITH the proposals is
+               ;; over the bar, or the re-solve with them was REFUSED outright
+               ;; (:reproposed-refused? — camera-dietro on the proposal set,
+               ;; Vincenzo 2026-09-02): either way the guesses are the suspects
+               ;; and the clicks alone get their chance
+               (or (:reproposed-refused? sol)
+                   (> (:rms-px sol) pnp/accept-rms-px))
+               (< (count hand) (count picks))
+               (>= (count hand) (min-pnp-picks)))
+      (let [targets (pnp-targets)
+            k (session-intrinsics iw ih)
+            corr (vec (for [[ci {:keys [px]}] hand]
+                        {:ci ci :world (:obj (nth targets ci)) :px px}))
+            try-sol (solve-photo corr k)
+            sees? (and try-sol
+                       (or (nil? (some :normal targets))
+                           (bridge/camera-sees-marks? targets (mapv :ci corr) (:pose try-sol))))]
+        (when (and try-sol sees? (<= (:rms-px try-sol) pnp/accept-rms-px))
+          ;; drop the guesses and re-solve through the normal path, so the pose
+          ;; is applied and the residual/outlier overlays are rebuilt on the set
+          ;; that actually produced it. If that path refuses after all, put the
+          ;; picks back: a rescue that does not land must leave no trace.
+          (swap! session update-in [:pnp-picks idx]
+                 (fn [m] (into {} (remove (comp :proposed? val) m))))
+          (let [applied (solve-and-apply! iw ih)]
+            (if (and applied (not= applied ::refused))
+              (assoc applied :hand-only (- (count picks) (count hand)))
+              (do (swap! session assoc-in [:pnp-picks idx] picks)
+                  nil))))))))
+
+(defn- two-faced-rings
+  "The rings whose picks name BOTH of their faces — {axis #{cis}} — or nil.
+
+   This is impossible before any solving is attempted, and saying so costs one
+   pass over the picks. The two faces of a ring are the same discs 3mm apart
+   through the plastic and their printed normals point OPPOSITE WAYS, so a set
+   holding `yp03` and `zero-ym` claims the camera was in front of both: it was
+   in front of neither. Every solve is then refused camera-dietro, and the
+   refusal blames a click on the wrong ring — a diagnosis that sends the user
+   hunting through picks that are all fine (Vincenzo, battiscopa3 grab-04,
+   2026-08-31: the culprit was a ⊙ym clicked before he declared Yp).
+
+   Not a solver concern — a solver sees only world points — so it lives here,
+   where the labels do."
+  []
+  (let [targets (pnp-targets)
+        parts (fn [ci] (let [id (:id (nth targets ci))]
+                         (or (cage/mark-parts id) (cage/index-parts id))))]
+    (not-empty
+     (into {} (keep (fn [[axis cis]]
+                      (when (> (count (set (map (comp :sign parts) cis))) 1)
+                        [axis (set cis)])))
+           (group-by (comp :axis parts) (filter parts (keys (pnp-picks))))))))
 
 (defn- on-solve-pnp!
   "Solve the current photo's declared correspondences (robustly — a mislabeled
@@ -1878,18 +4210,73 @@
    snapped wrong simply shows up as a red outlier of the final fit, to re-click."
   []
   (when-let [[iw ih] (backdrop/image-size)]
-    (let [n (count (pnp-picks))]
-      (if (< n (min-pnp-picks))
+    (let [n (count (pnp-picks))
+          two-faced (when (cage-proxy?) (two-faced-rings))]
+      (cond
+        two-faced
+        ;; refuse BEFORE solving, and name the contradiction: no pose exists, so
+        ;; letting the solver discover that produces a camera-dietro refusal that
+        ;; blames the wrong thing
         (set-status-message!
-         (str "PnP: servono almeno " (min-pnp-picks) " " (pnp-noun) " piazzati (ne hai " n ")"))
+         (str "Not solving: on "
+              (if (> (count two-faced) 1) "these rings you have clicks " "this ring you have clicks ")
+              "on BOTH faces — "
+              (str/join "; "
+                        (for [[axis cis] (sort-by (comp str key) two-faced)]
+                          (str (str/upper-case (name axis)) ": " (corner-labels cis))))
+              ". The two faces look in opposite directions, so no pose can"
+              " have photographed both. Declare the face of "
+              (str/join "/" (map (comp str/upper-case name key) (sort-by (comp str key) two-faced)))
+              " with its button — the clicks move to the right face by themselves"
+              " — or erase the extra ones."))
+
+        (< n (min-pnp-picks))
+        (set-status-message!
+         (str "PnP: needs at least " (min-pnp-picks) " " (pnp-noun) " placed (you have " n ")"))
+
+        :else
         (if-let [sol (let [r (solve-and-apply! iw ih)]
                        (when-not (= r ::refused) r))]
           (let [added (propose-and-snap! (:pose sol) (session-intrinsics iw ih))
-                final (if (pos? added) (or (solve-and-apply! iw ih) sol) sol)]
+                ;; the re-solve WITH the proposals can itself be REFUSED
+                ;; (camera-dietro) — and ::refused must not flow on as if it
+                ;; were a solution: (:method ::refused) is nil, and (name nil)
+                ;; is the «Doesn't support name» crash Vincenzo hit live
+                ;; (2026-09-02, prima sessione col seme dell'occhio). The
+                ;; FIRST accepted solve stays the fact on screen; the refusal
+                ;; is recorded on the result so the hand-retry below — the
+                ;; same medicine as over-the-bar guesses — gets its chance to
+                ;; shed the proposals that caused it.
+                settled (if (pos? added)
+                          (let [r (solve-and-apply! iw ih)]
+                            (if (or (nil? r) (= r ::refused))
+                              (-> sol
+                                  (assoc :reproposed-refused? true)
+                                  (update :note
+                                          #(str (when % (str % " — "))
+                                                "the snapped proposals sent the re-solve "
+                                                "into refusal: kept the pose of your clicks")))
+                              r))
+                          sol)
+                ;; over the bar with guesses in the set? try the clicks alone
+                rescued (retry-on-hand-picks! settled iw ih)
+                final (or rescued settled)]
+            (when-let [[iw2 ih2] (backdrop/image-size)]
+              (cage-phase-report! final
+                                  (mapv (fn [[ci {:keys [px]}]] [ci px]) (pnp-picks))
+                                  (pnp-targets)
+                                  (session-intrinsics iw2 ih2)))
             (set-status-message!
              (str "PnP " (name (:method final)) ": " (pnp-diagnosis final)
-                  (when (pos? added)
-                    (str " · " added " " (pnp-noun) " agganciati in automatico"))
+                  (when-let [dropped (:hand-only final)]
+                    (str " · the " dropped " automatic proposals were working against it"
+                         " (" (if (:reproposed-refused? settled)
+                                "flat refusal"
+                                (str (.toFixed (:rms-px settled) 1) "px"))
+                         " with them): removed,"
+                         " registered on your clicks alone"))
+                  (when (and (pos? added) (not (:hand-only final)))
+                    (str " · " added " " (pnp-noun) " snapped automatically"))
                   ;; A solve that had to reinterpret the picks says so HERE: the
                   ;; status line is written once per gesture, so a message set
                   ;; during the solve would be overwritten by this one and the
@@ -1900,9 +4287,946 @@
           ;; a REFUSED solve already said why, and its message must survive
           (when-not (= ::refused (:last-solve @session))
             (set-status-message!
-             (str "PnP: nessuna soluzione — " (pnp-noun) " su più facce e almeno "
+             (str "PnP: no solution — " (pnp-noun) " on more than one face and at least "
                   (min-pnp-picks) "?")))))))
   (update-panel!))
+
+(def ^:private propose-clear-px
+  "No automatic proposal may land within this (image px) of an EXISTING pick,
+   whatever name either carries. The double-booking it forbids is not a near
+   miss but the cage's own anatomy: the two faces of a ring are the same discs
+   through 3mm of plastic, ~2px apart in the image, so a reading that believes
+   the other face happily proposes zm01 on the very pixel of the hand's zp01 —
+   measured 2026-08-28 (foto 4): five doubled discs, fit 194.9px, unrecoverable.
+   `duplicate-pick-px` (6) cannot cover this: an ALT click is taken literally
+   and can sit ~25px off the detector centroid of its own disc (cf.
+   suspicious-snap-px), while distinct marks stay 200-500px apart in working
+   frames — so thirty is comfortably both above the one and below the other."
+  30.0)
+
+;; ── the session's cage mounting (zero-click lever 2) ─────────────────────────
+;;
+;; One session is one mounting: the cage opens only at part changes, and each
+;; ring's zero-index sits at ONE pose-absolute (sense, slot) that every true
+;; registration reads identically (match-cage/index-witness). Accumulating
+;; those observations per photo and VOTING gives the machine the arbiter the
+;; through-plastic/reflection twins cannot pass — measured on battiscopa
+;; (2026-08-30): with it, foto 7 registers TRUE at 1.1mm where before it
+;; shipped the twin at 764mm, and the vote itself exposed a twin among the
+;; session's own HAND registrations. In-memory only, like :pnp?: a reloaded
+;; session rebuilds it as photos are read.
+
+(defn- cage-obs-focal-ok?
+  "Index observations are slot GEOMETRY, and slot geometry under an unmeasured
+   lens lies: at the default 48 on a 44mm camera the Z index read the MIRROR
+   family in BOTH live sessions that started cold (28-29/8), raising false
+   RIBALTATO/GEMELLO alarms that evaporated the moment the lens was measured.
+   Third time was battiscopa3's opening night. No vote, no mounting diagnosis
+   and no mounting arbitration until the lens has a real source — EXIF, live
+   measure, refinement, or the user's own hand on the slider."
+  []
+  (not (contains? #{:default nil} (:focal-source @session))))
+
+(declare reconcile-cage-mounting!)
+
+(defn- remember-cage-mounting!
+  "Store one photo's index observations — every accepted cage reading measures
+   the mounting, hand-seeded or machine. Refuses them at an unmeasured lens
+   (`cage-obs-focal-ok?`). Every new observation re-runs the session
+   reconciliation: the vote just changed, and a conviction (or an acquittal)
+   it now supports must be said NOW, not at the next R."
+  [idx obs]
+  (when (and (seq obs) (cage-obs-focal-ok?))
+    (swap! session assoc-in [:cage-mounting-obs idx] obs)
+    (reconcile-cage-mounting!)))
+
+(defn- declared-cage-mounting
+  "The mounting the proxy DECLARATION asserts — {axis entry} for cages with
+   explicit `:phases` OR `:flips`, nil otherwise. The rings are GLUED
+   (Vincenzo, 30/8: «incollati con l'attack, l'unico modo di cambiarli è
+   ristampare»), so the mounting is a property of the CAGE, not of the
+   session: a declaration asserts that every index sits on the MODEL's own
+   slot, and that assertion arms the twin arbiter from the FIRST photo — no
+   cold start on a declared cage.
+
+   `:fwd k0` for every ring, flipped or not, and that is not an oversight:
+   the observations' housings are computed from the TARGETS' own geometry
+   (match-cage/index-witness reads the index offset off the anchors, never
+   assuming ⅓ step), and the anchors carry the declared flip. A correctly
+   declared cage therefore reads as its own nominal — the flip lives in the
+   model, not in the expected reading. Until 2026-09-02 this armed only on
+   `:phases` (flips didn't exist to declare when it was written), so
+   battiscopa3's true form — `:flips #{:y :z}`, no phases — would have left
+   the arbiter in cold start. Votes 2: enough to demand and veto, beatable by
+   a session that reads otherwise three times over."
+  []
+  (let [pm (:proxy-mesh @session)]
+    (when (or (seq (:cage-phases pm)) (seq (:cage-flips pm)))
+      (into {} (for [a [:x :y :z]]
+                 [a {:sense :fwd :k 0 :votes 2 :d 0.0 :declared? true}])))))
+
+(defn- session-cage-mounting
+  "The session's mounting: the declaration's assertion, refined by the vote of
+   the photos (photo `idx` excluded — its own earlier reading must never
+   arbitrate its re-read). A measured entry displaces the declared one only
+   when it outvotes it 3-to-nothing uncontested."
+  [idx]
+  (match-cage/merge-mounting
+   (declared-cage-mounting)
+   (match-cage/vote-mounting
+    (vals (dissoc (or (:cage-mounting-obs @session) {}) idx)))))
+
+(defn- convicted-mounting-photos
+  "The registrations the session's own vote convicts as twin suspects —
+   match-cage/convict-mounting over the accumulated observations (declaration
+   as baseline), REGISTERED photos only: an unregistered photo's stale obs
+   accuse nobody. {idx [{:axis :seen :voted} …]}."
+  []
+  (into {}
+        (filter (fn [[idx _]]
+                  (and (number? idx)
+                       (registered-result? (get-in @session [:acquire-results idx]))))
+                (match-cage/convict-mounting
+                 (or (:cage-mounting-obs @session) {})
+                 (declared-cage-mounting)))))
+
+(defn- reconcile-cage-mounting!
+  "Session reconciliation — l'ultimo dei «difetti storici di sempre» (via di
+   Vincenzo, 3/9 notte): when the vote matures and CONVICTS an existing
+   registration, the conviction must reach the user and the lens, not just
+   the probe output. Runs after every new observation: newly-convicted photos
+   are announced ONCE (per conviction spell) with the evidence and the cure;
+   a photo re-read into agreement is acquitted out loud — silence is
+   ambiguous, and the acquittal is the reward for redoing it. The photo NEVER
+   loses its place in the film (una foto vale per il pezzo che mostra); it
+   loses its VOTE on the lens, in on-refine-session!, for as long as the
+   conviction stands. Measured motivating case: foto 1 of the battiscopa
+   truth session — a hand registration that mirrors both visible indices,
+   discovered only by the vote of the other five, and until tonight
+   discovered by NOBODY in the app."
+  []
+  (let [convicted (convicted-mounting-photos)
+        now (set (keys convicted))
+        before (or (:twin-flagged @session) #{})]
+    (doseq [idx (sort (set/difference now before))]
+      (let [ev (get convicted idx)]
+        (auto-log!
+         (str "  ⚠ TWIN in the session: the registration of photo " (inc idx)
+              " reads "
+              (str/join "; "
+                        (for [{:keys [axis seen voted]} ev]
+                          (str "the index of " (str/upper-case (name axis))
+                               " in " (name (:sense seen)) " k" (:k seen)
+                               (when-let [d (:d seen)]
+                                 (str " (" (.toFixed d 1) "px)"))
+                               " against the " (name (:sense voted)) " k" (:k voted)
+                               " voted by " (:votes voted)
+                               (if (:declared? voted)
+                                 " (cage declaration)" " poses"))))
+              " — (sense, k) is a fact of the POSE: one of the two readings is the "
+              "mirrored twin, and the majority says it is this one. Photo "
+              (inc idx) " stays in the film but does NOT vote on the lens until you "
+              "redo it: open it, Reset, pose it by eye with the gizmo and press 'a' again. "
+              "If instead it is the drawn cage of photo " (inc idx)
+              " that matches and the others do not, the suspicion is reversed: "
+              "look at them before redoing."))))
+    (doseq [idx (sort (set/difference before now))]
+      (auto-log! (str "  photo " (inc idx) " ACQUITTED: re-read, its mounting now "
+                      "agrees with the session — it votes on the lens again")))
+    (swap! session assoc :twin-flagged now)))
+
+(defn- cage-flips-tag
+  "A cage's declared flips as sorted NAMES, nil when there are none — the form
+   that survives the round trip through acquire-state.json's JSON, where
+   keywords come back as strings, and that lets a file written before :flips
+   existed still match a cage without them."
+  [proxy-mesh]
+  (some->> (seq (:cage-flips proxy-mesh)) (map name) sort vec))
+
+(defn- flips-suggestion
+  "The `(registration-cage …)` form to reopen with, adding `axes` (names like
+   \"Z\") to whatever the session's proxy already declares — diameter, phases
+   and the flips already there.
+
+   Written whole, not as a diff, for the rule this project learned the hard
+   way: a message must name the GESTURE, never ask the user to reconstruct a
+   form from memory. And additive, because a cage with one flipped ring can
+   have two — dropping the flip already declared would trade one wrong
+   declaration for another."
+  [axes]
+  (let [mesh (:proxy-mesh @session)
+        add (set (map (comp keyword str/lower-case) axes))
+        flips (sort (map name (into add (or (:cage-flips mesh) #{}))))
+        phases (:cage-phases mesh)]
+    (str "(registration-cage :d " (or (:cage-d mesh) "…")
+         " :flips #{" (str/join " " (map #(str ":" %) flips)) "}"
+         (when (seq phases)
+           (str " :phases {"
+                (str/join " " (for [[a d] (sort-by (comp str key) phases)]
+                                (str ":" (name a) " " d)))
+                "}"))
+         ")")))
+
+(defn- cage-mounting-suffix
+  "The diagnosis lines the index observations earn — and only when they earn
+   them (a caveat that always prints stops being read). A `:rev` ring is
+   mounted FLIPPED: the reading stays good (crowns are flip-blind), but the
+   assembly is not what the model says. Since 2026-09-01 that is a DECLARATION
+   the user can make (`:flips`), so these lines name it instead of sending him
+   back to the printer. An observation that reads a ring AGAINST the session's
+   own vote means a twin sits among the session's registrations — this one or
+   the others — or that the declaration itself is wrong, which the same day
+   proved is not hypothetical."
+  [mounting obs]
+  (let [;; the EVIDENCE, not just the accusation: which housing the index was
+        ;; actually seen in, against which expectation, at what pixel distance.
+        ;; Added 2026-09-02, when Z kept contradicting on photos whose double
+        ;; pallini looked right — a verdict without its measurement cannot be
+        ;; argued with, in either direction (the project's own rule: una
+        ;; diagnosi non può essere più forte delle prove che la reggono).
+        ;; Since the same day each obs is the ring's ONE reading (the sharpest
+        ;; hit — index-witness folds), so a contradiction here means the
+        ;; ring's best evidence disagrees, not that a stray candidate grazed
+        ;; some slot while the true index sat on its nominal (photo 2 of
+        ;; battiscopa3: X read fwd k0 at 1.4px AND junk at rev k2 — the junk
+        ;; fired this warning). And when the NOMINAL slot is empty (:zero-d
+        ;; beyond the witness's own threshold), the accusation carries that
+        ;; too: an index nobody detected cannot testify, so the stray that
+        ;; did is the prime suspect, and the message should weigh it so.
+        dis-ev (for [{:keys [axis sense k d zero-d]} obs
+                     :let [m (get mounting axis)]
+                     :when (and m (or (not= sense (:sense m))
+                                      (not= k (:k m))))]
+                 {:axis (str/upper-case (name axis))
+                  :seen (str (name sense) " k" k
+                             (when d (str " a " (.toFixed d 1) "px")))
+                  :expected (str (name (:sense m)) " k" (:k m))
+                  ;; the nominal slot's own state rides the evidence: an index
+                  ;; nobody detected cannot testify, so the stray that did is
+                  ;; the prime suspect — appended AFTER the expectation, or the
+                  ;; sentence reads «pesa il terzo sospetto invece di fwd k0»
+                  ;; (Vincenzo's live log, 2026-09-02)
+                  :nominal (when (and (number? zero-d)
+                                      (> zero-d match-cage/index-obs-px))
+                             (str " (and at the NOMINAL spot no disc — the nearest "
+                                  "is at " (.toFixed zero-d 0) "px: the true index "
+                                  "is covered or not detected, the third suspicion weighs)"))})
+        dis (set (map :axis dis-ev))
+        dis-detail (fn [axes]
+                     (str/join "; "
+                               (for [{:keys [axis seen expected nominal]} dis-ev
+                                     :when (contains? (set axes) axis)]
+                                 (str axis " seen " seen " instead of " expected
+                                      nominal))))
+        ;; a ring the session reads TURNED by whole steps, unanimously and
+        ;; twice over, has earned the `:phases` suggestion — the diagnosis
+        ;; Vincenzo asked for by direttiva (28/8: riconoscere e suggerire,
+        ;; mai supplire). Measured before it was written: battiscopa2 reads
+        ;; x=k6, y=k6 (180°) on every hand pose — the same mounting the stage
+        ;; had measured on this physical cage. Self-limiting: once declared
+        ;; in the proxy the observations read k0 and the line stops printing
+        step-deg (/ 360.0 (max 1 (cage-crown-count)))
+        turned (seq (sort (distinct
+                           (for [{:keys [axis sense k]} obs
+                                 :let [m (get mounting axis)]
+                                 :when (and m (= :fwd sense) (pos? k)
+                                            (= sense (:sense m)) (= k (:k m))
+                                            (>= (:votes m 0) 2)
+                                            (not (:contested? m)))]
+                             [(name axis) (js/Math.round (* k step-deg))]))))
+        ;; a CONTESTED ring gets only the contest warning: asserting 'mounted
+        ;; flipped, remount it' about a reading the session disputes claims as
+        ;; fact exactly what is in question — this photo may be the mirrored
+        ;; one (both lines fired together on Vincenzo's first live log,
+        ;; 2026-08-29, and read as an instruction to open the cage)
+        rev-axes (remove dis (distinct (for [{:keys [axis sense]} obs
+                                             :when (= :rev sense)]
+                                         (str/upper-case (name axis)))))
+        ;; asserted only when the SESSION agrees twice over — a lone
+        ;; observation on a photo just registered through five renames is a
+        ;; hint, not a verdict (battiscopa3 foto 2, 30/8: «X/Z RIBALTATO»
+        ;; dichiarato da una foto sola a 11.9px)
+        confirmed-rev? (fn [a] (let [m (get mounting (keyword (str/lower-case a)))]
+                                 (and m (= :rev (:sense m)) (>= (:votes m 0) 2)
+                                      (not (:contested? m)))))
+        revs-sure (seq (sort (filter confirmed-rev? rev-axes)))
+        revs-hint (seq (sort (remove confirmed-rev? rev-axes)))
+        ;; the rings are GLUED (attack): a contradiction with the DECLARED
+        ;; mounting can never mean 'remounted' — it accuses this reading
+        declared? (fn [a] (:declared? (get mounting (keyword (str/lower-case a)))))
+        dis-decl (seq (sort (filter declared? dis)))
+        dis-meas (seq (sort (remove declared? dis)))]
+    (str
+     ;; Until 2026-09-01 these three lines ended in 'reprint it': a flip could
+     ;; be SEEN and not said, so the only cure on offer was new plastic. It is
+     ;; declarable now (registration-cage's :flips), so they name the
+     ;; declaration instead — and the same day proved the sharper half of the
+     ;; point, that a DECLARATION can be the wrong thing: Vincenzo's :phases
+     ;; {:x 180} was, and nothing he could align by would ever have said so.
+     (when revs-sure
+       (str " · the index of ring " (str/join "/" revs-sure)
+            " reads MIRRORED on several agreeing photos: that ring is GLUED "
+            "flipped. Declare it — nothing gets reprinted: reopen with "
+            (flips-suggestion revs-sure)
+            " and RE-MEASURE that ring's phase (the flip changes what it measures)"))
+     (when revs-hint
+       (str " · in THIS photo the index of ring " (str/join "/" revs-hint)
+            " reads mirrored — alone it is no verdict: if "
+            "the next photos confirm it, the ring was glued flipped and is declared with "
+            (flips-suggestion revs-hint)))
+     (when turned
+       (str " · rings mounted TURNED (confirmed by several photos): "
+            (str/join ", " (for [[a deg] turned]
+                             (str (str/upper-case a) " by " deg "°")))
+            " — to declare it to the model reopen the session with "
+            "(registration-cage :d " (or (:cage-d (:proxy-mesh @session)) "…")
+            " :phases {" (str/join " " (for [[a deg] turned]
+                                         (str ":" a " " deg)))
+            "}) — the clicks you made stay valid"))
+     (when dis-decl
+       (str " · WARNING: here the index of ring " (str/join "/" dis-decl)
+            " contradicts the cage's DECLARATION (" (dis-detail dis-decl)
+            "). Two suspects, in "
+            "this order: (1) THIS registration is the twin — redo its "
+            "clicks, or check it against the other photos; (2) it is the DECLARATION "
+            "that is wrong — if the ring is mounted flipped it is declared with "
+            (flips-suggestion dis-decl)
+            ", and if it is turned by whole steps it is its phase. The mounting is a "
+            "physical constant, but what you TOLD the model about it is not. "
+            "Third suspect, if the drawn double dot lands on the real one: "
+            "the witness took for the index a disc that is not one "
+            "(a reflection, a stick) — look at the distance above"))
+     (when dis-meas
+       (str " · WARNING: here the index of ring " (str/join "/" dis-meas)
+            " reads DIFFERENTLY from the session's other photos ("
+            (dis-detail dis-meas)
+            ") — one of the "
+            "two registrations is the TWIN. A click on the double dot of "
+            "that ring in a THIRD photo breaks the tie")))))
+
+(defn- cage-pose-verdict!
+  "The LAST word after a cage 'a' lands: the registered pose, measured against
+   the discs actually DETECTED in the photo — the arbiter the residual cannot
+   be. Every step of the chain can lie politely (grab-07, 3/9 notte: reading
+   «adopted», planar «fit pulito 1.59px», rescue «11.7px» — and the final pose
+   explained 4 of 39 visible marks while the drawn cage sat visibly wrong);
+   this check runs on the OUTCOME, whoever produced it, and speaks only when
+   the number is bad — a caveat that always prints stops being read."
+  [idx targets cands k]
+  (when (and (registered-result? (get-in @session [:acquire-results idx]))
+             ;; NOT on a rim registration: it exists because the discs starved
+             ;; (two rings edge-on), and on those frames «dischetti spiegati»
+             ;; judges nothing — misurato 5→3 a 12px con posa palesemente
+             ;; giusta (battiscopa5 foto 2). Its verdict is already paid for:
+             ;; the coverage bar of the second pass.
+             (not (:rim? (get-in @session [:acquire-results idx]))))
+    (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+          cam (get-in @session [:camera-poses idx])
+          pose (when cam (bridge/editor->solver-pose cam proxy-pose))
+          n (when pose
+              (match-cage/explained targets (mapv :center cands) k pose 26.0))
+          bar (max 6 (min 12 (quot (count cands) 3)))]
+      (when (and n (< n bar))
+        (auto-log! (str "  WARNING photo " (inc idx) ": the registered pose explains only "
+                        n " of the " (count cands) " discs detected in the photo (a "
+                        "sound pose explains more than a third). The drawn cage "
+                        "probably does NOT match: look at it — if it is off, Reset, "
+                        "pose it by eye with the gizmo and press 'a' again with no clicks."))))))
+
+(defn- apply-rim-registration!
+  "APPLY a pose solved from the rim dashes (match-cage/rim-register). No disc
+   picks back it — the dashes are not targets — so it cannot ride
+   on-solve-pnp!: the pose lands directly, the same rigid move as
+   solve-and-apply!'s own apply tail (proxy on photo 0, registered cameras in
+   tow; camera otherwise), and the result records :rim? so the disc-based nets
+   know their metric has no jurisdiction here (see cage-pose-verdict!)."
+  [idx sol]
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        camera-pose (current-camera-pose)]
+    (if (zero? idx)
+      (let [np (bridge/solver-pose->proxy (:pose sol) camera-pose)
+            [new-mesh] (attachment/group-transform
+                        [(:proxy-mesh @session)]
+                        (:position proxy-pose) (:heading proxy-pose) (:up proxy-pose)
+                        (:position np) (:heading np) (:up np))]
+        (swap! session assoc :proxy-mesh new-mesh)
+        (transport-registered-cameras! proxy-pose (:creation-pose new-mesh)))
+      (let [ncp (marker-lock-camera (bridge/solver-pose->camera (:pose sol) proxy-pose) idx)]
+        (swap! session assoc-in [:camera-poses idx] ncp)
+        (viewport/set-camera-pose! ncp)))
+    (swap! session assoc-in [:acquire-results idx]
+           {:pnp? true :rim? true :matched (:hits sol) :rms-px (:rms-px sol)
+            :outliers (:outliers sol 0)})
+    ;; disc residuals/outliers of an older pose must not survive under the new
+    ;; one: they would paint red dots the new pose never earned
+    (swap! session assoc-in [:pnp-residuals idx] {})
+    (swap! session assoc-in [:pnp-outliers idx] #{})
+    (redraw-pnp-preview!)
+    (redraw-overlay-dots!)))
+
+(defn- rim-refusal-phrase
+  "The rim attempt's own evidence, appended to 'a''s refusal — why the dashes
+   did not rescue this frame, with the numbers (the log is the record). nil
+   input (cage without rim marks, or no eye seed) appends nothing."
+  [rr]
+  (when rr
+    (str " I also tried the rim DASHES: "
+         (case (:refused rr)
+           :starved (str "from your pose I read only " (:hits rr) " of "
+                         (:tried rr) " sought — too few for a pose "
+                         "(it needs " match-cage/rim-min-solve "). Realign "
+                         "the cage by eye (the blue segments are the guide) and "
+                         "press 'a' again.")
+           :no-solve (str (:hits rr) " read of " (:tried rr) ", but no "
+                          "pose comes out: probably a mixed reading of dashes "
+                          "from different rings — realign and press 'a' again.")
+           :far-from-eye (str "the pose that comes out lands "
+                              (.toFixed (:dist-mm rr) 0) "mm from yours — almost "
+                              "always it is a snap onto the WRONG dash (the "
+                              "comb repeats every 30°). Realign better and "
+                              "press 'a' again.")
+           :coverage (str "on the second pass it re-reads only " (:hits rr) " of "
+                          (:tried rr) " — below the coverage bar: "
+                          "suspect snap (wrong dash). Realign "
+                          "better and press 'a' again.")
+           :rms (str "they read (" (:hits rr) " of " (:tried rr) ") but the fit "
+                     "stays at " (.toFixed (:rms-px rr) 1) "px, above the bar "
+                     "of " match-cage/eye-accept-rms-px "px.")
+           "did not hold."))))
+
+(defn- cage-read-and-place!
+  "Cage 'a': the crown you clicked, read by the REST OF THE CAGE — then every
+   other mark it accounts for placed for you, and the pose solved on all of them.
+
+   The failure it exists for is SILENT, which is why it needs a key of its own and
+   could not be left to the solve's guards. A crown of twelve equal marks reads
+   the same rotated, so a user who starts counting three marks late produces picks
+   that are all correct, labels that are all wrong, a residual of 5px, and a camera
+   that IS in front of every disc they clicked — nothing fires. Measured on
+   Vincenzo's photograph: that reading leaves the other two rings' marks 92-157px
+   from the discs actually in the frame, and the session registers it as a success.
+
+   `match-cage/read-crown` settles it by scoring each of the 48 readings on how
+   much of the WHOLE cage its pose explains against the detector's candidates — the
+   information a single crown does not contain and more clicking cannot supply.
+
+   What lands in the session is ordinary: the picks are renamed (the pixels are
+   never touched — they were right), the marks the reading accounts for are added
+   as proposed picks exactly as fetta A does for a plate, and the normal solve runs
+   over all of them. So the panel, the residuals, the outlier dots and the phase
+   report all work with no new plumbing, and a proposal that grabbed the wrong disc
+   shows up as a red outlier to re-click, like any other."
+  []
+  (let [idx (:current-idx @session)
+        targets (pnp-targets)
+        marks (cage-crown-count)
+        placed (pnp-picks)
+        ;; The seed is the USER's clicks — never the :proposed? picks. A proposal
+        ;; is the old pose's own guess written back as data (propose-and-snap!),
+        ;; and this reading exists precisely to overturn that pose: seeding the
+        ;; arbitration with the defendant's testimony let a rotation-consistent
+        ;; mislabel defend itself against fresh hand clicks (2026-08-27 evening:
+        ;; two ALT clicks discarded as outliers by fourteen proposals).
+        hand-picks (into {} (keep (fn [[ci {:keys [px proposed?]}]]
+                                    (when-not proposed?
+                                      (when-let [t (nth targets ci nil)] [(:id t) px])))
+                                  placed))
+        ;; read-crown's contract is the marks of ONE ring; hand clicks can span
+        ;; rings (a second ring gets clicked when a refusal suggests it), so the
+        ;; seed is the ring with the most clicks — the rest stay in the pool and
+        ;; the reading renames them with everything else.
+        ring-of-id (fn [id] (let [n (name id)]
+                              (if (str/starts-with? n "zero-") (subs n 5 6) (subs n 0 1))))
+        picks-by-id (if (seq hand-picks)
+                      (into {} (val (apply max-key (comp count val)
+                                           (group-by (comp ring-of-id key) hand-picks))))
+                      {})
+        ;; the zero-indices the hand clicked on rings OTHER than the seed: the
+        ;; arbiter that outranks the vote (read-crown's :zero-picks). Measured
+        ;; 2026-08-28: a FULL seed ring, zero included, still tied on its
+        ;; through-plastic twin — only the other ring's clicked zero can refuse
+        ;; the twin as a fact rather than outscore it.
+        seed-axis (when (seq picks-by-id) (ring-of-id (key (first picks-by-id))))
+        zero-picks (vec (for [[id px] hand-picks
+                              :let [zp (cage/index-parts id)]
+                              :when (and zp (not= (name (:axis zp)) seed-axis))]
+                          {:axis (:axis zp) :px px}))
+        id->ci (into {} (map-indexed (fn [i t] [(:id t) i]) targets))
+        ;; `get` and not `nth`: with no session open :current-idx is nil, and nth
+        ;; throws on a nil index even with a default. Found by calling this from
+        ;; the browser with nothing loaded (2026-08-24) — the compiler cannot see
+        ;; it, and neither can a test that always sets up a session first.
+        file (:file (get (vec (:photos @session)) idx))
+        ;; every message names its photo. Vincenzo's logs are this channel's
+        ;; measuring instrument, and a log line that does not say WHICH photo
+        ;; it is about cannot be cited back — «Non so quali sono le foto che
+        ;; citi» (29/8) after two rounds of otherwise-perfect logs
+        foto-tag (when file (str "photo " (inc idx) " — " file ": "))
+        say! (fn [msg] (set-status-message! (str foto-tag msg)))]
+    (cond
+      (nil? file)
+      (set-status-message! "No photo to read the cage on.")
+
+      ;; UNDER 4 clicks on the seed ring: try to read the cage entirely on its
+      ;; own (Vincenzo, 2026-08-27: «se non riusciamo ad avere la registrazione
+      ;; automatica sarà tutto inutile»). The machine finds a ring among the
+      ;; detector's candidates, pins its zero-index on the pixels, and solves on
+      ;; the whole cage — measured on the battiscopa session: 2 of 8 frames
+      ;; register alone, camera within 1-4mm of the hand result, zero false
+      ;; positives. When it refuses, the seeded path (4 clicks + 'a') is the
+      ;; fallback, and the message says so.
+      ;; NOT `zero?`: 1-3 clicks used to land in a refusal that only flashed the
+      ;; 4-second status line — nothing in the log, nothing on the photo — and
+      ;; whose advice was to DELETE the clicks to let 'a' try alone (la trappola
+      ;; UX del collaudo 3/9). Too few to seed is not poisoned: the clicks stay,
+      ;; the machine tries alone, and if its reading contradicts their names
+      ;; they surface as red outliers like any other suspect pick.
+      (< (count picks-by-id) 4)
+      (do
+        (say! (if (zero? (count picks-by-id))
+                "Reading the cage ON ITS OWN (zero clicks)… it can take up to half a minute"
+                (str "With " (count picks-by-id) " clicks on a ring I cannot "
+                     "seed the reading (it needs 4 + the double dot): "
+                     "trying ON MY OWN, your clicks stay… it can take up to "
+                     "half a minute")))
+        (js/setTimeout
+         (fn []
+           (-> (backdrop/load-luminance-sampler (photo-path file))
+               (.then
+                (fn [{:keys [lum-at size data]}]
+                  (let [[iw ih] size
+                        k (session-intrinsics iw ih)
+                        cands (blob-detect/detect-blobs lum-at size
+                                                        (assoc blob-detect/cage-opts :rgba data))
+                        judge (fn [px r] (blob/disc-at? lum-at px r))
+                        disc-r (or (:mark-disc-r (:proxy-mesh @session)) 1.25)
+                        ;; no arbitration at an unmeasured lens: the stored
+                        ;; vote is trusted, but the observations THIS read
+                        ;; would judge by are being measured NOW, under the
+                        ;; current focal
+                        mounting (when (cage-obs-focal-ok?)
+                                   (session-cage-mounting idx))
+                        ;; the EYE SEED (lever 3): this photo's pose, but only
+                        ;; when it is HUMAN — committed by gizmo (:eye-posed)
+                        ;; or vouched by a registration. A bare turntable seed
+                        ;; gating the hypotheses would kill true readings,
+                        ;; which is worse than no gate at all.
+                        eye-pose (when (or (contains? (or (:eye-posed @session) #{}) idx)
+                                           (registered-result?
+                                            (get-in @session [:acquire-results idx])))
+                                   (when-let [cp (get-in @session [:camera-poses idx])]
+                                     (bridge/editor->solver-pose
+                                      cp (get-in @session [:proxy-mesh :creation-pose]))))
+                        ;; the TRANSLATION automatism (Vincenzo 5/9: al gizmo
+                        ;; le rotazioni vengono facili, la fatica sono le
+                        ;; traslazioni): keep his rotation, refit lateral and
+                        ;; depth from the detected discs — but only when the
+                        ;; normalized seed actually assigns MORE discs than
+                        ;; his (choose-eye-seed: ties go to the human, and on
+                        ;; starved frames the raw eye wins by construction)
+                        seed-choice (when eye-pose
+                                      (match-cage/choose-eye-seed
+                                       targets (mapv :center cands) k eye-pose))
+                        rr (match-cage/auto-read (mapv :center cands) targets k
+                                                 judge marks
+                                                 {:disc-r disc-r
+                                                  :mounting mounting
+                                                  :blobs cands
+                                                  :eye-pose (or (:pose seed-choice) eye-pose)
+                                                  ;; the comb identity (lever 1)
+                                                  ;; rides only where the
+                                                  ;; mounting arbiter has
+                                                  ;; jurisdiction: with no
+                                                  ;; session context its extra
+                                                  ;; reach registered the twins
+                                                  ;; (misurato 30/8, 548/764mm)
+                                                  ;; — or where the user's own
+                                                  ;; eye does (the gizmo seed
+                                                  ;; kills the same twins)
+                                                  :teeth? (boolean (or (seq mounting)
+                                                                       eye-pose))})
+                        ;; option (b), Vincenzo 5/9: a MACHINE disc reading on
+                        ;; a cage with rim marks must be CONFIRMED by the
+                        ;; dashes before adoption — the quiet lie this net
+                        ;; exists for passed every disc bar with the camera
+                        ;; 54.8mm out, and the dashes starve under such a
+                        ;; pose. :confirmed and :silent (too few pieces face
+                        ;; the camera to judge) adopt as before.
+                        confirm (when (:pose rr)
+                                  (match-cage/rim-confirm
+                                   lum-at (:proxy-mesh @session) k (:pose rr)))
+                        rim-veto? (= :disconfirmed (:verdict confirm))]
+                    (when rim-veto?
+                      (auto-log! (str "  " foto-tag "the dash network CONTRADICTS the "
+                                      "reading from the discs: under that pose it re-reads "
+                                      "only " (:hits confirm) " dashes of "
+                                      (:tried confirm) " — discarded, trying from the dashes.")))
+                    (if (or (nil? rr) rim-veto?)
+                        ;; the discs refused (or the dash net disconfirmed
+                        ;; them). Before giving up: the RIM DASHES — this
+                        ;; recovery exists for exactly this frame (two rings
+                        ;; edge-on, discs starved; misurato battiscopa5 e GATE
+                        ;; LIVE PASSATO 5/9: entrambe le foto rifiutate dai
+                        ;; dischetti registrano dai trattini, rms 1.21/1.24px).
+                        ;; Guided-only: senza seme non si tenta — l'identità
+                        ;; dei trattini viene dalla posa. Second seed: the
+                        ;; translation-normalized eye, when the discs endorsed
+                        ;; it (choose-eye-seed) and the raw eye's dashes
+                        ;; refused.
+                      (let [rim-raw (when eye-pose
+                                      (match-cage/rim-register
+                                       lum-at (:proxy-mesh @session) k eye-pose))
+                            rim-norm (when (and (:normalized? seed-choice)
+                                                (not (:pose rim-raw)))
+                                       (match-cage/rim-register
+                                        lum-at (:proxy-mesh @session) k
+                                        (:norm seed-choice)))
+                            rim-res (if (:pose rim-raw) rim-raw (or rim-norm rim-raw))
+                            norm-won? (boolean (and (not (:pose rim-raw))
+                                                    (:pose rim-norm)))]
+                        (if (:pose rim-res)
+                          (let [wit-obs (when (cage-obs-focal-ok?)
+                                          (:obs (match-cage/index-witness
+                                                 targets cands k (:pose rim-res)
+                                                 marks {})))]
+                              ;; stale proposals of an older pose die with the
+                              ;; pose they testified for (the same disease
+                              ;; propose-clear-px guards); hand clicks stay
+                            (swap! session update-in [:pnp-picks idx]
+                                   (fn [m] (into {} (remove (comp :proposed? val) m))))
+                            (apply-rim-registration! idx rim-res)
+                            (remember-cage-mounting! idx wit-obs)
+                            (save-acquire-state!)
+                            (update-panel!)
+                            (let [msg (str "Cage registered from the rim DASHES, "
+                                           (if norm-won?
+                                             (str "from your eye pose with the TRANSLATIONS "
+                                                  "redone from the discs — ")
+                                             "starting from YOUR eye pose — ")
+                                           "the discs were not enough ("
+                                           (count cands) " detected): " (:hits rim-res)
+                                           " dashes of " (:tried rim-res) " re-read under the "
+                                           "solved pose, rms " (.toFixed (:rms-px rim-res) 2)
+                                           "px. Check that the drawn cage matches "
+                                           "the plastic."
+                                           (when rim-veto?
+                                             " (The disc reading I discarded was contradicted by these same dashes.)")
+                                           (when (and mounting wit-obs)
+                                             (cage-mounting-suffix mounting wit-obs)))]
+                              (auto-log! (str "  " foto-tag msg))
+                              (say! msg)))
+                            ;; the refusal goes to the LOG too: a 4-second status
+                            ;; line is not a record, and «'a' non fa niente» (3/9)
+                            ;; was this very message evaporating before it was read
+                          (let [msg (str "On my own I cannot do it on this photo (" (count cands)
+                                         " discs found, no ring identified with certainty). "
+                                         (if (pos? (count picks-by-id))
+                                           (str "Your " (count picks-by-id) " clicks stay but are not "
+                                                "enough to seed: bring them to 4 on ONE ring + the "
+                                                "double dot, then press 'a' again.")
+                                           "Click 4 discs on ONE ring + the double dot, then press 'a' again.")
+                                         (when rim-veto?
+                                           (str " There was a disc reading, but the dash "
+                                                "network contradicted it (" (:hits confirm) " of "
+                                                (:tried confirm) " re-read): not applied."))
+                                         (when eye-pose
+                                           (str " I also tried from your eye pose, but the fit "
+                                                "did not clear the bars: if the drawn cage looks "
+                                                "well matched to you already, the problem is the detected discs "
+                                                "(few, or on a single ring)."))
+                                         (rim-refusal-phrase rim-res))]
+                            (auto-log! (str "  " foto-tag msg))
+                            (say! msg))))
+                      (let [canvas (viewport/get-canvas)
+                            ;; a clean slate: with zero hand clicks whatever picks
+                            ;; exist are STALE proposals of an older pose — left
+                            ;; alive under other names they double-book the discs
+                            ;; this reading is about to propose (the same disease
+                            ;; propose-clear-px guards in the seeded branch)
+                            _ (swap! session update-in [:pnp-picks idx]
+                                     (fn [m] (into {} (remove (comp :proposed? val) m))))
+                            added (reduce (fn [n {:keys [ci px]}]
+                                            (let [j (id->ci ci)
+                                                  ;; a HAND click already sitting on
+                                                  ;; this mark is not overwritable by
+                                                  ;; a proposal: with 1-3 clicks in
+                                                  ;; play (allowed since 3/9) the
+                                                  ;; reading must not eat the very
+                                                  ;; evidence that can contradict it
+                                                  hand-here? (when j
+                                                               (when-let [p (get-in @session [:pnp-picks idx j])]
+                                                                 (not (:proposed? p))))]
+                                              (if (or (nil? j) hand-here?)
+                                                n
+                                                (do (swap! session assoc-in [:pnp-picks idx j]
+                                                           {:px px
+                                                            :screen (backdrop/screen-of-pixel
+                                                                     canvas (viewport/get-camera) px)
+                                                            :proposed? true})
+                                                    (inc n)))))
+                                          0 (:corr rr))]
+                        (remember-cage-mounting! idx (:index-obs rr))
+                        (say!
+                         (str (if (:eye-seed? rr)
+                                ;; the eye-seed result has no seed RING to name
+                                ;; (:seed nil) — and naming the mechanism tells
+                                ;; the user his alignment is what did the work
+                                (str "Cage read from YOUR eye pose: ")
+                                (str "Cage read ON ITS OWN: ring "
+                                     (name (:axis (:seed rr)))
+                                     " + zero-index found in the photo, "))
+                              added " discs placed (rms " (.toFixed (:rms-px rr) 1) "px)"
+                              (when (:phase-suspect rr)
+                                (str " · WARNING: ring "
+                                     (name (:axis (:phase-suspect rr)))
+                                     " looks glued turned by "
+                                     (.toFixed (:deg (:phase-suspect rr)) 0) "°"))
+                              (when mounting
+                                (cage-mounting-suffix mounting (:index-obs rr)))))
+                        (on-solve-pnp!)
+                        (cage-pose-verdict! idx targets cands k))))))
+               (.catch (fn [e]
+                         (say! (str "Automatic reading failed: " (str e)))))))
+         50))
+
+      :else
+      (do
+        (say! "Reading the cage… (detecting discs over the whole photo)")
+        (-> (backdrop/load-luminance-sampler (photo-path file))
+            (.then
+             (fn [{:keys [lum-at size data]}]
+               (let [[iw ih] size
+                     k (session-intrinsics iw ih)
+                     cands (blob-detect/detect-blobs lum-at size
+                                                     (assoc blob-detect/cage-opts :rgba data))
+                     res (match-cage/read-crown picks-by-id targets (mapv :center cands) k marks
+                                                {:zero-picks zero-picks
+                                                 ;; the session's voted mounting
+                                                 ;; arbitrates the hand seed too
+                                                 ;; (foto 5, 2026-08-29: the
+                                                 ;; flip-face twin renamed
+                                                 ;; correct picks on a starved
+                                                 ;; frame the session knew
+                                                 ;; better about) — but never at
+                                                 ;; an unmeasured lens
+                                                 :mounting (when (cage-obs-focal-ok?)
+                                                             (session-cage-mounting idx))
+                                                 ;; the faces you declared with
+                                                 ;; the ring toggles: facts, not
+                                                 ;; hypotheses to re-read
+                                                 :declared-faces
+                                                 (get-in @session [:cage-face-choice idx])})]
+                 (cond
+                   (nil? res)
+                   ;; logged as well as flashed (the 4-second status line is not
+                   ;; a record), and the refusal now has a second honest cause:
+                   ;; since the relative bar (3/9 notte) a best reading that
+                   ;; explains too little of what the frame OFFERS is refused
+                   ;; rather than adopted — grab-07's 7-of-29 would land here
+                   (let [msg (str "I cannot read the cage from this photo: of the "
+                                  (count cands) " discs found, none of the 48 readings "
+                                  "of the crown explains enough to be trusted (the threshold "
+                                  "rises with the detected discs). Usually it means that only "
+                                  "ONE ring is visible — a few degrees off-axis are enough "
+                                  "for the others to reappear. Alternatively: pose the "
+                                  "cage by eye with the gizmo and press 'a' with NO clicks — the "
+                                  "eye seed."
+                                  ;; the evidence in the log, camera-dietro-style: foto 3
+                                  ;; (30/8) refused on a seed silently polluted by clicks
+                                  ;; from three nights before, and nothing printed WHICH
+                                  ;; picks the reading was fed
+                                  " · seed " (pr-str (vec (sort-by (comp str key) picks-by-id)))
+                                  (when-let [others (seq (remove (set (keys picks-by-id))
+                                                                 (keys hand-picks)))]
+                                    (str " · other hand clicks in the pile: "
+                                         (str/join " " (sort (map name others)))
+                                         " — if any is from a past work session, "
+                                         "Reset and click again clean")))]
+                     (auto-log! (str "  " foto-tag msg))
+                     (say! msg))
+
+                   :else
+                   (let [{:keys [reading corr]} res
+                         nominal? (= reading {:rot 0 :mirror? false :flip-face? false})
+                         flip (fn [ci] (or (some-> (nth targets ci nil) :id
+                                                   (cage/relabel reading marks)
+                                                   id->ci)
+                                           ci))
+                         canvas (viewport/get-canvas)]
+                     (when-not nominal? (relabel-picks! idx flip))
+                     ;; the OLD pose's proposals die here: they were its testimony,
+                     ;; and the reading that just won may have overturned it. Left
+                     ;; alive they outvote the fresh clicks in the very next solve
+                     ;; (2026-08-27 evening: 'a' would have handed on-solve-pnp! the
+                     ;; same fourteen stale proposals that had been discarding the
+                     ;; user's ALT clicks as outliers). The reading's own corr
+                     ;; re-proposes every mark it accounts for, so nothing earned
+                     ;; is lost.
+                     (swap! session update-in [:pnp-picks idx]
+                            (fn [m] (into {} (remove (comp :proposed? val) m))))
+                     ;; the marks the reading accounts for, minus the ones already
+                     ;; clicked — the user's own pixels always win over a proposal,
+                     ;; and win BY DISTANCE, not by name: the two faces of a ring
+                     ;; project through the plastic onto the same disc, so corr can
+                     ;; propose the whole other face on top of the hand's clicks
+                     ;; under different names (measured 2026-08-28, foto 4: zp01 and
+                     ;; zm01 on the SAME pixel — 2 doubles get dropped by the solve,
+                     ;; 10 kill it camera-behind). No proposal lands within
+                     ;; propose-clear-px of an existing pick, whatever it is called.
+                     (let [kept (set (keys (get-in @session [:pnp-picks idx])))
+                           kept-px (mapv :px (vals (get-in @session [:pnp-picks idx])))
+                           on-your-disc? (fn [[u v]]
+                                           (some (fn [[qu qv]]
+                                                   (< (Math/hypot (- u qu) (- v qv))
+                                                      propose-clear-px))
+                                                 kept-px))
+                           ;; which face of each ring the HAND clicked — a fact
+                           ;; that outranks the pose's own guess. The Z-only seed
+                           ;; is planar and its wrong homography branch believes
+                           ;; the OTHER face of X visible, proposing xp over a
+                           ;; clicked zero-xm: mixed faces, camera-dietro certo
+                           ;; (battiscopa3 foto 2, tre sere di fila)
+                           hand-face (into {} (keep (fn [[ci v]]
+                                                      (when-not (:proposed? v)
+                                                        (when-let [t (nth targets ci nil)]
+                                                          (when-let [p (or (cage/mark-parts (:id t))
+                                                                           (cage/index-parts (:id t)))]
+                                                            [(:axis p) (:sign p)]))))
+                                                    (get-in @session [:pnp-picks idx])))
+                           against-hand? (fn [id]
+                                           (when-let [p (or (cage/mark-parts id)
+                                                            (cage/index-parts id))]
+                                             (when-let [s (hand-face (:axis p))]
+                                               (not= s (:sign p)))))
+                           [added shadowed contrari]
+                           (reduce (fn [[n s c] {:keys [ci px]}]
+                                     (let [j (id->ci ci)]
+                                       (cond
+                                         (or (nil? j) (contains? kept j)) [n s c]
+                                         (against-hand? ci) [n s (inc c)]
+                                         (on-your-disc? px) [n (inc s) c]
+                                         :else
+                                         (do (swap! session assoc-in [:pnp-picks idx j]
+                                                    {:px px
+                                                     :screen (backdrop/screen-of-pixel
+                                                              canvas (viewport/get-camera) px)
+                                                     :proposed? true})
+                                             [(inc n) s c]))))
+                                   [0 0 0] corr)
+                           zv (:zero-veto res)
+                           ;; the hand reading measures the mounting too — and
+                           ;; is measured BY it: an index read against the
+                           ;; session's vote is the twin diagnosis, on either
+                           ;; side (misurato 30/8: foto 1 della sessione-verità
+                           ;; era registrata A MANO dal gemello, e a dirlo sono
+                           ;; state le altre cinque)
+                           wit-obs (when (cage-obs-focal-ok?)
+                                     (when-let [fp (:pose (:full res))]
+                                       (:obs (match-cage/index-witness targets cands k
+                                                                       fp marks {}))))
+                           _ (remember-cage-mounting! idx wit-obs)
+                           ;; a clicked other-ring zero whose index the witness
+                           ;; does NOT see is a tiebreak gesture that decided
+                           ;; nothing at session level — SILENCE here is
+                           ;; ambiguous ('agrees' vs 'never voted') and
+                           ;; Vincenzo's 29/8 spareggio landed exactly in that
+                           ;; ambiguity: say it
+                           unvoted (when wit-obs
+                                     (seq (sort (distinct
+                                                 (for [{:keys [axis]} zero-picks
+                                                       :when (not-any? #(= axis (:axis %))
+                                                                       wit-obs)]
+                                                   (str/upper-case (name axis)))))))
+                           suffix (str
+                                   ;; the number that would have screamed on
+                                   ;; grab-07: the reading's whole-cage evidence,
+                                   ;; against what the frame offered
+                                   (str " · the reading explains " (:explained res)
+                                        " of the " (count cands) " detected discs")
+                                   (when wit-obs
+                                     (cage-mounting-suffix (session-cage-mounting idx) wit-obs))
+                                   (when unvoted
+                                     (str " · note: the double dot of " (str/join "/" unvoted)
+                                          " that you clicked is not among the discs DETECTED "
+                                          "under this pose — here it arbitrated the readings, "
+                                          "but it does not count in the vote among the session's photos"))
+                                   (when (and zv (pos? (:killed zv)))
+                                     (str " · the zero clicked on the other ring acted as "
+                                          "arbiter: " (:killed zv) " readings contradicted by "
+                                          "that double dot"))
+                                   (when-let [mv (:mounting-veto res)]
+                                     (cond
+                                       (:moot? mv)
+                                       (str " · WARNING: ALL the readings contradict the "
+                                            "mounting the session has already measured on "
+                                            "this ring — either some click is on a different "
+                                            "ring, or one of the past registrations needs "
+                                            "a second look")
+                                       (pos? (:killed mv))
+                                       (str " · the mounting measured by the session acted "
+                                            "as arbiter: " (:killed mv) " readings contradicted")))
+                                   (when (seq (:moot zv))
+                                     (let [axes (str/join "/" (map (comp str/upper-case name)
+                                                                   (:moot zv)))]
+                                       ;; on a GLUED cage with declared phases a
+                                       ;; whole-step turn is impossible — the
+                                       ;; suspect is the click (foto 3, 30/8:
+                                       ;; this message blamed the mounting at
+                                       ;; 52.8px)
+                                       (if (declared-cage-mounting)
+                                         (str " · WARNING: the zero of ring " axes
+                                              " does not agree with ANY reading — on a "
+                                              "glued and declared cage that almost always "
+                                              "means that click is on the wrong "
+                                              "disc (or counted from the other face): "
+                                              "check it or remove it with a right-click")
+                                         (str " · WARNING: the zero of ring " axes
+                                              " does not agree with ANY reading — that ring is "
+                                              "probably MOUNTED turned by whole steps; the "
+                                              "solve now measures it from that very zero"))))
+                                   (when (pos? shadowed)
+                                     (str " · " shadowed " proposals discarded: they landed on "
+                                          "discs already yours, under another name"))
+                                   (when (pos? contrari)
+                                     (str " · " contrari " proposals discarded: they were on the "
+                                          "OPPOSITE FACE of a ring you clicked yourself — "
+                                          "I trust your eyes, not the pose")))]
+                       (say!
+                        (if-let [ps (:phase-suspect res)]
+                          ;; The one assembly error nothing else can see, found by
+                          ;; the disagreement of two witnesses: the candidates say
+                          ;; the other rings sit k steps round, the clicked
+                          ;; zero-index says the numbering is right. Both are: the
+                          ;; ring was GLUED turned. Diagnosed live on Vincenzo's
+                          ;; cage (2026-08-24, 90° on the big ring).
+                          (str "Your names are RIGHT (the zero-index confirms them), but the "
+                               "other rings sit " (:steps ps) " discs further along: ring "
+                               (str/upper-case (name (or (:axis ps) :x)))
+                               " looks GLUED turned by " (.toFixed (:deg ps) 0) "°. "
+                               "Reopen the session declaring it in the proxy: (registration-cage :d "
+                               (or (:cage-d (:proxy-mesh @session)) "…")
+                               " :phases {:" (name (or (:axis ps) :x)) " " (.toFixed (:deg ps) 0)
+                               "}) — if the Y/Z faces come out inverted, use −"
+                               (.toFixed (:deg ps) 0) ". The clicks you made stay valid." suffix)
+                          (str "Cage read: "
+                               (if nominal?
+                                 "the names you had given were right"
+                                 (str "your clicks were right, the NAMES were not — the crown was "
+                                      "offset by " (:rot reading) " mark"
+                                      (when (:mirror? reading) ", read backwards")
+                                      (when (:flip-face? reading) ", and from the other face")
+                                      " (a crown of " marks " identical discs reads "
+                                      "the same when rotated: what tells is the rest of the cage, not the ring)"))
+                               " · " added " discs placed automatically"
+                               (when (seq (:ties res))
+                                 (str " · WARNING: " (count (:ties res))
+                                      " readings explain the cage equally well — "
+                                      "this photo is not enough to decide"))
+                               suffix)))
+                       (on-solve-pnp!)
+                       (cage-pose-verdict! idx targets cands k)))))))
+            (.catch (fn [e]
+                      (say! (str "Cage reading failed: " (str e))))))))))
 
 (def ^:private min-crown-assign
   "A batch (fetta B) assignment is accepted only if at least this many of the 12
@@ -1923,20 +5247,23 @@
         idx (:current-idx @session)]
     (cond
       (not (plate-proxy?))
-      (set-status-message! "L'assegnazione automatica è solo per il piatto di registrazione.")
+      (set-status-message! "Automatic assignment is only for the registration plate.")
 
       (< (count batch) min-plate-picks)
       (set-status-message!
-       (str "Batch: servono almeno " min-plate-picks " dischetti cliccati (ne hai " (count batch) ")"))
+       (str "Batch: needs at least " min-plate-picks " clicked discs (you have " (count batch) ")"))
+
+      (cage-proxy?)
+      (set-status-message! (no-auto-on-cage-msg))
 
       (nil? (:zero-obj (bridge/plate-detect (:proxy-mesh @session))))
       ;; the proxy has no zero-index (an OLD plate def, before it was exposed on
       ;; :anchors) — the batch can't break the crown's rotational symmetry without
       ;; it. Say exactly that, not the misleading "clicca più sparsi".
       (set-status-message!
-       (str "Questo piatto non espone lo zero-indice: rivaluta il file aggiornato "
-            "examples/param-acq-plate.clj (il piatto ora ha lo zero sotto :anchors) e "
-            "riapri la sessione — oppure premi 'b' per la modalità armata."))
+       (str "This plate does not expose the zero-index: re-evaluate the updated file "
+            "for the proxy (the plate now carries the zero under :anchors) and "
+            "reopen the session — or press 'b' for armed mode."))
 
       :else
       (if-let [[iw ih] (backdrop/image-size)]
@@ -1960,13 +5287,13 @@
               (redraw-overlay-dots!)
               (on-solve-pnp!)) ; refines + auto-places the rest, sets its own status
             (set-status-message!
-             (str "Non riesco ad assegnare le identità"
-                  (when res (str " (dischetti riconosciuti " (:crown-hits res) "/12"
-                                 (when-not (:zero-hit? res) ", zero-indice non trovato") ")"))
-                  ": clicca dischetti più SPARSI attorno al piatto e assicurati che lo "
-                  "zero-indice (il pallino interno accanto a un marker) sia visibile — "
-                  "oppure premi 'b' per la modalità armata."))))
-        (set-status-message! "Foto non ancora caricata."))))
+             (str "I cannot assign the identities"
+                  (when res (str " (discs recognised " (:crown-hits res) "/12"
+                                 (when-not (:zero-hit? res) ", zero-index not found") ")"))
+                  ": click discs SPREAD wider around the plate and make sure the "
+                  "zero-index (the inner dot beside a marker) is visible — "
+                  "or press 'b' for armed mode."))))
+        (set-status-message! "Photo not loaded yet."))))
   (update-panel!))
 
 ;; ============================================================
@@ -2058,15 +5385,15 @@
           pending (filterv (fn [idx] (and (pos? idx) (not (registered? idx)))) (range n))]
       (cond
         (nil? zero-obj)
-        (set-status-message! "Questo piatto non espone lo zero-indice: rivaluta examples/param-acq-plate.clj e riapri.")
+        (set-status-message! "This plate does not expose the zero-index: use (registration-plate :d <diameter>) as the proxy and reopen.")
         (empty? refs)
-        (set-status-message! "Anello: registra prima almeno una foto con 'p' (poi 'f' propone le altre).")
+        (set-status-message! "Ring: register at least one photo with 'p' first (then 'f' proposes the others).")
         (empty? pending)
-        (set-status-message! "Anello: tutte le foto (nell'anello) sono già registrate.")
+        (set-status-message! "Ring: every photo (in the ring) is already registered.")
         :else
         (do
           (set-status-message!
-           (str "Anello: registro " (count pending) " foto dai " (count refs) " riferimenti…"))
+           (str "Ring: registering " (count pending) " photos from " (count refs) " references…"))
           (-> (js/Promise.all
                (clj->js (mapv #(register-one-ring-photo! % ref-solvers marks zero-obj
                                                          intrinsics (:disc-r det) proxy-pose)
@@ -2080,11 +5407,11 @@
                            (redraw-overlay-dots!))
                          (save-acquire-state!)
                          (set-status-message!
-                          (str "Anello: registrate " ok "/" (count pending) " foto"
+                          (str "Ring: registered " ok "/" (count pending) " photos"
                                (when (< ok (count pending))
-                                 " — le altre: 'p' a mano, o registra un riferimento più vicino e ripremi 'f'")))
+                                 " — the others: 'p' by hand, or register a closer reference and press 'f' again")))
                          (update-panel!))))))))
-    (set-status-message! "Foto non ancora caricata.")))
+    (set-status-message! "Photo not loaded yet.")))
 
 ;; ============================================================
 ;; Auto (plate 'a'): fetta C — register with ZERO clicks. For each unregistered
@@ -2100,11 +5427,13 @@
 ;; the ring. The plate's analogue of nothing on the box — dispatched by 'a'.
 ;; ============================================================
 
-(def ^:private auto-snap-radius
-  "blob-snap window (px) for an identified crown mark before the final PnP. The
-   detector centroid + fit-crown's reprojection land within a disc-radius, well
-   inside this."
-  40)
+(defn- snap-radius-for
+  "The blob-snap window (px) this frame's crown deserves — sized to the imaged disc
+   rather than fixed at 40, so a 1920px live frame and a 4032px photo both land
+   inside blob-snap's dark-fraction band. See match-plate/snap-window-radius for
+   the arithmetic, and for why the phone-photo path is unchanged by this."
+  [pixels marks disc-r]
+  (match-plate/snap-window-radius pixels marks disc-r))
 
 (def ^:private auto-fit-blobs
   "How many of the detector's TOP-scored blobs fit-crown samples the crown from. The
@@ -2170,69 +5499,51 @@
     (swap! session assoc-in [:pnp-residuals idx] residuals)
     (swap! session assoc-in [:pnp-outliers idx] (set (map :ci (:outliers sol))))))
 
+(declare register-live-frame live-focal remember-camera-focal! camera-lens-key)
+
 (defn- register-one-auto-photo!
-  "Detect + identify + register ONE unregistered photo `idx` with zero clicks.
-   Samples off-screen, runs blob-detect → fit-crown → blob-snap → PnP, and applies
-   the pose only if it clears the rms bar and the crown threshold. Resolves true on
-   a registration, else false (poor detection / high rms is a skip, never a throw).
-   Recomputes marks + proxy-pose from the CURRENT proxy-mesh so it stays correct
-   after photo 0 has moved it."
+  "Register ONE unregistered photo `idx` with zero clicks, through EXACTLY the
+   same pipeline a live grab goes through — detect, identify, MEASURE THE LENS
+   off the plate, re-identify, solve, judge by residual.
+
+   It used to have its own copy of that pipeline, identical but for one
+   assumption: it took the focal from the session instead of measuring it. On a
+   session of live-grabbed frames there is no EXIF to have set one, so it ran at
+   the 48mm default while the lens was 28.6 — and the difference does not present
+   itself as a wrong focal, it presents itself as residuals of 8-10px and photos
+   that will not identify. Measured on the same eight frames: 0.3-2.5px through
+   the grab path, 7.9-10.7px and two failures through this one (2026-08-13).
+   Two copies of one pipeline is how one of them ends up with an assumption the
+   other doesn't have.
+
+   Resolves true on a registration, else false (a skip, never a throw)."
   [idx]
   (-> (backdrop/load-luminance-sampler (photo-path (:file (nth (:photos @session) idx))))
       (.then (fn [sampler]
-               (let [lum-at (:lum-at sampler)
-                     [iw ih] (:size sampler)
-                     proxy-mesh (:proxy-mesh @session)
-                     proxy-pose (:creation-pose proxy-mesh)
-                     det (bridge/plate-detect proxy-mesh)
-                     marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
-                     zero-obj (:zero-obj det)
-                     intrinsics (session-intrinsics iw ih)
-                     ;; FAST path: hand the raw RGBA array so the detector downsamples
-                     ;; in one tight loop, not ~12M lum-at closure calls (the freeze).
-                     cands (blob-detect/detect-blobs lum-at [iw ih] {:rgba (:data sampler)})
-                     centers (mapv :center cands)     ; best-first (detector score order)
-                     ;; GEOMETRIC judge (no pixel reads): a reprojection "hits a disc"
-                     ;; if a DETECTED blob sits within its radius. fit-crown's per-
-                     ;; candidate scoring runs this thousands of times, so reading the
-                     ;; photo there (blob/disc-at?) was the ~5s/photo churn; the blobs
-                     ;; are already the pixel evidence. Final accuracy still comes from
-                     ;; the real-pixel blob-snap + PnP + rms gate below.
-                     judge (fn [[px py] r]
-                             (let [r2 (* r r)]
-                               (boolean (some (fn [[bx by]]
-                                                (<= (+ (* (- bx px) (- bx px)) (* (- by py) (- by py))) r2))
-                                              centers))))
-                     ;; sample the crown from the TOP-scored blobs only (the discs
-                     ;; outrank the noise), so a good quartet lands on the first sample
-                     res (match-plate/fit-crown (vec (take auto-fit-blobs centers)) marks zero-obj
-                                                intrinsics judge
-                                                {:disc-r (:disc-r det) :face-normal (:face-normal det)})]
-                 (if-not (and res (:zero-hit? res) (>= (:crown-hits res) min-crown-assign))
-                   (do (auto-log! (str "  foto " idx ": corona non riconosciuta ("
-                                       (count cands) " blob rilevati"
-                                       (when res (str ", " (:crown-hits res) "/12 sui dischi"
-                                                      (when-not (:zero-hit? res) ", zero-indice mancante"))) ")"
-                                       " — la lascio all'anello / 'p'"))
-                       false)
-                   (let [picks (into {} (keep (fn [[mi px]]
-                                                (some->> (blob/snap-to-blob lum-at px auto-snap-radius)
-                                                         :center (vector mi)))
-                                              (:pixels res)))
-                         corr (vec (for [[ci px] picks]
-                                     {:ci ci :world (:obj (nth marks ci)) :px px}))]
-                     (if (< (count corr) min-plate-picks)
-                       (do (auto-log! (str "  foto " idx ": pochi dischetti agganciati (" (count corr) ")")) false)
-                       (if-let [sol (pnp/solve-pnp corr intrinsics {})]
-                         (if (<= (:rms-px sol) pnp/accept-rms-px)
-                           (do (apply-auto-solve! idx sol picks proxy-pose)
-                               (auto-log! (str "  foto " idx ": registrata ✓  rms "
-                                               (.toFixed (:rms-px sol) 1) "px, " (count corr) " dischetti"))
-                               true)
-                           (do (auto-log! (str "  foto " idx ": scartata, rms "
-                                               (.toFixed (:rms-px sol) 1) "px > " pnp/accept-rms-px)) false))
-                         (do (auto-log! (str "  foto " idx ": PnP senza soluzione")) false))))))))
-      (.catch (fn [_] (auto-log! (str "  foto " idx ": errore di caricamento")) false))))
+               ;; proxy-pose BEFORE this photo — photo 0 moves the proxy
+               (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+                     adopt? (nil? (live-focal))
+                     out (register-live-frame sampler)]
+                 (if-not (:ok? out)
+                   (do (auto-log! (str "  photo " idx ": " (:message out))) false)
+                   (let [{:keys [sol picks measured n]} out]
+                     ;; the lens of the session, measured once off whichever photo
+                     ;; identifies first; the rest reuse it
+                     (when (and adopt? (:focal-mm measured))
+                       (swap! session assoc :focal-mm (:focal-mm measured) :focal-source :live)
+                       (auto-log! (str "  focal MEASURED off the plate: "
+                                       (.toFixed (:focal-mm measured) 1) "mm-equiv"))
+                       ;; filed only when measured off a GRABBED frame: this
+                       ;; batch also registers folder photos, and a still's
+                       ;; lens filed under the grab camera's key would be the
+                       ;; 4032↔1920 transplant the store exists to end
+                       (when (re-find #"^grab-" (or (:file (nth (:photos @session) idx)) ""))
+                         (remember-camera-focal! (:focal-mm measured) :live)))
+                     (apply-auto-solve! idx sol picks proxy-pose)
+                     (auto-log! (str "  photo " idx ": registered ✓  rms "
+                                     (.toFixed (:rms-px sol) 1) "px, " n " discs"))
+                     true)))))
+      (.catch (fn [_] (auto-log! (str "  photo " idx ": load error")) false))))
 
 (defn- finish-auto!
   "Common tail of the Auto batch: refresh the view for the current photo, save, and
@@ -2245,16 +5556,16 @@
     (redraw-overlay-dots!))
   (save-acquire-state!)
   (let [ok (+ detect-ok ring-ok)
-        msg (str "Auto: registrate " ok "/" total " foto ("
-                 detect-ok " rilevate" (when (pos? ring-ok) (str " + " ring-ok " dall'anello")) ")"
-                 (when (< ok total) " — le rimanenti: 'p' a mano"))]
+        msg (str "Auto: registered " ok "/" total " photos ("
+                 detect-ok " detected" (when (pos? ring-ok) (str " + " ring-ok " from the ring")) ")"
+                 (when (< ok total) " — the rest: 'p' by hand"))]
     (auto-log! (str "=== " msg " ==="))
     ;; Nothing registered at all is almost always a WRONG FOCAL (the crown geometry
     ;; can't match at the wrong scale) — the loudest single cause. Point at it.
     (when (zero? ok)
-      (auto-log! (str "  ⚠ 0 registrate: controlla la FOCALE (ora " (:focal-mm @session)
-                      "mm, sorgente " (name (or (:focal-source @session) :?))
-                      ") — dev'essere quella della foto (EXIF), es. 48mm; e che il proxy sia il piatto giusto")))
+      (auto-log! (str "  ⚠ 0 registered: check the FOCAL (now " (:focal-mm @session)
+                      "mm, source " (name (or (:focal-source @session) :?))
+                      ") — it must be the photo's (EXIF), e.g. 48mm; and that the proxy is the right plate")))
     (set-status-message! msg))
   (update-panel!))
 
@@ -2280,15 +5591,15 @@
       (if (or (empty? refs) (empty? remaining))
         (finish-auto! total detect-ok 0)
         (do
-          (auto-log! (str "  anello: propago alle " (count remaining) " foto rimaste da "
-                          (count refs) " riferimenti…"))
+          (auto-log! (str "  ring: propagating to the " (count remaining) " remaining photos from "
+                          (count refs) " references…"))
           (-> (js/Promise.all
                (clj->js (mapv #(register-one-ring-photo! % ref-solvers marks zero-obj
                                                          intrinsics (:disc-r det) proxy-pose)
                               remaining)))
               (.then (fn [ring-results]
                        (let [ring-ok (count (filter identity (vec ring-results)))]
-                         (auto-log! (str "  anello: registrate " ring-ok "/" (count remaining) " foto rimaste"))
+                         (auto-log! (str "  ring: registered " ring-ok "/" (count remaining) " remaining photos"))
                          (finish-auto! total detect-ok ring-ok))))))))
     (finish-auto! total detect-ok 0)))
 
@@ -2303,39 +5614,404 @@
    fusion itself closed to 0.13 mm (2026-08-06): 4-5 px of per-photo rms, worth
    a millimetre or two of depth.
 
-   Reuses each photo's own clicks; asks for nothing new."
+   Reuses each photo's own clicks; asks for nothing new.
+
+   ROBUST since 2026-09-02 (direttiva di Vincenzo, dopo grab-04): a view the
+   joint fit gets WORSE with loses its VOTE on the lens — leave-one-out on the
+   worst per-view residual, retried down to a floor of four views — and keeps
+   everything else: film, pose, clicks. A photo is worth what it SHOWS (an
+   all-rings-oblique vantage can be exactly the one the tracing needs), so
+   registration quality decides the vote, never membership. Every exclusion
+   is announced, log and status — misurare e riferire, mai compensare in
+   silenzio."
   []
   (if-let [[iw ih] (backdrop/image-size)]
     (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
           targets (pnp-targets)
+          ;; A photo whose OWN registration is an OUTLIER among the session's must
+          ;; not vote on the LENS. The joint fit is least-squares: one poisoned
+          ;; view does not average out, it drags — measured on Vincenzo's session
+          ;; (2026-08-25): foto 6, registered at 138.8px after a tangle of
+          ;; duplicate clicks, pulled the shared focal from 48.6 to 60.7mm and
+          ;; took every clean photo from 3-8px to 12-20px with it. The refiner
+          ;; even NAMED it ("è questa che tira su la media") and then let it win.
+          ;;
+          ;; The bar is RELATIVE (3× the session's median rms, never below the
+          ;; acceptance bar), and it must be: the first version used the absolute
+          ;; 12px alone, and on the poisoned session it would have excluded
+          ;; every photo — at the dragged focal the CLEAN photos all sat at
+          ;; 12-20px, and only R itself can bring them back down. Against a
+          ;; median of ~15 the bar is ~45: foto 6 (127) is out, the six clean
+          ;; ones vote, the focal returns.
+          all-rms (vec (sort (keep #(get-in @session [:acquire-results % :rms-px])
+                                   (range (count (:photos @session))))))
+          bar (if (seq all-rms)
+                (max pnp/accept-rms-px
+                     (* 3.0 (nth all-rms (quot (dec (count all-rms)) 2))))
+                pnp/accept-rms-px)
+          poisoned (vec (for [idx (range (count (:photos @session)))
+                              :let [r (get-in @session [:acquire-results idx :rms-px])]
+                              :when (and r (> r bar))]
+                          idx))
+          ;; …and a photo that was NEVER successfully registered does not vote at
+          ;; all, whatever picks it carries: those picks were REFUSED by every
+          ;; per-photo solve, which is the strongest possible statement about
+          ;; them. Without this, Vincenzo's foto 8 — unregistrable, clicks
+          ;; tangled at 931px — entered the joint fit through the side door (it
+          ;; had picks and a camera pose) and dragged the lens 48→50.6mm, while
+          ;; the poisoned-list above never saw it BECAUSE refusals leave no
+          ;; registered rms to judge. The circle he named — R fails because 8 is
+          ;; broken, 8 cannot be fixed because R is poisoned — was exactly this.
+          ;; registered-result?, NOT the :pnp? flag: the flag lives only in
+          ;; memory, while :matched/:rms-px round-trip through acquire-state —
+          ;; tested on the first reload, where every photo of the session came
+          ;; back "mai registrata" and R had nobody left to ask.
+          unregistered (vec (for [idx (range (count (:photos @session)))
+                                  :when (and (>= (count (get-in @session [:pnp-picks idx] {})) 4)
+                                             (not (registered-result?
+                                                   (get-in @session [:acquire-results idx]))))]
+                              idx))
+          ;; …and a registration the session's own mounting vote CONVICTS as a
+          ;; twin (reconcile-cage-mounting!) is a pose known-wrong WHOLESALE:
+          ;; its rms can be exemplary (a twin fits its own picks perfectly —
+          ;; foto 1 of the battiscopa truth session sat clean for a week), so
+          ;; the poisoned-bar above never sees it. Vote on the lens: no. Place
+          ;; in the film: untouched, as always. The exclusion lives only while
+          ;; the evidence does — obs die with the lens (cleared after every
+          ;; adopted R), and rebuild as photos are re-read with 'a'.
+          twins (set (keys (convicted-mounting-photos)))
           views (vec (keep (fn [idx]
-                             (let [picks (get-in @session [:pnp-picks idx] {})
+                             ;; A pick the per-photo solve already REJECTED must not
+                             ;; vote here. solve-pnp reports its rms over the
+                             ;; survivors, but the rejected picks stay in :pnp-picks
+                             ;; (they are kept so the user can re-click them), and
+                             ;; feeding them back made the joint fit both look worse
+                             ;; and BE worse — it re-fitted every pose against points
+                             ;; known to be wrong. Measured 2026-08-11: a photo the
+                             ;; solve had cleaned to 1.7px came back as 8.04px here,
+                             ;; and its pose was being dragged to earn that number.
+                             (let [dropped (set (get-in @session [:pnp-outliers idx] #{}))
+                                   picks (remove (fn [[ci _]] (dropped ci))
+                                                 (get-in @session [:pnp-picks idx] {}))
                                    cam (get-in @session [:camera-poses idx])]
-                               (when (and cam (>= (count picks) 4))
+                               (when (and cam (>= (count picks) 4)
+                                          (not (some #{idx} poisoned))
+                                          (not (contains? twins idx))
+                                          (registered-result?
+                                           (get-in @session [:acquire-results idx])))
                                  {:idx idx
                                   ;; one lens, one session: the pixel size is the
                                   ;; current photo's, which is every photo's
                                   :image-size [iw ih]
                                   :pose (bridge/editor->solver-pose cam proxy-pose)
+                                  ;; :ci rides along so the restart's fresh
+                                  ;; solves can name the picks they reject
                                   :picks (vec (for [[ci {:keys [px]}] picks]
-                                                {:world (:obj (nth targets ci)) :px px}))})))
+                                                {:ci ci :world (:obj (nth targets ci))
+                                                 :px px}))})))
                            (range (count (:photos @session)))))
-          out (bundle/refine-session views (:focal-mm @session))]
-      (if (:error out)
-        (set-status-message! (str "Rifinitura: " (:error out)))
-        (let [{:keys [focal-mm poses rms-px before]} out]
-          (doseq [[view pose] (map vector (filterv #(and (:pose %) (>= (count (:picks %)) 4)) views)
+          ;; LEAVE-ONE-OUT quando peggiora — direttiva di Vincenzo (2/9 sera,
+          ;; dopo grab-04): una foto vale per il PEZZO che mostra, non per come
+          ;; registra — un'inquadratura che mette tutti gli anelli di taglio
+          ;; può essere esattamente quella che serve al ricalco, e buttarla dal
+          ;; film per far passare la R è la cura sbagliata. Quindi: se il fit
+          ;; congiunto peggiora, la vista peggiore smette di votare sulla
+          ;; LENTE e si riprova, finché migliora o restano quattro viste (il
+          ;; minimo con cui una focale condivisa significa qualcosa). La foto
+          ;; resta nel film, con posa e click suoi; l'esclusione si dice
+          ;; sempre, a voce alta — misura e riferisce, mai compensare in
+          ;; silenzio.
+          focal-now (:focal-mm @session)
+          refine-from
+          (fn [f0 vs0]
+            (loop [vs vs0 held []]
+              (let [o (bundle/refine-session vs f0)]
+                (if (and (not (:error o))
+                         (> (:rms-px o) (+ (:rms-px (:before o)) 1e-9))
+                         (> (count vs) 4)
+                         (seq (:per-view o)))
+                  (let [idxs (:views o)
+                        w (nth idxs (first (apply max-key second
+                                                  (map-indexed vector (:per-view o)))))]
+                    (recur (vec (remove #(= w (:idx %)) vs)) (conj held w)))
+                  [o vs held]))))
+          [out active-views held-out] (refine-from focal-now views)
+          ;; the session's ACTUAL state, for honest before→after messages even
+          ;; when the winner restarted from the store (whose own :before is
+          ;; the reseeded state, which measures the restart, not the session)
+          session-before (:rms-px (:before out))
+          ;; MULTI-START, and a real restart: poses RE-SOLVED FRESH (per-view
+          ;; DLT on the saved picks) at the remembered lens, then refined
+          ;; jointly. Both halves were bought on battiscopa4 (3/9):
+          ;; (1) the refine is a local optimizer and the poses drag it — from
+          ;;     Vincenzo's hand-set 29 it walked UP to 34 (the old poses were
+          ;;     40.67-consistent and their basin won), while the sweep of the
+          ;;     same picks with FRESH per-focal solves dips at 27.35, mediana
+          ;;     2.36px contro 9.60. Restarting the focal without restarting
+          ;;     the poses restarts nothing.
+          ;; (2) the first same-view-set guard was too rigid: the stalled run
+          ;;     had shed views 1/4 in leave-one-out, the good run kept all
+          ;;     six, sets differed — and the good result was DISCARDED. The
+          ;;     honest rule is dominance: at least as many views AND lower
+          ;;     rms is strictly better evidence; fewer views with lower rms
+          ;;     stays ambiguous and the current start keeps the bench.
+          [out active-views held-out from-remembered?]
+          (let [m (:remembered-focal-mm @session)]
+            (cond
+              ;; SAY the decision, whatever it is: Vincenzo's last run of 3/9
+              ;; showed a no-restart R re-filing its local minimum with no way
+              ;; to tell WHY the second start never ran — a silent skip is
+              ;; undiagnosable from a log, and the log is the instrument
+              (not (number? m))
+              (do (auto-log! "  (no lens in memory for this camera: a single start)")
+                  [out active-views held-out false])
+
+              (<= (js/Math.abs (- m focal-now)) (* 0.02 m))
+              (do (auto-log! (str "  (lens in memory " (modal/fmt-number m)
+                                  "mm ≈ the session's: a single start)"))
+                  [out active-views held-out false])
+
+              :else
+              ;; The restart re-solves each view at the remembered lens with a
+              ;; PROPORTIONAL outlier budget (40% of its picks), and feeds the
+              ;; joint refine only the survivors. The historic cap of 2 is
+              ;; sized for the occasional mis-click; picks born from an
+              ;; ASSIGNMENT made at the wrong lens carry far more (battiscopa4,
+              ;; 3/9: foto 1/4/6 held 7-8 wrong labels each — 'a' had assigned
+              ;; them while the session sat at 34-40mm on a 27.35 camera), and
+              ;; those survivors dragged the restart's joint fit straight back
+              ;; up: it hit the ±15% briglia and lost with a garbage rms while
+              ;; the same picks, solved fresh per-view at 27.35, sat at 2.36px
+              ;; median. The budget cannot help a WRONG remembered lens cheat:
+              ;; at the wrong focal the error spreads over every residual (the
+              ;; mislabeled-mark signature of pnp's docstring) and the greedy
+              ;; loop refuses to drop — measured: foto2 at f34 dropped 1 with
+              ;; a budget of 9 and stayed at 6.4px, while at f27.35 the bad
+              ;; picks stood out individually and fell.
+              (let [reseeded (mapv (fn [v]
+                                     (let [[iw2 ih2] (:image-size v)
+                                           k2 (pcamera/intrinsics-from-fov
+                                               (pcamera/equiv-focal->hfov-deg m (/ iw2 ih2))
+                                               iw2 ih2)
+                                           s (when (>= (count (:picks v)) 6)
+                                               (solve-photo (:picks v) k2))
+                                           survivors (when (:pose s)
+                                                       (mapv #(select-keys % [:ci :world :px])
+                                                             (:per-point s)))]
+                                       ;; a view whose fresh solve fails keeps
+                                       ;; its old pose — better a dragged seat
+                                       ;; than an empty one
+                                       (if (and (:pose s) (>= (count survivors) 4))
+                                         (assoc v :pose (:pose s) :picks survivors
+                                                :fresh-outlier-cis (vec (keep :ci (:outliers s))))
+                                         v)))
+                                   views)
+                    [o2 av2 ho2] (refine-from m reseeded)]
+                (if (and (not (:error o2))
+                         (>= (count av2) (count active-views))
+                         (< (:rms-px o2) (:rms-px out)))
+                  [o2 av2 ho2 true]
+                  (do (auto-log!
+                       (str "  second start from the lens in memory ("
+                            (modal/fmt-number m) "mm, poses redone): "
+                            (if (:error o2)
+                              (str "failed (" (:error o2) ")")
+                              (str "beaten — rms " (modal/fmt-number (:rms-px o2))
+                                   "px on " (count av2) " views against "
+                                   (modal/fmt-number (:rms-px out)) "px on "
+                                   (count active-views)))
+                            " — keeping the starting run"))
+                      [out active-views held-out false])))))]
+      (doseq [idx unregistered]
+        (auto-log! (str "  photo " (inc idx) " has clicks but is NOT registered: it does not vote "
+                        "on the lens. Register it first (Reset, 4 clicks + double "
+                        "dot, 'a'), then redo R.")))
+      (doseq [idx poisoned]
+        (auto-log! (str "  photo " (inc idx) " EXCLUDED from the refinement: its "
+                        "registration is at "
+                        (modal/fmt-number (get-in @session [:acquire-results idx :rms-px]))
+                        "px, above the threshold of " (modal/fmt-number bar) " — fix it (Reset, then "
+                        "4 clicks + 'a') and redo R")))
+      (doseq [idx (sort twins)]
+        (auto-log! (str "  photo " (inc idx) " does NOT vote on the lens: its mounting "
+                        "contradicts the one voted by the session (suspected twin — "
+                        "the residual cannot see it: a twin fits ITS OWN picks "
+                        "perfectly). It stays in the film; redo it (Reset, eye pose, "
+                        "'a') and press R again")))
+      (cond
+        (:error out)
+        (set-status-message! (str "Refinement: " (:error out)))
+
+        ;; A refinement that made things WORSE is not a refinement, and adopting
+        ;; it poisons everything downstream: the session focal feeds every later
+        ;; solve on every photo. Measured (2026-08-25): 48.9 → 90.3px, ADOPTED,
+        ;; focal clamped at the limit — and photo 8 became unsolvable at 60.7mm.
+        ;; Keep what we had, say why, name the worst view.
+        (> (:rms-px out) (+ (:rms-px (:before out)) 1e-9))
+        ;; here even the leave-one-out above ran dry: the fit worsens ANCHE
+        ;; sulle quattro viste migliori. That is no longer one bad photo — it
+        ;; is the set (or the lens hypothesis) as a whole, and the message
+        ;; says what was tried instead of pointing a finger the user cannot
+        ;; act on (grab-04, 2/9: «guardala» on a photo whose vantage was the
+        ;; problem left him stuck; deleting it was the wrong cure — his call).
+        (do
+          (auto-log! (str "=== refinement REFUSED: it got worse ("
+                          (modal/fmt-number (:rms-px (:before out))) " → "
+                          (modal/fmt-number (:rms-px out)) " px)"
+                          (when (seq held-out)
+                            (str " even without photos "
+                                 (str/join "/" (map inc (sort held-out)))))
+                          " ==="))
+          (set-status-message!
+           (str "Refinement NOT applied: it got worse ("
+                (modal/fmt-number (:rms-px (:before out))) " → "
+                (modal/fmt-number (:rms-px out)) " px)"
+                (if (seq held-out)
+                  (str ", and I also tried removing from the vote "
+                       (if (> (count held-out) 1) "photos " "photo ")
+                       (str/join "/" (map inc (sort held-out)))
+                       " — not enough: it is not a single photo, it is the set (or the "
+                       "starting lens). Check the clicks marked red "
+                       "on the worst photos, or register one more view with "
+                       "a ring squarely face-on.")
+                  ". ")
+                " Keeping the focal and poses you had.")))
+
+        :else
+        (let [{:keys [focal-mm poses rms-px before]} out
+              ;; the lens the restart STARTED from, read before the annotation
+              ;; below swaps :remembered-focal-mm to the freshly filed value —
+              ;; Vincenzo's gate log (3/9 sera) said «RIPARTITA dalla lente in
+              ;; memoria, 28.1209mm» about a run that restarted from 27.35: the
+              ;; story was right and the number was the one just written
+              started-from-mm (:remembered-focal-mm @session)]
+          ;; active-views, NOT views: a held-out photo's pose must not be
+          ;; overwritten by a zip against the subset's poses — it kept its own
+          (doseq [[view pose] (map vector (filterv #(and (:pose %) (>= (count (:picks %)) 4))
+                                                   active-views)
                                    poses)]
             (swap! session assoc-in [:camera-poses (:idx view)]
                    (bridge/solver-pose->camera pose proxy-pose)))
-          (swap! session assoc :focal-mm focal-mm :focal-source :manual)
-          (auto-log! (str "=== rifinitura congiunta: " (count poses) " foto ==="))
-          (auto-log! (str "  focale " (modal/fmt-number (:focal-mm before))
+          ;; when the RESTART won, the picks its fresh solves rejected are not
+          ;; noise: they are labels from the wrong-lens assignment, and left
+          ;; unmarked they would re-poison every later per-photo solve (and the
+          ;; next R). Mark them as outliers — red on the photo, out of the vote,
+          ;; recoverable by re-clicking or by re-pressing 'a' at the new lens.
+          (when from-remembered?
+            (doseq [v active-views]
+              (when-let [cis (seq (:fresh-outlier-cis v))]
+                (swap! session update-in [:pnp-outliers (:idx v)] (fnil into #{}) cis)))
+            (let [n (reduce + 0 (map #(count (:fresh-outlier-cis %)) active-views))]
+              (when (pos? n)
+                (auto-log! (str "  " n " clicks carried the label of the old "
+                                "lens: marked as outliers (red). Press 'a' again "
+                                "on the worst photos to reassign them with the new "
+                                "lens")))))
+          ;; the exclusions, said out loud — the photo stays in the film with
+          ;; its pose and clicks; it only lost its vote on the LENS. A photo
+          ;; is worth what it SHOWS (l'inquadratura può essere quella giusta
+          ;; per il pezzo — Vincenzo, 2/9): registration quality decides the
+          ;; vote, never membership.
+          (doseq [idx (sort held-out)]
+            (auto-log! (str "  photo " (inc idx) " did NOT vote on the lens: the joint "
+                            "fit got worse with it. It stays in the film with its "
+                            "pose and its clicks — if you want it realigned to the new "
+                            "lens, press 'r' on it.")))
+          ;; :refined, not :manual. The joint fit is the BEST focal the session will
+          ;; ever have — one lens against every view's picks — and calling it "manual"
+          ;; made it indistinguishable from a slider nudge, so the next live grab
+          ;; treated the session as having no lens of its own, measured its own from
+          ;; ONE frame, and adopted it over the joint fit (found live 2026-08-11:
+          ;; 28.41mm fitted on 5 views, replaced by 27.25mm from a single grab).
+          (swap! session assoc :focal-mm focal-mm :focal-source :refined)
+          ;; the joint fit is the best number this lens will ever get from one
+          ;; session — file it under the camera the grabs came from, so the
+          ;; NEXT session starts at the measured lens instead of the mute 48.
+          ;; Only when the WHOLE film is grabs: the fit is one focal over every
+          ;; view, and in a mixed film that number belongs to no single camera.
+          ;; And NEVER when the refine was CLAMPED: R moves the lens at most
+          ;; 15% per pass, so a clamped result is the trust region's edge, not
+          ;; a measurement — filed once (3/9, C922 partita dal default 48):
+          ;; 48×0.85 = 40.80mm went into the store as «refined» over the
+          ;; camera's real 27.3, and every next session would inherit the lie
+          ;; …and NEVER over a remembered measure it plainly disagrees with:
+          ;; the asticella di plausibilità. A CONVERGED local minimum passes
+          ;; the clamp guard above — 3/9, fourth time: 34.05 (a stalled R on
+          ;; battiscopa4's poisoned picks) overwrote the 27.35 the store had
+          ;; just been reset to, and with the store matching the session the
+          ;; multi-start stopped even running: the lie sealed its own escape
+          ;; hatch. A refined focal that sits outside the briglia's own ±15%
+          ;; of the remembered measure is describing a different camera or a
+          ;; poisoned session, and either way it is news to REPORT, not a
+          ;; measure to file.
+          (when (and (not (:clamped? out))
+                     (seq (:photos @session))
+                     (every? #(re-find #"^grab-" (or (:file %) "")) (:photos @session)))
+            (let [mem (:remembered-focal-mm @session)]
+              (if (and (number? mem)
+                       (> (js/Math.abs (- focal-mm mem)) (* bundle/focal-band mem)))
+                (auto-log! (str "  NOT filing this lens: " (modal/fmt-number focal-mm)
+                                "mm is more than 15% away from the measurement in memory ("
+                                (modal/fmt-number mem) "mm), and a measurement is not "
+                                "overwritten by a fit that contradicts it. If the "
+                                "camera really changed, delete its entry from "
+                                "~/.ridley/cameras.json and redo R"))
+                (remember-camera-focal! focal-mm :refined))))
+          (auto-log! (str "=== joint refinement: " (count poses) " photos ==="))
+          (auto-log! (str "  focal "
+                          (modal/fmt-number (if from-remembered? focal-now (:focal-mm before)))
                           " → " (modal/fmt-number focal-mm) " mm"
-                          (when (:clamped? out) "  (fermata al limite: guarda i click, non la lente)")))
-          (auto-log! (str "  riproiezione " (modal/fmt-number (:rms-px before))
+                          (when from-remembered?
+                            (str "  (RESTARTED from this camera's lens in memory, "
+                                 (modal/fmt-number started-from-mm)
+                                 "mm: the session's focal was a local minimum — "
+                                 "the residuals, on the same views, side with the memory)"))
+                          ;; a clamped move has two very different causes and
+                          ;; the old text named only one: bad clicks dragging
+                          ;; the lens (the 2026-08-25 disaster) — but a lens
+                          ;; that STARTED far (the default 48 on a ~27 camera,
+                          ;; 3/9) clamps too, and there the cure is simply to
+                          ;; press R again: ±15% per pass, it walks home
+                          (when (:clamped? out)
+                            (str "  (stopped at the limit of THIS pass: R moves "
+                                 "by at most 15% at a time — PRESS R AGAIN; "
+                                 "if it hits the limit even after 2-3 passes, "
+                                 "look at the clicks)"))))
+          (auto-log! (str "  reprojection "
+                          (modal/fmt-number (if from-remembered? session-before (:rms-px before)))
                           " → " (modal/fmt-number rms-px) " px"))
+          ;; ONE number over N views cannot be judged — Vincenzo, 2026-08-11: "non so
+          ;; giudicare, un po' migliora, ma poco". It was 9.3px because five views
+          ;; registered before the outlier fix still carried their bad picks, and the
+          ;; three good new ones (1.7-5.1px) were buried in the average. A per-view
+          ;; line makes that visible instead of leaving it to be deduced, and the
+          ;; badges are brought up to date so the filmstrip stops showing what each
+          ;; photo scored BEFORE the joint fit.
+          (let [idxs (:views out)
+                per (:per-view out)
+                per-before (:per-view before)
+                worst (when (seq per) (reduce max per))]
+            (doseq [[idx b a] (map vector idxs per-before per)]
+              ;; on a restart from the store, the per-view 'before' measures
+              ;; the RESTART (old poses under the other lens), not the
+              ;; session — print only the landing
+              (auto-log! (str "    photo " (inc idx) ": "
+                              (if from-remembered?
+                                (str (modal/fmt-number a) " px (with the new lens)")
+                                (str (modal/fmt-number b) " → " (modal/fmt-number a) " px"))
+                              (when (and worst (= a worst) (> a (* 2.0 rms-px)))
+                                "   ← this is the one pulling the average up"))))
+            (doseq [[idx a] (map vector idxs per)]
+              (when (get-in @session [:acquire-results idx])
+                (swap! session assoc-in [:acquire-results idx :rms-px] a))))
           (save-acquire-state!)
+          ;; the session's cage-mounting observations were measured under the
+          ;; OLD intrinsics and every pose just moved: stale, and worse than
+          ;; empty — obs taken at the default 48mm read the Z index in the
+          ;; MIRROR family and raised a false GEMELLO alarm against the same
+          ;; photos re-read at the measured 44 (log di Vincenzo, 29/8, primo
+          ;; contro secondo giro). Re-pressing 'a' rebuilds the vote clean.
+          (swap! session dissoc :cage-mounting-obs)
           ;; Re-ENTER the photo, don't just redraw over it. The refinement moves
           ;; two things the viewport only picks up when a photo is loaded: the
           ;; camera pose (viewport/set-camera-pose!) and the FIELD OF VIEW, which
@@ -2347,9 +6023,320 @@
           ;; altre'). One call, the same one every navigation makes.
           (enter-photo! (:current-idx @session))
           (set-status-message!
-           (str "Rifinitura: focale " (modal/fmt-number focal-mm) " mm, riproiezione "
-                (modal/fmt-number (:rms-px before)) " → " (modal/fmt-number rms-px) " px")))))
-    (set-status-message! "Rifinitura: nessuna foto caricata.")))
+           (str "Refinement: focal " (modal/fmt-number focal-mm) " mm, reprojection "
+                (modal/fmt-number (if from-remembered? session-before (:rms-px before)))
+                " → " (modal/fmt-number rms-px) " px"
+                (when from-remembered?
+                  (str " · RESTARTED from the lens in memory ("
+                       (modal/fmt-number started-from-mm)
+                       "mm): the focal you had was a local minimum"))
+                (when (:clamped? out)
+                  " · the lens hit the pass limit (±15%): PRESS R AGAIN")
+                (when (seq held-out)
+                  (str " · " (if (> (count held-out) 1) "photos " "photo ")
+                       (str/join "/" (map inc (sort held-out)))
+                       " did not vote on the lens (the fit got worse with "
+                       (if (> (count held-out) 1) "them" "it")
+                       "): it stays in the film with its clicks — 'r' on it to "
+                       "realign it")))))))
+    (set-status-message! "Refinement: no photo loaded.")))
+
+;; ============================================================
+;; Plate calibration — measuring the plate instead of trusting it
+;; ============================================================
+;;
+;; Every measurement in this channel is referred to the registration plate, and
+;; until now the plate was assumed perfect: the marks were wherever
+;; `registration-plate` computed them. A printed one is not. Measured on the
+;; ⌀300 plate on 2026-08-13, over twelve registered views: three marks stood
+;; more than a millimetre out of the plane (worst 1.63mm), the rest within a
+;; quarter. That is the residual nothing could explain — it changed with the
+;; plate's rotation, because a mark that stands proud of the plane projects
+;; differently depending which way the camera looks across it.
+;;
+;; Vincenzo's call, and the right one: 'stampare un piatto perfetto è
+;; difficilissimo, per me e per chiunque provasse a utilizzare questa feature'.
+;; So the plate stops being an assumption and becomes a measurement, like
+;; everything else here.
+;;
+;; WHERE IT IS KEPT. Not in the session and not in the source: in
+;; ~/.ridley/plates/, keyed by diameter and crown count. The calibration
+;; describes a physical object that outlives any one session — you print a
+;; plate, you calibrate it once, and every session that says
+;; `(registration-plate :d 300)` from then on is measuring against the plate you
+;; actually own. The session keeps its own copy in acquire-state.json so its
+;; numbers stay reproducible even if the store is later overwritten by a
+;; re-print.
+
+(def ^:private small-deviation-mm
+  "Below this, a calibration that fails to generalise means the plate is FINE.
+
+   The held-out test refuses two very different things with one verdict, and they
+   have opposite remedies. A large deviation that does not generalise is bad picks
+   — go and re-click. A small one that does not generalise is a plate already flat
+   to within what the session can see, and the only right response is to carry on.
+   Telling the second case to go re-click sends someone hunting for an error that
+   is not there.
+
+   0.5mm, because a clean twelve-view session on a 1920px frame measures a mark to
+   a couple of tenths: Vincenzo's ⌀300, once its blown picks were being dropped,
+   came back at 0.24mm and refused — and a hand check agreed, one rise under a
+   millimetre."
+  0.5)
+
+(defn- plate-store-path
+  "Where this plate's calibration is filed: ~/.ridley/plates/plate-300mm-12.json.
+   nil when the proxy is not a plate, or is one from before :plate-d existed."
+  []
+  (let [{:keys [plate-d plate-marks]} (:proxy-mesh @session)]
+    (when (and plate-d plate-marks)
+      (str (stl/expand-home "~/.ridley/plates/")
+           "plate-" (js/Math.round plate-d) "mm-" plate-marks ".json"))))
+
+(defn- crown-ids
+  "The proxy's crown marks in PICK ORDER — the same order bridge/pnp-target-points
+   uses, so index i here is pick index i everywhere else."
+  []
+  (vec (sort (keys (dissoc (:anchors (:proxy-mesh @session)) :zero)))))
+
+(defn- apply-plate-calibration!
+  "Move the proxy's crown anchors to `obj-positions` (object frame, pick order).
+
+   This is the ONLY place the calibration needs to touch, and that is the point:
+   every consumer — the PnP targets, the auto-detector's crown model, the drawn
+   dots, the joint refine — reads the marks off the proxy, so correcting the
+   proxy corrects all of them at once. The mesh's vertices are left alone; the
+   disc is still a disc, it is where the marks sit on it that was wrong."
+  [obj-positions]
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])]
+    ;; Whatever is about to be overwritten is the MODEL's crown — remember it
+    ;; once, the first time anything overwrites it. Every later run measures
+    ;; from the model rather than from the previous measurement, so a second
+    ;; calibration is a fresh reading of the plate and not a correction of a
+    ;; correction, and its report says how far the PLATE is from the drawing
+    ;; instead of how far this run drifted from the last one.
+    (when-not (:plate-nominal @session)
+      (swap! session assoc :plate-nominal
+             (mapv (fn [id] (bridge/world->local
+                             proxy-pose
+                             (get-in @session [:proxy-mesh :anchors id :position])))
+                   (crown-ids))))
+    (swap! session update-in [:proxy-mesh :anchors]
+           (fn [anchors]
+             (reduce (fn [a [id obj]]
+                       (assoc-in a [id :position] (bridge/local->world proxy-pose obj)))
+                     anchors
+                     (map vector (crown-ids) obj-positions))))))
+
+(defn- calibration-views
+  "The registered photos as plate-calib wants them, or nil if there aren't
+   enough. Same construction as the joint refine, including the exclusion of
+   picks the per-photo solve already rejected — a pick known to be wrong must not
+   get a vote on where a mark IS, of all things."
+  [iw ih]
+  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        k (session-intrinsics iw ih)]
+    (vec (keep (fn [idx]
+                 (let [dropped (set (get-in @session [:pnp-outliers idx] #{}))
+                       picks (remove (fn [[ci _]] (dropped ci))
+                                     (get-in @session [:pnp-picks idx] {}))
+                       cam (get-in @session [:camera-poses idx])]
+                   (when (and cam (>= (count picks) 6))
+                     {:idx idx
+                      :intrinsics k
+                      :pose (bridge/editor->solver-pose cam proxy-pose)
+                      :picks (into {} (for [[ci {:keys [px]}] picks] [ci px]))})))
+               (range (count (:photos @session)))))))
+
+(defn- save-plate-calibration!
+  "File the calibration under the plate it describes. Best-effort: the session's
+   own copy (acquire-state.json) is what makes this run reproducible, so a store
+   that cannot be written is worth a console line and nothing more."
+  [calib]
+  (if-let [path (plate-store-path)]
+    (-> (stl/desktop-write-file (js/JSON.stringify (clj->js calib)) path)
+        (.then (fn [_] (auto-log! (str "  filed in " path
+                                       " — it holds for the next sessions with this plate too"))))
+        (.catch (fn [err] (js/console.warn "edit-acquire: couldn't save the plate calibration" err))))
+    ;; A proxy that cannot say which plate it is (an older `acquire` form, or a
+    ;; hand-built mesh with :anchors) still gets calibrated — the session keeps
+    ;; its own copy — but there is nowhere to file it, and saying so is better
+    ;; than letting the user believe the plate is now calibrated for good.
+    (auto-log! (str "  NOT filed: this proxy does not say which plate it is. "
+                    "It holds for this session; to make it permanent reopen with "
+                    "(registration-plate :d <diameter>)."))))
+
+(defn- on-calibrate-plate!
+  "'C': measure where this plate's marks really are, and use them from now on.
+
+   Needs a session that is already registered and refined — the calibration reads
+   the poses, so it inherits whatever is wrong with them. Run it after 'R'."
+  []
+  (cond
+    (not (plate-proxy?))
+    (set-status-message! "Calibration (C) is only for the registration plate.")
+
+    (nil? (backdrop/image-size))
+    (set-status-message! "Calibration: no photo loaded.")
+
+    :else
+    (let [[iw ih] (backdrop/image-size)
+          views (calibration-views iw ih)
+          targets (pnp-targets)
+          ;; the marks as the MODEL has them, never as a previous run left them
+          ;; (see apply-plate-calibration!): each calibration is a fresh reading
+          ;; of the plate, measured from the drawing
+          nominal (or (:plate-nominal @session) (mapv :obj targets))
+          n-marks (count nominal)
+          ;; a mark nobody clicked has no rays; calibrate refuses on it, but the
+          ;; refusal is much more useful once it can name the mark
+          seen (frequencies (mapcat (comp keys :picks) views))
+          thin (filterv #(< (get seen % 0) 2) (range n-marks))]
+      (cond
+        (< (count views) 3)
+        (set-status-message!
+         (str "Calibration: needs at least 3 registered photos with ≥6 marks each "
+              "(I have " (count views) "). Register ('a' or 'p') and refine ('R') first."))
+
+        (seq thin)
+        (set-status-message!
+         (str "Calibration: " (if (= 1 (count thin)) "mark " "marks ")
+              (str/join ", " (map #(:label (nth targets %)) thin))
+              (if (= 1 (count thin)) " is seen" " are seen")
+              " by fewer than two photos — without two rays it has no position. "
+              "Turn the plate and register one more photo."))
+
+        :else
+        (let [r (plate-calib/calibrate views nominal)
+              ;; The verdict, before anything is adopted. A calibration's own
+              ;; residual ALWAYS falls — it was chosen to make it fall — so it
+              ;; cannot tell a warped plate from a fit that has swallowed the
+              ;; noise of the very photographs it was given. Only a photograph
+              ;; held out of the measurement can.
+              ;;
+              ;; This is not a hypothetical guard. On the first real session
+              ;; (2026-08-14, twelve views on a ⌀300) the fitted residual fell
+              ;; from 2.18 to 1.78px and reported a 1.97mm warp — and held out,
+              ;; the same plate made EIGHT of twelve photographs worse. The whole
+              ;; effect traced to one mark whose pick was wrong in four frames:
+              ;; drop m00 and those four fall from 3.4/2.3/3.0/2.4px to
+              ;; 1.5/0.4/0.3/0.3 on the UNTOUCHED model plate. The calibration
+              ;; had been bending the plate around a bad click.
+              cv (when-not (:error r) (plate-calib/cross-validate views nominal))]
+          (cond
+            (:error r)
+            (do (auto-log! "=== plate calibration: REFUSED ===")
+                (auto-log! (str "  " (:error r)))
+                (set-status-message! (str "Calibration refused: " (:error r))))
+
+            (and cv (not (:error cv)) (not= :confirmed (:verdict cv)))
+            (do
+              (auto-log! "=== plate calibration: NOT CONFIRMED, not adopted ===")
+              (auto-log! (str "  by measuring, the residual would drop from "
+                              (modal/fmt-number (:rms-before r)) " a "
+                              (modal/fmt-number (:rms-after r)) " px — but that number "
+                              "is worthless: it is the very one the measurement was chosen to "
+                              "lower."))
+              (auto-log! (str "  tried on photos held OUT of the measurement: model "
+                              (modal/fmt-number (:nominal-px cv)) " px → measured plate "
+                              (modal/fmt-number (:measured-px cv)) " px · "
+                              (:better cv) " improved, " (:worse cv) " worse"))
+              (doseq [{:keys [idx nominal-px measured-px]} (sort-by :idx (:per-view cv))]
+                (auto-log! (str "    photo " (inc idx) ": " (modal/fmt-number nominal-px)
+                                " → " (modal/fmt-number measured-px) " px"
+                                (when (>= measured-px nominal-px) "   ← worse"))))
+              ;; Two different refusals wear the same verdict, and sending the
+              ;; user to re-click on the wrong one wastes an afternoon. A big
+              ;; deviation that fails to generalise IS bad picks. A SMALL one
+              ;; that fails to generalise is a plate that is already flat to
+              ;; within what the session can measure — nothing to fix, and the
+              ;; right answer is to carry on (Vincenzo's ⌀300, once its six blown
+              ;; picks were being dropped: 0.24mm, refused, and correctly so).
+              (if (< (:worst-mm r) small-deviation-mm)
+                (do (auto-log! (str "  The largest deviation would be "
+                                    (modal/fmt-number (:worst-mm r))
+                                    " mm, below what this session can measure: "
+                                    "the plate is as flat as it needs to be. There is nothing to "
+                                    "correct — carry on."))
+                    (set-status-message!
+                     (str "Plate already flat within " (modal/fmt-number (:worst-mm r))
+                          " mm: nothing to calibrate. Carry on.")))
+                (do (auto-log! (str "  So the plate is NOT warped: what would be "
+                                    "measured is the error of some click. Look at the "
+                                    "marks with the highest residual on the worst photos, "
+                                    "click them again ('p'), and retry."))
+                    (set-status-message!
+                     (str "Calibration NOT adopted: on the held-out photos it worsens "
+                          (:worse cv) " photos out of " (+ (:better cv) (:worse cv))
+                          ". The plate is not warped — it is the clicks. Details in the panel.")))))
+
+            :else
+            (let [{:keys [marks poses deviation-mm out-of-plane-mm radial-mm
+                          tangential-mm worst-mm rms-before rms-after
+                          per-view-before per-view view-idx]} r
+                  proxy-pose (get-in @session [:proxy-mesh :creation-pose])]
+              (apply-plate-calibration! marks)
+              ;; adopt the poses the calibration re-solved against the measured
+              ;; plate — leaving the old ones would show the corrected marks under
+              ;; cameras that were fitted to the wrong ones
+              (doseq [[view pose] (map vector views poses)]
+                (when pose
+                  (swap! session assoc-in [:camera-poses (:idx view)]
+                         (bridge/solver-pose->camera pose proxy-pose))))
+              (auto-log! (str "=== plate calibration: " (count views) " photos ==="))
+              (auto-log! (str "  reprojection " (modal/fmt-number rms-before)
+                              " → " (modal/fmt-number rms-after) " px"))
+              ;; the number that earns the adoption, said before the details
+              (when (and cv (not (:error cv)))
+                (auto-log! (str "  CONFIRMED on photos held out of the measurement: "
+                                (modal/fmt-number (:nominal-px cv)) " → "
+                                (modal/fmt-number (:measured-px cv)) " px, "
+                                (:better cv) " improved out of "
+                                (+ (:better cv) (:worse cv)))))
+              ;; Per photograph, like the joint refine: an aggregate that moves
+              ;; from 2.13 to 1.79 says something happened and refuses to say to
+              ;; whom — and on a plate the answer matters, because a warp presents
+              ;; differently depending which way each camera looks across it.
+              (doseq [[idx b a] (map vector view-idx per-view-before per-view)]
+                (when (and b a)
+                  (auto-log! (str "    photo " (inc idx) ": " (modal/fmt-number b)
+                                  " → " (modal/fmt-number a) " px"))))
+              ;; Three components, not two. They are the three ways a mark can be
+              ;; in the wrong place and they mean different things — warped,
+              ;; wrong radius, wrong angle around the crown — and printing only
+              ;; two left the headline number unaccounted for (2026-08-13: m00
+              ;; read -1.60 and -1.11 under a worst of 2.01, and the missing
+              ;; 0.51mm had no name).
+              (let [quiet (count (filter #(<= % 0.2) deviation-mm))]
+                (doseq [[i d op rad tan] (map vector (range) deviation-mm out-of-plane-mm
+                                              radial-mm tangential-mm)]
+                  (when (> d 0.2) ; below this it is click noise, not a plate
+                    (auto-log! (str "    " (:label (nth targets i)) ": "
+                                    (modal/fmt-number d) " mm — "
+                                    (modal/fmt-number op) " out of plane, "
+                                    (modal/fmt-number rad) " in radius, "
+                                    (modal/fmt-number tan) " sideways"))))
+                (when (pos? quiet)
+                  (auto-log! (str "    (" quiet " marks under 0.2 mm: fine, not listed)"))))
+              (auto-log! (str "  the plate is now MEASURED: largest deviation "
+                              (modal/fmt-number worst-mm) " mm"))
+              (save-plate-calibration!
+               {:d (:plate-d (:proxy-mesh @session))
+                :marks n-marks
+                :obj marks
+                :worst-mm worst-mm
+                :rms-before rms-before
+                :rms-after rms-after
+                :views (count views)
+                :measured-on (.toISOString (js/Date.))})
+              (swap! session assoc :plate-calib {:obj marks :worst-mm worst-mm
+                                                 :views (count views)})
+              (save-acquire-state!)
+              (enter-photo! (:current-idx @session))
+              (set-status-message!
+               (str "Plate calibrated on " (count views) " photos: largest deviation "
+                    (modal/fmt-number worst-mm) " mm, reprojection "
+                    (modal/fmt-number rms-before) " → " (modal/fmt-number rms-after) " px")))))))))
 
 (defn- on-auto-register!
   "Plate 'a': register every UNREGISTERED photo with zero clicks (fetta C), then fill
@@ -2366,14 +6353,24 @@
           registered? (fn [idx] (:pnp? (get-in @session [:acquire-results idx])))
           pending (filterv #(not (registered? %)) (range n))]
       (cond
+        ;; A cage's automatic path is SEEDED, not zero-click, and deliberately so:
+        ;; the detector finds the discs but a crown cannot say which of its marks
+        ;; is mark zero — that is what the picks are for, and four on one ring is
+        ;; the whole cost. It works on the photo in front of you rather than the
+        ;; whole session, because the picks are per-photo and because applying a
+        ;; pose to photo 0 moves the PROXY, which is not something to do to five
+        ;; photos at once without looking.
+        (cage-proxy?)
+        (cage-read-and-place!)
+
         (nil? (:zero-obj det))
-        (set-status-message! "Questo piatto non espone lo zero-indice: rivaluta examples/param-acq-plate.clj e riapri.")
+        (set-status-message! "This plate does not expose the zero-index: use (registration-plate :d <diameter>) as the proxy and reopen.")
         (empty? pending)
-        (set-status-message! "Auto: tutte le foto sono già registrate.")
+        (set-status-message! "Auto: every photo is already registered.")
         :else
         (do
-          (auto-log! (str "=== Auto (fetta C): rilevo e registro " (count pending) " foto ==="))
-          (set-status-message! (str "Auto: rilevo " (count pending) " foto… (dettaglio nella REPL a destra)"))
+          (auto-log! (str "=== Auto (slice C): detecting and registering " (count pending) " photos ==="))
+          (set-status-message! (str "Auto: detecting " (count pending) " photos… (detail in the REPL on the right)"))
           (-> (reduce (fn [p idx]
                         (-> p
                             (.then (fn [acc] (-> (register-one-auto-photo! idx)
@@ -2384,42 +6381,639 @@
               (.then (fn [results]
                        (let [detect-ok (count (filter identity (vec results)))]
                          (ring-fill-then-finish! (count pending) detect-ok))))))))
-    (set-status-message! "Foto non ancora caricata."))
+    (set-status-message! "Photo not loaded yet."))
   (update-panel!))
 
 ;; ============================================================
-;; Retrace ('d'): P3 thin slice — trace a planar feature ON a declared face of
-;; the proxy, over the photo in pose. A click is backprojected (camera/pixel-ray)
-;; from the registered camera and intersected (math/ray-plane-point) with the
-;; declared face, giving a 3D point in the box's OBJECT frame (stable as the
-;; proxy moves). The polyline is world geometry, so navigating the filmstrip
-;; ([ / ]) re-shows it from each photo's registered camera over that photo's
-;; backdrop — the "riproiezione live nelle altre viste" of the brief, for free.
-;; Points persist in acquire-state.json; closing emits a minimal (poly …) so the
-;; retrace isn't lost (the P4-anticipated emission). Bezier/arc richness (full
-;; edit-path-2d) waits for P4, when fase-2 becomes non-modal.
+;; Live capture ('g') — "scatta e registra": a camera in the room is a source of
+;; VIEWS, and a view only counts once it is registered.
+;;
+;; The gesture is one key. What it saves is the round trip that used to sit
+;; between wanting a view and having one: shoot, unlock the phone, find the file,
+;; copy it into the session folder, rename it into the convention, re-open. With
+;; that gone, a view costs about as much as looking, which changes what it is FOR
+;; — not another lap of the turntable, but one more angle exactly where the edge
+;; you are measuring is poorly seen.
+;;
+;; Two rules make it honest, and both are about refusing:
+;;
+;; 1. A frame that does not register never enters the session. It is measured
+;;    BEFORE it is written, so a rejected frame leaves nothing behind — not a file
+;;    to clean up, not a line in session.json to roll back. Re-shooting costs one
+;;    key, so "take another one" is the right answer to a bad frame, and a frame
+;;    kept in the hope of rescuing it by hand later is the old economy, from when
+;;    photos were expensive.
+;; 2. The lens is MEASURED, never assumed. A live frame carries no EXIF, and on
+;;    the first frame of a session there is no second view to fit a focal against —
+;;    so the plate is asked, in closed form (photogrammetry/plate-focal). Without
+;;    that, `solve-pnp` still converges at whatever focal it is handed: it puts the
+;;    camera at the wrong distance and reports a residual that looks fine. The
+;;    first frame of a session therefore calibrates the camera; the rest reuse it,
+;;    and 'R' refines it jointly once there are two.
 ;; ============================================================
 
-(def ^:private retrace-face-labels
-  "[axis sign] → human name. A name alone ('Fronte') doesn't say WHICH face, so
-   the same colour (retrace-face-colors) tints the active face in 3D and its
-   button (Vincenzo 2026-07-25: colour the current one)."
-  {[0 1] "Lato +X" [0 -1] "Lato −X"
-   [1 1] "Sopra"   [1 -1] "Sotto"
-   [2 1] "Fronte"  [2 -1] "Retro"})
+(def ^:private seed-focal-ladder
+  "Focals (35mm-equivalent) to TRY when the crown must be identified before the
+   lens is known. Identity is nearly focal-blind — the crown and the zero-index are
+   coplanar, so their reprojection goes through the homography, which the focal does
+   not change (see plate-focal's docstring) — but not perfectly: `assign-marks` also
+   LM-refines in pose space and rejects a back-facing twin, and far from the truth
+   the refined pose drifts enough that the blob-snap grabs a neighbouring disc.
+   Measured on a synthetic plate at a true 28mm: the rungs within roughly ±50%
+   identify it correctly, the far ones mis-snap. Ordered by likelihood — a webcam
+   or a phone in Continuity Camera sits near 28mm-equivalent — because the search
+   stops at the first rung that works."
+  [28.0 35.0 22.0 45.0 18.0 60.0])
 
-(def ^:private retrace-face-colors
+(def ^:private own-lens-sources
+  "Focal provenances that mean 'this belongs to the lens the session is shooting
+   with'. Everything a live grab does downstream keys off this, so it is written
+   once rather than as a scattered `(= :live …)`:
+
+   - `:live`    measured off the plate by a grabbed frame;
+   - `:refined` the joint fit over every registered view — strictly better than any
+                single frame, and the reason this is a SET and not one keyword;
+   - `:manual`  the user's own slider, which in a live session is their intent;
+   - `:remembered` the store's number for THIS camera at THIS delivered size
+                (~/.ridley/cameras.json) — measured on this very lens by a past
+                session's joint fit, which is exactly what 'belongs to the lens'
+                means. Letting a single grabbed frame overwrite it would repeat
+                the 2026-08-11 mistake one session later; instead the grab only
+                REPORTS its own number, and a real divergence (Center Stage
+                moving the lens) shows up as that report disagreeing.
+
+   Excluded: `:default` (a guess belonging to nothing) and `:exif` (a real lens, but
+   the phone's STILLS camera, which is not the camera now pointed at the plate)."
+  #{:live :refined :manual :remembered})
+
+(defn- live-focal
+  "The session's own lens, or nil when it has none yet. Provenance is what decides
+   whether the next grab may skip the seed ladder AND — more importantly — whether
+   it is allowed to adopt its own single-frame measurement over what the session
+   already knows."
+  []
+  (when (own-lens-sources (:focal-source @session)) (:focal-mm @session)))
+
+(defn- next-grab-name
+  "grab-01.jpg, grab-02.jpg, … one past the highest already in the film. Numbered
+   rather than timestamped so the filmstrip reads in the order the frames were
+   taken, and so a name is predictable enough to talk about."
+  []
+  (let [n (reduce (fn [best {:keys [file]}]
+                    (if-let [[_ d] (re-find #"^grab-(\d+)\." (or file ""))]
+                      (max best (js/parseInt d 10))
+                      best))
+                  0 (:photos @session))]
+    (str "grab-" (.padStart (str (inc n)) 2 "0") ".jpg")))
+
+(defn- write-session-json!
+  "Rewrite session.json with the current film, keeping every other key the document
+   arrived with (:bootstrap, :caliper — the CLI's, and not ours to drop). Returns a
+   Promise."
+  []
+  (let [doc (or (:session-doc @session) {})
+        photos (mapv (fn [{:keys [file theta]}] [file theta]) (:photos @session))
+        body (js/JSON.stringify (clj->js (assoc doc :photos photos)) nil 1)]
+    (swap! session assoc-in [:session-doc :photos] photos)
+    (stl/desktop-write-file body (str (:base-dir @session)
+                                      (if (str/ends-with? (:base-dir @session) "/") "" "/")
+                                      "session.json"))))
+
+(defn- identify-failure-rank
+  "How ACTIONABLE a failure is, for picking which one the user hears about when
+   several seed focals all fail. Higher = the user can do more about it. nil (no
+   failure seen yet) ranks below everything."
+  [reason]
+  ({:crown-not-found 0
+    :too-few-blobs 1
+    :not-identified 2
+    :too-few-crown 3
+    :too-few-snapped 4
+    ;; the one with a two-second remedy: turn the plate
+    :zero-not-visible 5}
+   reason -1))
+
+(defn- definitive-failure?
+  "Failures no other seed focal can talk out of. The seed ladder exists to get the
+   crown IDENTIFIED; once a rung has done that, whether the zero-index is covered —
+   or whether the marks are sharp enough to snap — is a fact about the picture, not
+   about the focal, and trying five more focals only makes a refusal slow."
+  [reason]
+  (contains? #{:zero-not-visible :too-few-snapped :no-zero-index :no-marks} reason))
+
+(defn- identify-crown
+  "Find the plate in an already-sampled frame at an assumed `focal-mm`: fit the
+   crown, then snap each identified mark onto the real blob under it. Returns
+   {:picks {mark-idx px} :corr [{:ci :world :px}] :crown-hits n} or nil.
+
+   `cands` are the detector's blobs, passed in because detection is the expensive
+   part and is focal-INDEPENDENT: the seed ladder re-identifies, it never re-detects."
+  [{:keys [lum-at size]} focal-mm marks zero-obj det cands blobs rings]
+  (let [[iw ih] size
+        intrinsics (pcamera/intrinsics-from-fov
+                    (pcamera/equiv-focal->hfov-deg focal-mm (/ iw ih)) iw ih)
+        ;; The judge scores against EVERY detected blob (a mark just outside the
+        ;; top-scored slice still counts as evidence), while the ring search runs on
+        ;; the slice — `blobs` — that `rings`' indices refer to. It weighs SIZE as
+        ;; well as position: a speck one tenth the area of a disc once stood in for a
+        ;; covered zero-index and let a frame register at an unknown rotation.
+        judge (match-plate/blob-judge cands)
+        res (match-plate/fit-crown-explained blobs marks zero-obj
+                                             intrinsics judge
+                                             {:disc-r (:disc-r det) :face-normal (:face-normal det)
+                                              ;; the rings were found once, from pixels
+                                              ;; alone — they don't change with the focal
+                                              :rings rings})]
+    (if (:reason res)
+      res ; carries :message, and a remedy the caller can pass on verbatim
+      (let [snap-r (snap-radius-for (:pixels res) marks (:disc-r det))
+            picks (into {} (keep (fn [[mi px]]
+                                   (some->> (blob/snap-to-blob lum-at px snap-r)
+                                            :center (vector mi)))
+                                 (:pixels res)))]
+        (if (< (count picks) min-plate-picks)
+          {:reason :too-few-snapped
+           :message (str "the crown is recognised, but only " (count picks) " marks could be "
+                         "located precisely enough (at least " min-plate-picks " are needed) — "
+                         "the frame is probably blurred or the plate is too small in it")}
+          {:picks picks
+           :crown-hits (:crown-hits res)
+           :snap-radius snap-r
+           :corr (vec (for [[ci px] picks]
+                        {:ci ci :world (:obj (nth marks ci)) :px px}))})))))
+
+(defn- register-live-frame
+  "Everything a grabbed frame must survive to earn a place in the session, in the
+   order that makes each step trustworthy:
+
+     detect blobs  →  identify the crown (seed ladder, or the known lens)
+                   →  MEASURE the focal off the plate
+                   →  re-identify at the measured focal
+                   →  solve the pose, and judge it by its residual
+
+   The re-identification is not belt-and-braces: the ladder stops at the first rung
+   that identifies the crown, and a rung that is merely close enough can have
+   snapped a mark onto its neighbour. Once the true focal is known, the reprojections
+   land where the discs actually are, and the picks that come out are the ones the
+   pose is entitled to be judged on.
+
+   Pure with respect to the session: reads the proxy, mutates nothing. Returns
+   {:ok? true :sol :picks :focal-mm :measured :crown-hits} or
+   {:ok? false :message …}."
+  [sampler]
+  (let [{:keys [lum-at size data]} sampler
+        proxy-mesh (:proxy-mesh @session)
+        det (bridge/plate-detect proxy-mesh)
+        marks (mapv #(select-keys % [:id :obj]) (pnp-targets))
+        zero-obj (:zero-obj det)]
+    (if (nil? zero-obj)
+      {:ok? false :message (if (cage-proxy?)
+                             (no-auto-on-cage-msg)
+                             (str "This proxy is not a registration plate (no zero-index): "
+                                  "live capture registers against the plate's crown."))}
+      (let [cands (blob-detect/detect-blobs lum-at size {:rgba data})
+            ;; The candidate RINGS, once. Stage 1 reads pixels only, so it is the
+            ;; same answer at every seed focal — recomputing it per rung made a
+            ;; failed grab take as long as six good ones and left the status line
+            ;; saying "registering…" with nothing happening (found live 2026-08-11).
+            ;; ONE slice, shared: `rings` holds INDICES into it, so the ring search
+            ;; and every identify pass must be looking at the same vector
+            blobs (vec (take auto-fit-blobs (mapv :center cands)))
+            rings (match-plate/crown-ring-hypotheses blobs {})
+            known (live-focal)
+            ladder (if known (cons known seed-focal-ladder) seed-focal-ladder)
+            ;; Try the seed focals in turn, stopping at the first that identifies the
+            ;; crown. When none does, report the most ACTIONABLE failure any of them
+            ;; saw rather than the last one: a covered zero-index ("turn the plate")
+            ;; is worth more than "no ring found", and a rung that got that far knew
+            ;; something the others didn't.
+            first-pass (loop [fs ladder best nil]
+                         (if (empty? fs)
+                           best
+                           (let [r (identify-crown sampler (first fs) marks zero-obj det cands blobs rings)]
+                             (cond
+                               (not (:reason r)) (assoc r :seed (first fs))
+
+                               ;; The ladder exists to fix IDENTIFICATION. Once a rung
+                               ;; has identified the crown, another focal cannot change
+                               ;; whether the zero-index is physically visible or the
+                               ;; marks are sharp enough — so stop, instead of paying
+                               ;; five more solves to be told the same thing.
+                               (definitive-failure? (:reason r)) r
+
+                               :else
+                               (recur (rest fs)
+                                      (if (> (identify-failure-rank (:reason r))
+                                             (identify-failure-rank (:reason best)))
+                                        r best))))))]
+        (if (:reason first-pass)
+          {:ok? false
+           :message (str (:message first-pass) " (" (count cands) " dark blobs in the frame.)")}
+          (let [measured (plate-focal/estimate-focal (:corr first-pass) size)
+                ;; The SESSION's focal wins when it has one, even though this frame
+                ;; measured its own: one lens, one number. Solving this pose at a
+                ;; per-frame focal while the session keeps another would put the
+                ;; camera at a depth the backdrop's field of view contradicts, and
+                ;; the disagreement would show up as everything else being slightly
+                ;; wrong. The frame's own measurement is still reported — a lens
+                ;; that has genuinely changed (zoom, another camera) should be
+                ;; visible, not silently averaged in.
+                focal (or known (:focal-mm measured))]
+            (if (nil? focal)
+              ;; nothing to fall back on: this is the FIRST frame and it cannot see
+              ;; the lens. Naming the geometry is the whole value of refusing here.
+              {:ok? false
+               :message (str "The lens cannot be measured from this frame — "
+                             (:message measured)
+                             " (the first frame of a session has no other view to fit against.)")}
+              (let [[iw ih] size
+                    intrinsics (pcamera/intrinsics-from-fov
+                                (pcamera/equiv-focal->hfov-deg focal (/ iw ih)) iw ih)
+                    ;; re-identify at the MEASURED focal; if that somehow fails, the
+                    ;; seed's picks are still a valid (if slightly looser) answer
+                    re (identify-crown sampler focal marks zero-obj det cands blobs rings)
+                    final (if (:reason re) first-pass re)
+                    sol (pnp/solve-pnp (:corr final) intrinsics {})]
+                (cond
+                  (nil? sol)
+                  {:ok? false :message "The pose has no solution from these marks."}
+
+                  (> (:rms-px sol) pnp/accept-rms-px)
+                  {:ok? false
+                   :message (str "Rejected: reprojection " (.toFixed (:rms-px sol) 1)
+                                 "px, over the " pnp/accept-rms-px "px bar. "
+                                 "Hold still, or move closer to the plate.")}
+
+                  :else
+                  {:ok? true :sol sol :picks (:picks final) :focal-mm focal
+                   :measured measured :crown-hits (:crown-hits final)
+                   :n (count (:corr final))})))))))))
+
+(defn- accept-live-frame!
+  "Write the frame, put it in the film, and apply its pose — in that order, because
+   until the JPEG is on disk there is nothing for session.json to point at.
+   Returns a Promise resolving when the session is consistent again."
+  [^js canvas {:keys [sol picks focal-mm measured crown-hits n]}]
+  (let [idx (count (:photos @session))
+        file (next-grab-name)
+        proxy-pose (get-in @session [:proxy-mesh :creation-pose])
+        adopt? (and (:focal-mm measured) (nil? (live-focal)))]
+    (-> (camera/canvas->jpeg canvas)
+        (.then (fn [blob] (stl/desktop-write-file blob (photo-path file))))
+        (.then (fn [_]
+                 ;; the lens of the session, measured once off the first live frame;
+                 ;; later frames only REPORT theirs, because adopting a new focal
+                 ;; silently re-scales every pose already solved at the old one
+                 (when adopt?
+                   (swap! session assoc :focal-mm (:focal-mm measured) :focal-source :live)
+                   (remember-camera-focal! (:focal-mm measured) :live))
+                 ;; θ nil = "foto libera": a hand-held frame has no turntable angle,
+                 ;; and the channel already knows what to do with one (free-photo?
+                 ;; keeps it out of the ring model and its predictions).
+                 (swap! session update :photos conj {:file file :theta nil})
+                 (apply-auto-solve! idx sol picks proxy-pose)
+                 ;; the first frame is the one that MOVES the proxy (it is the anchor):
+                 ;; carry the whole system back to the construction turtle, so an
+                 ;; object acquired from nothing appears where it is being built and
+                 ;; not at the acquisition frame's arbitrary origin. A pure
+                 ;; translation — registration is translation-invariant.
+                 (when (zero? idx) (reanchor-to-build-pose!))
+                 (save-acquire-state!)
+                 (write-session-json!)))
+        (.then (fn [_]
+                 (enter-photo! idx)
+                 (auto-log! (str "  " file " registered ✓  rms "
+                                 (.toFixed (:rms-px sol) 1) "px, " n " discs, crown "
+                                 crown-hits "/12"
+                                 (if adopt?
+                                   (str " · focal MEASURED off the plate: "
+                                        (.toFixed (:focal-mm measured) 1) "mm-equiv"
+                                        (when (:single-constraint? measured) " (a single constraint)"))
+                                   (when-let [m (:focal-mm measured)]
+                                     (str " · this grab says " (.toFixed m 1)
+                                          "mm, the session uses " (.toFixed focal-mm 1) "mm")))))
+                 (set-status-message! (str file ": registered, " (.toFixed (:rms-px sol) 1)
+                                           "px over " n " marks")))))))
+
+(defn- keep-live-frame-unregistered!
+  "The cage's Grab: write the frame and put it in the film as an out-of-ring
+   photo (θ nil — the same standing session-json-from-folder gives a cage
+   folder's photos), leaving registration to the user's 'p'+'a' on it. The
+   plate's grab keeps a frame only if it registers, and on a cage that made
+   live capture a dead end: every frame bounced off the plate-shaped automatic
+   path, and the advice it bounced with — click 4 discs with 'p', press 'a' —
+   presupposes a photo that is IN the film (reported 2026-08-27, a whole
+   session of grabs discarded). Returns a Promise resolving when the session
+   is consistent again."
+  [^js canvas]
+  (let [idx (count (:photos @session))
+        file (next-grab-name)]
+    (-> (camera/canvas->jpeg canvas)
+        (.then (fn [blob] (stl/desktop-write-file blob (photo-path file))))
+        (.then (fn [_]
+                 (swap! session update :photos conj {:file file :theta nil})
+                 (write-session-json!)))
+        (.then (fn [_]
+                 (enter-photo! idx)
+                 (auto-log! (str "  " file " kept, not registered (cage): "
+                                 "pose the cage by eye over the photo and press 'a' — "
+                                 "or click 4 discs on ONE ring with 'p' "
+                                 "(the zero-index counts double), then 'a'."))
+                 (set-status-message!
+                  (str file ": kept, to be registered — pose by eye, then 'a' "
+                       "(or 4 discs with 'p', then 'a').")))))))
+
+(defn- on-grab!
+  "'g' / the Grab button. Plate: one frame, measured, and kept only if it
+   registers. Cage: the frame is kept UNREGISTERED — there is no on-the-spot
+   automatic for a cage yet (auto-read stands at 2/8 with tens of seconds per
+   refusal, see dev-docs/HANDOVER-cage-zero-click.md), and a frame that is not
+   in the film cannot be hand-registered at all."
+  []
+  (cond
+    (not (camera/active?))
+    (set-status-message! "No camera open — press Camera first.")
+
+    (not (plate-proxy?))
+    (set-status-message! "Live capture needs the registration plate as the proxy.")
+
+    :else
+    (if-let [{:keys [^js canvas size]} (camera/grab-frame)]
+      (let [[w h] size]
+        (auto-log! (str "=== live grab (" w "×" h ") ==="))
+        ;; the lens these grabs come from, remembered by the session (and
+        ;; persisted with it): the 'R' that finally measures the focal may run
+        ;; long after the camera is closed, and a measurement that cannot say
+        ;; which camera it belongs to cannot be filed
+        (when-let [k (camera-lens-key (:camera-info @session))]
+          (swap! session assoc :grab-camera k))
+        (if (cage-proxy?)
+          ;; a cage frame cannot register on the spot (the automatic path is
+          ;; plate-shaped): keep it, and let 'p'+'a' register it in place
+          (-> (keep-live-frame-unregistered! canvas)
+              (.catch (fn [err]
+                        (auto-log! (str "  error: " err))
+                        (set-status-message! (str "Grab failed: " err)))))
+          (let [sampler (backdrop/sampler-of canvas w h)]
+            (set-status-message! "Grabbed — registering… (detail in the REPL)")
+            ;; hand the browser a frame first, so the status line paints before
+            ;; the (seconds-long) detection blocks the thread
+            (-> (yield-frame)
+                (.then (fn [_] (register-live-frame sampler)))
+                (.then (fn [outcome]
+                         (if (:ok? outcome)
+                           (accept-live-frame! canvas outcome)
+                           (do (auto-log! (str "  discarded: " (:message outcome)))
+                               (set-status-message! (str "Not kept — " (:message outcome)))
+                               (update-panel!)))))
+                (.catch (fn [err]
+                          (auto-log! (str "  error: " err))
+                          (set-status-message! (str "Grab failed: " err))))))))
+      (set-status-message! "The camera has not delivered a frame yet."))))
+
+(def ^:private photo-indexed-keys
+  "Every session map keyed by PHOTO INDEX. Removing a view has to renumber all of
+   them together, so they are listed once here rather than remembered at each call
+   site — a map left out would silently keep pointing at the wrong photo, which is
+   the kind of mistake that shows up three steps later as geometry that makes no
+   sense."
+  [:camera-poses :acquire-results :pnp-picks :pnp-residuals :pnp-outliers
+   :pnp-occluded :pnp-batch :marker-picks :cage-mounting-obs :cage-face-choice])
+
+(defn- drop-index
+  "Remove key `gone` from an index-keyed map and shift every higher key down one."
+  [m gone]
+  (into {} (keep (fn [[i v]]
+                   (cond (= i gone) nil
+                         (> i gone) [(dec i) v]
+                         :else [i v])))
+        m))
+
+(defn- delete-view!
+  "Remove view `idx` from the session: its JPEG from the folder, its entry from the
+   film, and everything keyed to it — renumbering the views above it.
+
+   Worth having because a live capture loop MAKES bad views. When a photo cost a
+   trip to the phone and back you lived with the ones you had; when it costs one
+   key you take another, and the folder fills with attempts. Without a way to drop
+   one, every bad frame stays in the joint fit forever, which is the opposite of
+   what cheap views are for.
+
+   The file goes too — leaving the JPEG behind would put session.json and the
+   folder out of step, and the next thing to read the folder would disagree with
+   the session about what was shot."
+  [idx]
+  (let [{:keys [file]} (nth (:photos @session) idx nil)]
+    (when file
+      (-> (stl/desktop-delete-file (photo-path file))
+          ;; a JPEG already gone is not a reason to keep the view
+          (.catch (fn [_] nil))
+          (.then
+           (fn [_]
+             (swap! session
+                    (fn [s]
+                      (let [s (update s :photos (fn [ps] (vec (concat (subvec ps 0 idx)
+                                                                      (subvec ps (inc idx))))))
+                            s (reduce (fn [acc k] (update acc k #(drop-index (or % {}) idx)))
+                                      s photo-indexed-keys)
+                            n (count (:photos s))]
+                        (assoc s :current-idx (max 0 (min (dec n) (:current-idx s)))))))
+             (save-acquire-state!)
+             (write-session-json!)))
+          (.then (fn [_]
+                   (auto-log! (str "  " file " removed from the session"))
+                   (if (seq (:photos @session))
+                     (enter-photo! (:current-idx @session))
+                     (update-panel!))
+                   (set-status-message! (str file " deleted — " (count (:photos @session))
+                                             " views left"))))
+          (.catch (fn [err]
+                    (set-status-message! (str "Could not delete " file ": " err))))))))
+
+;; ============================================================
+;; Per-camera focal memory — ~/.ridley/cameras.json
+;;
+;; A grabbed frame has no EXIF, so a grab session starts at the 48mm default,
+;; and a wrong focal does not present itself as a wrong focal: it registers
+;; cleanly with the camera at the wrong distance, MUTE (the default-48 on the
+;; 28mm Continuity lens ate four evenings across 28/8–2/9). The lens of a
+;; camera the user owns is a constant worth keeping, like the plate's
+;; calibration — measured once, proposed to every later session.
+;;
+;; Keyed by label AND delivered size, because a lens number is only worth the
+;; pipeline it was measured on: the 44 "measured" for Continuity's 4032px
+;; stills never held for its 1920×1440 grabs (different crop), and that
+;; transplant is precisely how battiscopa3 opened wrong. Same phone, two keys,
+;; two numbers — correct, not redundant. (Center Stage varies the crop live,
+;; which no key can absorb: it stays OFF in grab sessions.)
+;; ============================================================
+
+(def ^:private camera-store-path
+  "One JSON map for every camera the user has measured: key → {focal-mm,
+   source, updated}. Keys are free-form strings (labels have spaces), so the
+   file is read WITHOUT keywordizing."
+  "~/.ridley/cameras.json")
+
+(defn- camera-lens-key
+  "The identity a measured focal belongs to: «label @ w×h». nil when the label
+   is missing (a store entry under 'camera' would collide across devices)."
+  [{:keys [label size]}]
+  (when (and label (seq label) (not= label "camera") (= 2 (count size)))
+    (str label " @ " (first size) "×" (second size))))
+
+(defn- read-camera-store
+  "Promise of the store's map, {} when absent/unreadable — a missing store is
+   the normal first-run case, never an error."
+  []
+  (-> (stl/desktop-read-file (stl/expand-home camera-store-path))
+      (.then (fn [text] (js->clj (js/JSON.parse text))))
+      (.catch (fn [_] {}))))
+
+(defn- remember-camera-focal!
+  "File the session's measured lens under the camera it was grabbed with —
+   :grab-camera, stamped at grab time and persisted with the session, so the
+   'R' that finally measures the lens files it even if the camera has been
+   closed (or the session reopened) in between. Best-effort, like the plate
+   store: the session's own state is what makes this run reproducible."
+  [mm source]
+  (when-let [k (:grab-camera @session)]
+    (swap! session assoc :remembered-focal-mm mm)
+    (-> (read-camera-store)
+        (.then (fn [store]
+                 ;; an unchanged number is not news: a no-op R re-filed (and
+                 ;; re-announced) the same lens three times in one sitting
+                 (when-not (some-> (get-in store [k "focal-mm"])
+                                   (- mm) js/Math.abs (< 0.05))
+                   (-> (stl/desktop-write-file
+                        (js/JSON.stringify
+                         (clj->js (assoc store k {"focal-mm" mm
+                                                  "source" (name source)
+                                                  "updated" (.slice (.toISOString (js/Date.)) 0 10)}))
+                         nil 2)
+                        (stl/expand-home camera-store-path))
+                       (.then (fn [_]
+                                (auto-log! (str "  lens filed for «" k "»: " (.toFixed mm 2)
+                                                "mm (" (name source) ") — the next sessions with "
+                                                "this camera start from here, not from the default"))))))))
+        (.catch (fn [err]
+                  (js/console.warn "edit-acquire: couldn't save the camera focal" err))))))
+
+(defn- propose-remembered-focal!
+  "On camera open: if the store knows this camera at this size, give the
+   session that lens (source :remembered) — unless the session already owns
+   one (:live/:refined/:manual/:remembered), in which case a real disagreement
+   is REPORTED, never adopted: the number on file was measured, but so was the
+   session's, and silently replacing the nearer one is how wrong focals stay
+   mute. Async and best-effort."
+  [info]
+  (when-let [k (camera-lens-key info)]
+    (-> (read-camera-store)
+        (.then (fn [store]
+                 (when-let [mm (get-in store [k "focal-mm"])]
+                   ;; stash for R's multi-start regardless of adoption
+                   (swap! session assoc :remembered-focal-mm mm)
+                   (let [updated (get-in store [k "updated"])]
+                     (if (live-focal)
+                       (when (> (js/Math.abs (- mm (:focal-mm @session))) 0.5)
+                         (auto-log! (str "  for «" k "» I have in memory " (.toFixed mm 1)
+                                         "mm (from " updated "), the session uses "
+                                         (.toFixed (:focal-mm @session) 1)
+                                         "mm — if the residuals stay high, 'R' is the judge")))
+                       (do (swap! session assoc :focal-mm mm :focal-source :remembered)
+                           (auto-log! (str "  focal remembered for «" k "»: " (.toFixed mm 1)
+                                           "mm (measured on " updated ") — 'R' re-measures it"))
+                           (report-focal!)
+                           (update-panel!)))))))
+        (.catch (fn [_] nil)))))
+
+(defn- mount-camera-preview!
+  "Put the live preview in the corner of the viewport — you frame by looking at the
+   OBJECT, so the preview has to be the thing you glance at, not the thing you stare
+   at. Idempotent."
+  []
+  (when-let [^js host (.getElementById js/document "viewport-panel")]
+    (when-let [^js v (camera/video-el)]
+      (when-not (.-parentNode v) (.appendChild host v)))))
+
+(defn- refresh-cameras!
+  "Re-read the list of connected cameras into the panel. Cheap, and worth doing
+   on every change: a phone that offers itself over Continuity appears WHILE the
+   session is open, and the user goes looking for it in the picker the moment
+   they have woken it."
+  []
+  (-> (camera/list-cameras)
+      (.then (fn [ds]
+               (when @session
+                 (swap! session assoc :camera-devices ds)
+                 (update-panel!))))))
+
+(defn- watch-cameras!
+  "Keep the picker honest for as long as the session is open."
+  []
+  (camera/watch-devices! refresh-cameras!)
+  (refresh-cameras!))
+
+(defn- start-camera!
+  "Open a camera (the given device, or the default) and show its preview. Also
+   refreshes the device list — labels only become real once permission has been
+   granted, so the picker is worth rebuilding after every successful open."
+  [device-id]
+  (-> (camera/start! device-id)
+      (.then (fn [info]
+               (mount-camera-preview!)
+               (swap! session assoc :camera-info info)
+               (set-status-message! (str "Camera: " (:label info) " · "
+                                         (first (:size info)) "×" (second (:size info))))
+               ;; a camera the store has already measured brings its lens with
+               ;; it — the cure for the mute default-48 that ate four evenings
+               (propose-remembered-focal! info)
+               (refresh-cameras!)))
+      (.catch (fn [err]
+                (set-status-message! (str "Camera not opened: " (.-message err)))
+                (update-panel!)))))
+
+(defn- stop-camera! []
+  (camera/stop!)
+  (swap! session dissoc :camera-info)
+  (set-status-message! "Camera closed."))
+
+;; ============================================================
+;; Declared planes of the proxy — the vocabulary the named-mark gesture ('k')
+;; clicks against: a face of the proxy's bounding box (+ an offset along its
+;; normal), the click backprojected (camera/pixel-ray) from the registered
+;; camera and met with the plane (math/ray-plane-point), giving a point in the
+;; OBJECT frame (stable as the proxy moves).
+;;
+;; The retrace / anchor gesture ('d') that grew this vocabulary is GONE from
+;; the session (2026-09-11): placing a plane by eye now lives on the stage as
+;; `edit-plane-by-eye` (acquire_stage.cljs), where the user's own geometry is
+;; visible over the photo and follows the plane live — in here it was hidden
+;; and the script never re-ran, so an anchor could not be judged on the thing
+;; built on it.
+;; ============================================================
+
+(def ^:private face-labels
+  "[axis sign] → human name. A name alone ('Fronte') doesn't say WHICH face, so
+   the same colour (face-colors) tints the active face in 3D and its
+   button (Vincenzo 2026-07-25: colour the current one)."
+  {[0 1] "+X side" [0 -1] "−X side"
+   [1 1] "Top"     [1 -1] "Bottom"
+   [2 1] "Front"   [2 -1] "Back"})
+
+(def ^:private face-colors
   "[axis sign] → colour, shared by the active-face highlight quad and its button
    so which plane is declared is unmistakable at a glance."
   {[0 1] 0x5fd35f [0 -1] 0xb06cf0
    [1 1] 0x38c3d6 [1 -1] 0x5b8def
    [2 1] 0xf4d03f [2 -1] 0xf06fb0})
 
-(def ^:private retrace-face-order [[1 1] [1 -1] [2 1] [2 -1] [0 1] [0 -1]])
+(def ^:private face-order [[1 1] [1 -1] [2 1] [2 -1] [0 1] [0 -1]])
 
 (defn- axis-unit [a] (assoc [0.0 0.0 0.0] a 1.0))
 
-(defn- retrace-dims []
+(declare obj-dir->world)
+
+(defn- proxy-dims []
   (bridge/dims-from-mesh (:proxy-mesh @session)
                          (get-in @session [:proxy-mesh :creation-pose])))
 
@@ -2432,276 +7026,113 @@
    silent outlier. Bound = the box's bounding-sphere radius + a generous in-plane/
    offset margin."
   [hit]
-  (<= (m/magnitude hit) (+ (* 0.5 (m/magnitude (retrace-dims))) 45.0)))
+  (<= (m/magnitude hit) (+ (* 0.5 (m/magnitude (proxy-dims))) 45.0)))
+
+(defn- preset-plane-pose
+  "The pose of the proxy bounding-box face `axis`/`sign` — the six presets. Kept
+   because for a BOX proxy they are the part's own faces and remain the fastest
+   way to say 'this one'."
+  [axis sign]
+  (let [half (* 0.5 (nth (proxy-dims) axis))
+        a2 (last (remove #{axis} [0 1 2]))]
+    {:position (assoc [0.0 0.0 0.0] axis (* sign half))
+     :heading (m/v* (axis-unit axis) (double sign))
+     :up (axis-unit a2)}))
+
+(defn- plane-pose
+  "A tracing plane's full POSE in the object frame — position, heading (the
+   outward normal) and up (the in-plane reference direction).
+
+   A plane used to be `{:axis :sign :offset}`: one of the proxy bounding box's
+   six faces, plus a shift along its normal. That was right while the proxy WAS
+   the part, because then the six faces were the part's own faces. The
+   registration CAGE ended that: the proxy is now the reference AROUND the part,
+   its bounding box is a 176mm cube enclosing a 40mm object, and 'which face are
+   you tracing on' has no answer — 'facce di cosa?' (Vincenzo, 2026-08-20). An
+   arbitrary plane needs three degrees of orientation; a shift along a fixed
+   normal offers none.
+
+   So the plane is a pose, `:base`, freely placed with the gizmo. The six faces
+   survive as presets that SET that pose, and `:offset` still slides it along its
+   own normal — the one part of the old gesture that generalises unchanged.
+   Legacy specs (and old session files) with only :axis/:sign are read through
+   `preset-plane-pose`, so nothing already recorded is lost."
+  [{:keys [base axis sign offset] :as spec}]
+  (let [p (or base (preset-plane-pose (or axis 1) (or sign 1)))]
+    (if (and offset (not (zero? offset)))
+      (turtle/f p offset)
+      p)))
 
 (defn- plane-of
-  "The plane in the OBJECT frame for a {:axis :sign :offset} spec + the box dims:
-   {:point :normal}. `offset` moves the plane OUTWARD along the face normal (mm),
-   so a positive value floats it above the box surface (a feature sitting proud of
-   the face). Shared by the retrace and the named-mark gesture."
-  [{:keys [axis sign offset]}]
-  (let [half (* 0.5 (nth (retrace-dims) axis))
-        coord (* sign (+ half (or offset 0.0)))]
-    {:point (assoc [0.0 0.0 0.0] axis coord)
-     :normal (axis-unit axis)}))
-
-;; ---- multiple named ricalchi (P4a-3 follow-up, Vincenzo 2026-07-24: "più di
-;; uno, ognuno con un id") ----
-;; :ricalchi = [{:name :plane :points} …]; :ricalco-idx = the ACTIVE one clicks
-;; add to. Each ricalco is one polyline on one declared face; the retrace gesture
-;; edits the active one, and "Nuovo ricalco" starts another. Emitted as
-;; :shapes {:id-1 (poly …) :id-2 (poly …) …}.
-(def ^:private default-plane-spec {:axis 1 :sign 1 :offset 0.0})
-
-(defn- ricalchi [] (get @session :ricalchi []))
-
-(defn- active-r-path
-  "assoc-in/get-in path into the ACTIVE ricalco (…:plane / …:points)."
-  [& ks]
-  (into [:ricalchi (:ricalco-idx @session)] ks))
-
-(defn- active-plane-spec []
-  (or (get-in @session (active-r-path :plane)) default-plane-spec))
-
-(defn- next-ricalco-name []
-  (let [nums (keep (fn [{:keys [name]}]
-                     (when-let [m (re-matches #"ricalco-(\d+)" (or name ""))]
-                       (js/parseInt (second m) 10)))
-                   (ricalchi))]
-    (str "ricalco-" (inc (reduce max 0 nums)))))
-
-(defn- ensure-active-ricalco!
-  "Guarantee an active ricalco to draw into (on entering retrace): create the
-   first one if the list is empty, else point idx at a valid entry (the last)."
-  []
-  (let [rs (ricalchi)]
-    (cond
-      (empty? rs)
-      (swap! session assoc
-             :ricalchi [{:name (next-ricalco-name) :plane default-plane-spec :points []}]
-             :ricalco-idx 0)
-      (not (get-in @session [:ricalchi (:ricalco-idx @session)]))
-      (swap! session assoc :ricalco-idx (dec (count rs))))))
-
-(defn- retrace-plane [] (plane-of (active-plane-spec)))
+  "The plane in the OBJECT frame as {:point :normal} — what a ray is intersected
+   against, by the named-mark gesture."
+  [spec]
+  (let [{:keys [position heading]} (plane-pose spec)]
+    {:point position :normal heading}))
 
 (defn- face-quad
   "A translucent coloured quad ON the face declared by `spec` — the plane
    indicator, so it's obvious in 3D which face you're tracing/marking (not just
-   the panel text). Coloured by retrace-face-colors, matching the pressed face
+   the panel text). Coloured by face-colors, matching the pressed face
    button."
-  [{:keys [axis sign] :as spec}]
-  (let [coord (nth (:point (plane-of spec)) axis)
-        [a1 a2] (vec (remove #{axis} [0 1 2]))
-        dims (retrace-dims)
-        h1 (* 0.5 (nth dims a1))
-        h2 (* 0.5 (nth dims a2))
-        mk (fn [s1 s2] (-> [0.0 0.0 0.0] (assoc axis coord) (assoc a1 (* s1 h1)) (assoc a2 (* s2 h2))))
+  [{:keys [axis sign] :as spec} pose]
+  (let [{:keys [position heading up]} pose
+        ;; the quad is built in the PLANE's own frame now, not from two box axes:
+        ;; an arbitrary plane has no box axes to borrow
+        v up
+        u (m/normalize (m/cross heading v))
+        half (* 0.5 (apply max (proxy-dims)))
+        mk (fn [s1 s2] (m/v+ position (m/v+ (m/v* u (* s1 half)) (m/v* v (* s2 half)))))
         proxy-pose (get-in @session [:proxy-mesh :creation-pose])
         [w0 w1 w2 w3] (mapv #(bridge/local->world proxy-pose %)
                             [(mk -1 -1) (mk 1 -1) (mk 1 1) (mk -1 1)])]
     {:type :mesh
      :data {:vertices [w0 w1 w2 w3]
             :faces [[0 1 2] [0 2 3]]
-            :material {:color (retrace-face-colors [axis sign]) :opacity 0.3 :double-sided true}}}))
+            ;; The sheet reads against two very different backgrounds, so it is
+            ;; drawn differently for each. Over the PHOTO alone it must stay faint
+            ;; and tinted, or it hides what is being measured. Against the solid
+            ;; cage it is competing with an opaque dark surface, and at 0.3 the
+            ;; occlusion it exists to show is "appena appena" visible (Vincenzo,
+            ;; 2026-08-21) — so it goes lighter and much more opaque, and the edge
+            ;; where a ring cuts across it becomes obvious.
+            ;;
+            ;; A freely-placed plane matches no face button either way, so it gets
+            ;; a neutral colour rather than borrowing the last preset's and
+            ;; implying it is still on that face.
+            :material (if (:hide-proxy? @session)
+                        {:color (or (face-colors [axis sign]) 0xbbbbbb)
+                         :opacity 0.3 :double-sided true}
+                        {:color (or (face-colors [axis sign]) 0xf2f2f2)
+                         :opacity 0.75 :double-sided true})}}))
 
-(defn- active-face-quad [] (face-quad (active-plane-spec)))
-
-(defn- retrace-solver-pose []
+(defn- photo-solver-pose []
   (bridge/editor->solver-pose (current-camera-pose)
                               (get-in @session [:proxy-mesh :creation-pose])))
 
-(def ^:private retrace-dot-radius
-  "World-mm radius of a traced vertex marker — small (the connecting line carries
-   the shape; the dot just pins each click), and translucent, so the dots read as
-   precise marks over the photo rather than the solid balls of the first cut
-   (Vincenzo 2026-07-23: 'i pallini gialli sono enormi')."
-  0.9)
-
-(def ^:private trace-color
-  "Single bright yellow for EVERY ricalco's outline. The old active/inactive dim
-   split hid finished shapes over the busy photo (Vincenzo 2026-07-24: 'si vede solo
-   la seconda'); now which one you're editing reads from its vertex dots, so the
-   lines can all stay equally visible."
-  0xffcc33)
-
-(defn- trace-items
-  "EVERY ricalco's CLOSED yellow outline (world) as show-preview! items (on-top, so
-   it reads over the photo). The ACTIVE ricalco is full-bright, the others dimmer,
-   so which one you're editing reads. The line is closed (last→first, ≥3 points) to
-   match the emitted (poly …), a closed contour (Vincenzo 2026-07-24: 'la linea
-   chiusa gialla'). Vertex DOTS are drawn only for the ACTIVE ricalco while EDITING
-   it (:retrace mode) — a finished shape shows just its line, not the clutter of its
-   handles (Vincenzo 2026-07-24: hide the yellow dots once editing is done). Shared
-   by every mode's preview (proxy-preview-items / pnp-preview-items / retrace-
-   preview-items) so the traced bezels stay visible after leaving :retrace and
-   reproject as the camera moves between photos. Empty data is skipped."
-  []
-  (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
-        active-idx (:ricalco-idx @session)
-        editing? (= :retrace (:mode @session))
-        ;; Back-face culling: a ricalco whose declared face points AWAY from the
-        ;; current photo shouldn't bleed through it (Vincenzo 2026-07-24). The
-        ;; current photo's heading is the view direction; a face is front-facing
-        ;; when its outward normal points toward the camera (dot with heading < 0).
-        ;; Skipped in free orbit (no photo backdrop to bleed through — show all).
-        free-orbit? (and (:stage? @session) (not (:in-pose? @session)))
-        heading (:heading (current-camera-pose))
-        {:keys [ex ey ez]} (bridge/box-basis proxy-pose)
-        axis-world [ex ey ez]
-        front? (fn [{:keys [axis sign]}]
-                 (or free-orbit? (nil? heading)
-                     (neg? (m/dot (m/v* (nth axis-world axis) (double sign)) heading))))]
-    (vec (mapcat
-          (fn [i {:keys [points plane]}]
-            (let [active? (= i active-idx)]
-             ;; the ricalco you're editing is ALWAYS shown (never culled) — you
-             ;; must see what you're tracing, even on a face turned partly away
-             ;; (Vincenzo 2026-07-24: the active shape was invisible). Finished
-             ;; shapes still cull against the current photo.
-              (when (and (seq points) (or (and editing? active?) (front? plane)))
-                (let [wpts (mapv #(bridge/local->world proxy-pose %) points)
-                    ;; close the outline (last→first) so it reads as the closed poly
-                    ;; it will emit; degenerate below 3 points, so left open there.
-                      loop-pts (if (>= (count wpts) 3) (conj (vec wpts) (first wpts)) wpts)]
-                  (cond-> [{:type :lines
-                            :data (mapv (fn [a b] {:from a :to b :color trace-color}) loop-pts (rest loop-pts))
-                            :on-top true}]
-                    (and editing? active?)
-                    (conj {:type :dots :data (mapv (fn [w] {:pos w :radius retrace-dot-radius
-                                                            :color trace-color :opacity 0.75}) wpts)}))))))
-          (range) (ricalchi)))))
-
-(defn- retrace-preview-items
-  "In :retrace the box is never drawn — only the coloured active-face quad (the
-   plane indicator, so which face you're tracing is obvious) plus the trace on
-   top of it."
-  []
-  (into [(active-face-quad)] (trace-items)))
-
 (defn- toggle-proxy!
   "Show/hide the SOLID proxy in the main (gizmo) view so the photo underneath is
-   readable while registering. A gizmo-mode control ('v' / panel button); :retrace
-   never draws the proxy anyway, so it isn't offered there. The state persists, so
-   leaving :retrace returns to whatever was chosen here."
+   readable while registering. Available in :gizmo and, since the cage's glue
+   tabs became SOLID boxes, in :pnp too: the see-through wireframe never needed
+   hiding, but the tabs cover the very discs being clicked, and they sat there
+   fixed with 'v' dead (Vincenzo 2026-09-01). The state persists across modes.
+
+   Mode-aware on purpose: in :pnp there is no gizmo at all — installing one here
+   would drop handles over the picking — and the preview to rebuild is its own."
   []
   (swap! session update :hide-proxy? not)
-  ;; Hide the gizmo together with the solid proxy (install-gizmo! now no-ops while
-  ;; hidden); re-install it when the proxy comes back.
-  (if (:hide-proxy? @session)
-    (gizmo/close!)
-    (install-gizmo! (:current-idx @session)))
-  (viewport/show-preview! (proxy-preview-items))
+  (case (:mode @session)
+    ;; the DOM overlay carries the predicted NAMES too — rebuild it, or they
+    ;; linger over the naked photo the toggle just produced
+    :pnp (do (redraw-pnp-preview!) (redraw-overlay-dots!))
+    (do
+      ;; the pose controls hide together with the solid proxy — with the
+      ;; cage off screen there is nothing to align, and floating controls
+      ;; over the bare photo would be the old floating-gizmo confusion
+      ;; (Vincenzo 2026-07-24) in new clothes
+      (refresh-pose-controls-visibility!)
+      (viewport/show-preview! (proxy-preview-items))))
   (update-panel!))
-
-(defn- redraw-retrace! [] (viewport/show-preview! (retrace-preview-items)))
-
-;; loupe reuse (same magnifier as PnP — the camera is locked, so a crop under
-;; the cursor stays on its photo feature); the '-pnp-' state keys are shared
-(defn- retrace-on-pointermove [^js e]
-  (when (and @session (= :retrace (:mode @session)))
-    (update-loupe! e)))
-
-(defn- retrace-on-wheel [^js e]
-  (when (and @session (= :retrace (:mode @session)))
-    (.preventDefault e) (.stopPropagation e)
-    (let [dir (if (pos? (.-deltaY e)) -1.0 1.0)
-          z' (-> (* (loupe-zoom) (Math/pow 1.2 dir)) (max loupe-zoom-min) (min loupe-zoom-max))]
-      (swap! session assoc :pnp-loupe-zoom z')
-      (update-loupe! e))))
-
-(defn- retrace-on-pointerdown [^js e]
-  (when (and @session (= :retrace (:mode @session)) (zero? (.-button e)))
-    (when-let [[iw ih] (backdrop/image-size)]
-      (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
-        (.preventDefault e) (.stopPropagation e)
-        (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (retrace-solver-pose) px)
-              {:keys [point normal]} (retrace-plane)]
-          (if-let [hit (m/ray-plane-point ray point normal)]
-            (if (plausible-hit? hit)
-              (do (swap! session update-in (active-r-path :points) (fnil conj []) hit)
-                  (redraw-retrace!)
-                  (save-acquire-state!)
-                  (update-panel!))
-              (set-status-message! "Il click cade troppo lontano dalla faccia — usa una foto che la mostra più di fronte"))
-            (set-status-message! "Il click non incontra il piano dichiarato")))))))
-
-(defn- teardown-retrace-listeners! []
-  (let [^js canvas (viewport/get-canvas)]
-    (.removeEventListener canvas "pointerdown" retrace-on-pointerdown true)
-    (.removeEventListener canvas "pointermove" retrace-on-pointermove true)
-    (.removeEventListener canvas "pointerleave" hide-pnp-loupe! true)
-    (.removeEventListener canvas "wheel" retrace-on-wheel true))
-  (remove-pnp-loupe!))
-
-(defn- start-retrace! []
-  (when (and @session (not= :retrace (:mode @session)))
-    (gizmo/close!)
-    (swap! session assoc :mode :retrace)
-    (ensure-active-ricalco!)
-    (let [^js canvas (viewport/get-canvas)]
-      (.addEventListener canvas "pointerdown" retrace-on-pointerdown true)
-      (.addEventListener canvas "pointermove" retrace-on-pointermove true)
-      (.addEventListener canvas "pointerleave" hide-pnp-loupe! true)
-      (.addEventListener canvas "wheel" retrace-on-wheel #js {:capture true :passive false}))
-    (redraw-retrace!)
-    (update-panel!)))
-
-(defn- stop-retrace! []
-  (when (and @session (= :retrace (:mode @session)))
-    (teardown-retrace-listeners!)
-    (swap! session assoc :mode :gizmo)
-    (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
-    (update-panel!)))
-
-(defn- undo-retrace-point! []
-  (when (seq (get-in @session (active-r-path :points)))
-    (swap! session update-in (active-r-path :points) pop)
-    (redraw-retrace!)
-    (save-acquire-state!)
-    (update-panel!)))
-
-(defn- clear-retrace! []
-  (swap! session assoc-in (active-r-path :points) [])
-  (redraw-retrace!)
-  (save-acquire-state!)
-  (update-panel!))
-
-(defn- new-ricalco!
-  "Start a fresh ricalco (keeping the current face), make it active. The gesture
-   then draws into the new one; the old ones stay put and keep rendering."
-  []
-  (let [plane (active-plane-spec)]
-    (swap! session update :ricalchi (fnil conj [])
-           {:name (next-ricalco-name) :plane plane :points []})
-    (swap! session assoc :ricalco-idx (dec (count (ricalchi))))
-    (redraw-retrace!)
-    (save-acquire-state!)
-    (update-panel!)))
-
-(defn- select-ricalco! [i]
-  (swap! session assoc :ricalco-idx i)
-  (redraw-retrace!)
-  (update-panel!))
-
-(defn- delete-ricalco! [i]
-  (swap! session update :ricalchi
-         (fn [rs] (vec (concat (subvec rs 0 i) (subvec rs (inc i))))))
-  ;; keep :ricalco-idx valid (clamp; the deleted one shifts the rest down)
-  (swap! session update :ricalco-idx
-         (fn [idx] (let [n (count (ricalchi))]
-                     (cond (zero? n) nil
-                           (>= idx n) (dec n)
-                           (> i idx) idx
-                           :else (max 0 (dec idx))))))
-  (redraw-retrace!)
-  (save-acquire-state!)
-  (update-panel!))
-
-(defn- rename-ricalco! [i new-name]
-  (swap! session assoc-in [:ricalchi i :name] new-name)
-  (save-acquire-state!))
 
 ;; ============================================================
 ;; Named marks ('k'): the acquisizione-parametrica MARK primitive (P4a-3) — a
@@ -2740,12 +7171,11 @@
     (mapv (fn [{:keys [position]}] (bridge/local->world pose position)) (marks))))
 
 (defn- mark-preview-items
-  "Mark-mode preview: the :mark-plane face quad, the ricalco trace (context) and a
-   magenta dot per mark. The solid proxy is hidden (like :retrace) so the photo
-   under it stays readable."
+  "Mark-mode preview: the :mark-plane face quad and a magenta dot per mark. The
+   solid proxy is hidden so the photo under it stays readable."
   []
-  (conj (into [(face-quad (:mark-plane @session))] (trace-items))
-        (mark-dots-item)))
+  [(let [sp (:mark-plane @session)] (face-quad sp (plane-pose sp)))
+   (mark-dots-item)])
 
 (defn- redraw-marks! []
   (viewport/show-preview! (mark-preview-items))
@@ -2772,7 +7202,7 @@
     (when-let [[iw ih] (backdrop/image-size)]
       (when-let [px (backdrop/pixel-under-pointer e (viewport/get-camera) (viewport/get-canvas))]
         (.preventDefault e) (.stopPropagation e)
-        (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (retrace-solver-pose) px)
+        (let [ray (pcamera/pixel-ray (session-intrinsics iw ih) (photo-solver-pose) px)
               {:keys [point normal]} (plane-of (:mark-plane @session))]
           (if-let [hit (m/ray-plane-point ray point normal)]
             (if (plausible-hit? hit)
@@ -2781,8 +7211,8 @@
                   (redraw-marks!)
                   (save-acquire-state!)
                   (update-panel!))
-              (set-status-message! "Il click cade troppo lontano dalla faccia — usa una foto che la mostra più di fronte"))
-            (set-status-message! "Il click non incontra il piano dichiarato")))))))
+              (set-status-message! "That click lands too far from the plane — use a photo that shows it more face-on"))
+            (set-status-message! "That click does not meet the declared plane")))))))
 
 (defn- teardown-mark-listeners! []
   (let [^js canvas (viewport/get-canvas)]
@@ -2796,6 +7226,7 @@
   (when (and @session (not= :mark (:mode @session)))
     (gizmo/close!)
     (swap! session assoc :mode :mark)
+    (refresh-pose-controls-visibility!)
     (let [^js canvas (viewport/get-canvas)]
       (.addEventListener canvas "pointerdown" mark-on-pointerdown true)
       (.addEventListener canvas "pointermove" mark-on-pointermove true)
@@ -2809,14 +7240,14 @@
     (teardown-mark-listeners!)
     (viewport/clear-labels!)
     (swap! session assoc :mode :gizmo)
+    (refresh-pose-controls-visibility!)
     (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
     (update-panel!)))
 
 (defn- set-mark-face!
-  "Pick the face for the NEXT mark. Unlike set-retrace-face! this clears NOTHING —
-   each mark already carries its own object-frame position + normal, so existing
-   marks (possibly on other faces) are untouched."
+  "Pick the face for the NEXT mark. This clears NOTHING — each mark already
+   carries its own object-frame position + normal, so existing marks (possibly
+   on other faces) are untouched."
   [axis sign]
   (swap! session update :mark-plane assoc :axis axis :sign sign)
   (redraw-marks!)
@@ -2873,7 +7304,7 @@
         (swap! session update-in [:acquire-results idx] merge {:manual? true})
         (viewport/set-camera-pose! locked)
         (save-acquire-state!)
-        (set-status-message! "Segno marcato — ramo bloccato su questa foto")
+        (set-status-message! "Sign marked — branch locked on this photo")
         ;; one-shot: return to the gizmo (which re-shows the preview and re-arms
         ;; the normal handles) so no marker pointer handler lingers to conflict
         ;; with s/f/p, and a rough click is enough (≥650px margin).
@@ -2888,46 +7319,24 @@
 (defn- start-marker! []
   (when (and @session (not= :marker (:mode @session)))
     (if (zero? (:current-idx @session))
-      (set-status-message! "Il segno si marca su una foto diversa dalla prima (quella fissa il proxy)")
+      (set-status-message! "The sign is marked on a photo other than the first (that one fixes the proxy)")
       (do (gizmo/close!)
           (swap! session assoc :mode :marker)
+          (refresh-pose-controls-visibility!)
           ;; re-render so the red Klein-branch corner dot appears (it's gated to
           ;; :marker mode now — proxy-preview-items only emits it here).
           (viewport/show-preview! (proxy-preview-items))
           (.addEventListener (viewport/get-canvas) "pointerdown" marker-on-pointerdown true)
-          (set-status-message! "Clicca il segno/freccia sul pezzo in questa foto")
+          (set-status-message! "Click the sign/arrow on the part in this photo")
           (update-panel!)))))
 
 (defn- stop-marker! []
   (when (and @session (= :marker (:mode @session)))
     (.removeEventListener (viewport/get-canvas) "pointerdown" marker-on-pointerdown true)
     (swap! session assoc :mode :gizmo)
+    (refresh-pose-controls-visibility!)
     (viewport/show-preview! (proxy-preview-items))
-    (install-gizmo! (:current-idx @session))
     (update-panel!)))
-
-(defn- set-retrace-face!
-  "Pick the ACTIVE ricalco's declared face. A ricalco belongs to ONE plane, so
-   switching its face clears ITS points (they'd be meaningless there); the offset
-   carries over. Other ricalchi are untouched."
-  [axis sign]
-  (let [had (seq (get-in @session (active-r-path :points)))]
-    (swap! session update-in (active-r-path)
-           (fn [rt] (assoc rt :plane (assoc (:plane rt) :axis axis :sign sign) :points [])))
-    (redraw-retrace!)
-    (save-acquire-state!)
-    (when had (set-status-message! "Piano cambiato — ricalco azzerato"))
-    (update-panel!)))
-
-(defn- on-retrace-offset-change!
-  "Live offset of the ACTIVE ricalco's plane along its normal (mm). Does NOT clear
-   already-placed points (they keep their 3D positions); it retargets future
-   clicks and moves the drawn face rectangle, so it's a set-first control."
-  [offset]
-  (swap! session assoc-in (active-r-path :plane :offset) offset)
-  (redraw-retrace!))
-
-(defn- retrace-offset-range [_] [-15 15 0.5])
 
 (declare fmt-vec)
 
@@ -2936,46 +7345,6 @@
   [pose [x y z]]
   (let [{:keys [ex ey ez]} (bridge/box-basis pose)]
     (m/normalize (m/v+ (m/v* ex x) (m/v+ (m/v* ey y) (m/v* ez z))))))
-
-(defn- ricalco-shape+mark
-  "One ricalco → \":id {:shape (poly …) :mark {:position :heading :up}}\", or nil
-   below 3 points. Per Vincenzo's design (2026-07-24): the ricalco is emitted with
-   an implicit mark so it carries BOTH the 2D outline and its face frame, and
-   `(let [q (:id (:shapes A))] (turtle (:mark q) (extrude (:shape q) (f d))))`
-   extrudes it ON the face, PERPENDICULAR — instead of a bare 2D poly that follows
-   the current turtle. The poly is re-expressed in an in-plane frame centred on the
-   ricalco's centroid: v = an in-plane box axis, u = normal × v, so it matches
-   Ridley's shape placement (shape-x → -right, shape-y → up, extrude → heading)
-   with the mark's heading = OUTWARD face normal and up = v; the extrusion then
-   lands un-mirrored and perpendicular. The mark is lifted through `pose` (the
-   emitted proxy's anchor pose), so shape and proxy stay coincident."
-  [{:keys [name plane points]} pose uniq]
-  (when (>= (count points) 3)
-    (let [{:keys [axis sign]} plane
-          a2 (last (remove #{axis} [0 1 2]))
-          normal-obj (m/v* (axis-unit axis) (double sign))
-          v-obj (axis-unit a2)
-          u-obj (m/cross normal-obj v-obj)
-          n (count points)
-          centroid-obj (mapv #(/ % n) (reduce m/v+ [0.0 0.0 0.0] points))
-          f3 (fn [x] (.toFixed x 3))
-          coords (mapcat (fn [p] (let [d (m/v- p centroid-obj)]
-                                   [(f3 (m/dot d u-obj)) (f3 (m/dot d v-obj))]))
-                         points)]
-      (str ":" (uniq name)
-           " {:shape (poly " (str/join " " coords) ")"
-           " :mark {:position " (fmt-vec (bridge/local->world pose centroid-obj))
-           " :heading " (fmt-vec (obj-dir->world pose normal-obj))
-           " :up " (fmt-vec (obj-dir->world pose v-obj)) "}}"))))
-
-(defn- shapes-entries
-  "\":id {:shape (poly …) :mark {…}}\" strings for every ricalco with ≥3 points,
-   names keywordized and uniquified (a map can't hold duplicate keys)."
-  [pose]
-  (let [seen (atom #{})
-        uniq (fn [nm] (loop [n (if (seq nm) nm "ricalco")]
-                        (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
-    (vec (keep #(ricalco-shape+mark % pose uniq) (ricalchi)))))
 
 ;; ============================================================
 ;; Panel (numbered filmstrip + focal-length field + Chiudi — no badges/
@@ -2993,7 +7362,25 @@
    untouched — the size-then-pose split from Vincenzo's 2026-07-21 feedback:
    get the apparent scale right first, on photo 0, before touching the gizmo."
   [focal-mm]
+  ;; a lens change makes the stored mounting observations stale exactly as the
+  ;; refinement does — slot geometry moves with the intrinsics. Lived before
+  ;; it was written (battiscopa3, notte del 29/8): obs persisted at the
+  ;; default 48 kept accusing the 44-manual readings of being the GEMELLO.
+  (when (not= focal-mm (:focal-mm @session))
+    (swap! session dissoc :cage-mounting-obs))
   (swap! session assoc :focal-mm focal-mm :focal-source :manual)
+  ;; a manual lens is a human DECLARATION and must survive a reload like the
+  ;; picks do — it didn't (found 3/9: Vincenzo's 28 lived only in memory, the
+  ;; page reloaded at the default 48, and R clamped its way to 40.8 from
+  ;; there). Debounced: the slider fires per-tick while dragging, and one
+  ;; write after the hand settles is the honest amount of disk
+  (when-let [t (:focal-save-timer @session)] (js/clearTimeout t))
+  (swap! session assoc :focal-save-timer
+         (js/setTimeout (fn []
+                          (when @session
+                            (swap! session dissoc :focal-save-timer)
+                            (save-acquire-state!)))
+                        400))
   (backdrop/set-focal! focal-mm viewport/set-camera-fov!))
 
 (defn- build-panel! []
@@ -3004,10 +7391,11 @@
         stage-btn (.createElement js/document "button")
         frustum-btn (.createElement js/document "button")
         pnp-box (.createElement js/document "div")
-        retrace-box (.createElement js/document "div")
+        actions-box (.createElement js/document "div")
         mark-box (.createElement js/document "div")
+        live-box (.createElement js/document "div")
         message (.createElement js/document "div")
-        {:keys [row slider]} (ui/create-slider-row {:label "Focale (mm)"
+        {:keys [row slider]} (ui/create-slider-row {:label "Focal (mm)"
                                                     :value (:focal-mm @session)
                                                     :range-fn focal-range
                                                     :on-input on-focal-change!})
@@ -3015,10 +7403,8 @@
         ok-btn (.createElement js/document "button")
         close-btn (.createElement js/document "button")]
     (set! (.-className header) "pilot-header")
-    (set! (.-textContent header) "edit-acquire — gate ingegneristico")
+    (set! (.-textContent header) "edit-acquire — engineering gate")
     (.appendChild panel header)
-    (set! (.-textContent hint)
-          "1) la Focale è letta da EXIF — ritoccala con lo slider (foto 1) solo se il box è della taglia sbagliata, SENZA spostarlo — 2) poi trascina per posizione/rotazione — 3) 's' per agganciare il box agli spigoli reali della foto — 4) con almeno 2 foto agganciate, 'f' per il fit congiunto sulle altre. 'v' nasconde/mostra il proxy per leggere la foto sotto.")
     (.appendChild panel hint)
     (.appendChild panel row)
     (.appendChild panel filmstrip)
@@ -3037,22 +7423,24 @@
     (.appendChild panel frustum-btn)
     (set! (.-className pnp-box) "eaq-pnp-box")
     (.appendChild panel pnp-box)
-    (set! (.-className retrace-box) "eaq-retrace-box")
-    (.appendChild panel retrace-box)
+    (set! (.-className actions-box) "eaq-actions-box")
+    (.appendChild panel actions-box)
     (set! (.-className mark-box) "eaq-mark-box")
     (.appendChild panel mark-box)
+    (set! (.-className live-box) "eaq-live-box")
+    (.appendChild panel live-box)
     (set! (.-className message) "ems-message")
     (.appendChild panel message)
     ;; Conferma emits (acquire "dir" {…}) over the marker; Chiudi discards
     ;; (strip-head → (acquire …) on the marker path, plain teardown otherwise).
     (set! (.-className buttons) "pilot-buttons")
     (set! (.-type ok-btn) "button")
-    (set! (.-textContent ok-btn) "Conferma (OK)")
+    (set! (.-textContent ok-btn) "Confirm (OK)")
     (.add (.-classList ok-btn) "pilot-btn")
     (.add (.-classList ok-btn) "pilot-btn-ok")
     (.addEventListener ok-btn "click" (fn [_] (confirm!)))
     (set! (.-type close-btn) "button")
-    (set! (.-textContent close-btn) "Chiudi")
+    (set! (.-textContent close-btn) "Close")
     (.add (.-classList close-btn) "pilot-btn")
     (.add (.-classList close-btn) "pilot-btn-cancel")
     (.addEventListener close-btn "click" (fn [_] (discard!)))
@@ -3060,7 +7448,9 @@
     (.appendChild buttons close-btn)
     (.appendChild panel buttons)
     (swap! session assoc :panel-el panel :filmstrip-el filmstrip :focal-slider-el slider
-           :message-el message :pnp-el pnp-box :retrace-el retrace-box :mark-el mark-box
+           :hint-el hint
+           :message-el message :pnp-el pnp-box :actions-el actions-box :mark-el mark-box
+           :live-el live-box
            :stage-btn-el stage-btn :frustum-btn-el frustum-btn)
     (modal/mount-panel! panel)
     (update-panel!)))
@@ -3077,9 +7467,9 @@
         actions (.createElement js/document "div")]
     (set! (.-className info) "eaq-pnp-info")
     (set! (.-textContent info)
-          (str "Batch (senza identità): clicca dischetti QUALSIASI ben sparsi "
-               "attorno al piatto, poi 'Assegna'. Cliccati " c "/" min-plate-picks
-               (when (< c min-plate-picks) (str " (ne servono ≥" min-plate-picks ")"))))
+          (str "Batch (no identities): click ANY discs, well spread "
+               "around the plate, then 'Assign'. Clicked " c "/" min-plate-picks
+               (when (< c min-plate-picks) (str " (needs ≥" min-plate-picks ")"))))
     (.appendChild box info)
     (set! (.-className actions) "eaq-pnp-actions")
     (let [assign (.createElement js/document "button")
@@ -3088,23 +7478,29 @@
           armedb (.createElement js/document "button")
           exit (.createElement js/document "button")]
       (set! (.-type assign) "button")
-      (set! (.-textContent assign) "Assegna (r)")
+      (set! (.-textContent assign) "Assign (r)")
       (set! (.-disabled assign) (< c min-plate-picks))
       (.addEventListener assign "click" (fn [_] (assign-batch!)))
       (set! (.-type undo) "button")
-      (set! (.-textContent undo) "Annulla ultimo")
+      (set! (.-textContent undo) "Undo last")
       (set! (.-disabled undo) (zero? c))
       (.addEventListener undo "click" (fn [_] (undo-batch-click!)))
       (set! (.-type clr) "button")
-      (set! (.-textContent clr) "Azzera")
+      (set! (.-textContent clr) "Reset")
       (.addEventListener clr "click" (fn [_] (clear-pnp-picks!)))
       (set! (.-type armedb) "button")
-      (set! (.-textContent armedb) "Modalità armata (b)")
+      (set! (.-textContent armedb) "Armed mode (b)")
       (.addEventListener armedb "click" (fn [_] (toggle-batch-mode!)))
       (set! (.-type exit) "button")
-      (set! (.-textContent exit) "Esci (p)")
+      (set! (.-textContent exit) "Exit (p)")
       (.addEventListener exit "click" (fn [_] (stop-pnp!)))
-      (doseq [b [assign undo clr armedb exit]] (.appendChild actions b)))
+      (doseq [b [assign undo clr armedb exit]] (.appendChild actions b))
+      (let [hint (.createElement js/document "span")]
+        (set! (.-textContent hint) "eraser: right-click on a click removes it")
+        (set! (.-color (.-style hint)) "#999")
+        (set! (.-fontSize (.-style hint)) "11px")
+        (set! (.-marginLeft (.-style hint)) "6px")
+        (.appendChild actions hint)))
     (.appendChild box actions)))
 
 (defn- render-pnp-panel!
@@ -3122,31 +7518,69 @@
       (when (= :gizmo (:mode @session))
         (let [b (.createElement js/document "button")]
           (set! (.-type b) "button")
-          (set! (.-textContent b) "Registra per punti (p)")
+          (set! (.-textContent b) "Register by points (p)")
           (.addEventListener b "click" (fn [_] (start-pnp!)))
           (.appendChild box b)
           ;; a registration plate can register with ZERO clicks (fetta C): the
-          ;; detector finds the crown and fit-crown identifies it. Offer it here
-          ;; next to the manual entry, plate-only.
-          (when (plate-proxy?)
+          ;; detector finds the crown and fit-crown identifies it. A cage takes
+          ;; the same button and the same key, seeded by four clicks on one ring —
+          ;; the crown's own symmetry is what no photograph can resolve.
+          (when (or (plate-proxy?) (cage-proxy?))
             (let [a (.createElement js/document "button")]
               (set! (.-type a) "button")
-              (set! (.-textContent a) "Auto — rileva e registra (a)")
+              (set! (.-textContent a)
+                    (if (cage-proxy?)
+                      "Auto — read the cage (a)"
+                      "Auto — detect and register (a)"))
+              (when (cage-proxy?)
+                (set! (.-title a)
+                      (str "Click 4 discs on ONE ring, then press here. A crown of "
+                           "identical discs reads the same when rotated, so the names "
+                           "you gave can be offset without anything noticing: "
+                           "what tells is the rest of the cage, compared with the discs "
+                           "the detector finds over the whole photo.")))
               (.addEventListener a "click" (fn [_] (on-auto-register!)))
               (.appendChild box a))
             ;; offered only once there is something to refine: with one photo the
-            ;; focal and the distance are the same unknown
-            (when (>= (count (filter #(>= (count (second %)) 4) (:pnp-picks @session))) 2)
+            ;; focal and the distance are the same unknown. Plate AND cage: a cage
+            ;; is plate-proxy? too (named marks), and its 'a' files the marks it
+            ;; matched as :pnp-picks, so the same count says the same thing there.
+            (when (and (plate-proxy?)
+                       (>= (count (filter #(>= (count (second %)) 4) (:pnp-picks @session))) 2))
               (let [r (.createElement js/document "button")]
                 (set! (.-type r) "button")
-                (set! (.-textContent r) "Rifinisci insieme (R)")
+                (set! (.-textContent r) "Refine together (R)")
                 (set! (.-title r)
-                      (str "Una focale sola per la sessione e tutte le pose raffinate "
-                           "insieme sui click che hai già fatto. Una foto da sola non "
-                           "distingue una focale sbagliata da una distanza sbagliata; "
-                           "tutte insieme sì."))
+                      (str "One focal for the session and every pose refined "
+                           "together on the clicks you already made. One photo alone cannot "
+                           "tell a wrong focal from a wrong distance; "
+                           "all of them together can."))
                 (.addEventListener r "click" (fn [_] (on-refine-session!)))
-                (.appendChild box r))))))
+                (.appendChild box r)))
+            ;; Calibration reads the poses, so it is only worth offering once
+            ;; there are enough of them to be worth reading — three is the
+            ;; minimum plate-calib will accept, and three is already thin.
+            (when (and (plate-proxy?) (not (cage-proxy?))
+                       (>= (count (filter #(>= (count (second %)) 6) (:pnp-picks @session))) 3))
+              (let [c (.createElement js/document "button")]
+                (set! (.-type c) "button")
+                (set! (.-textContent c)
+                      (if (:plate-calib @session)
+                        "Recalibrate the plate (C)"
+                        "Calibrate the plate (C)"))
+                (set! (.-title c)
+                      (str "Measures where this plate's discs REALLY are, "
+                           "instead of trusting the model. A printed plate warps: "
+                           "on the measured ⌀300 three marks sat more than a millimetre off "
+                           "the plane. Do it after the refinement (R), because it reads the poses. "
+                           "The result stays tied to the plate, not the session: it holds "
+                           "for the next ones too."
+                           (when-let [pc (:plate-calib @session)]
+                             (str "\n\nAlready calibrated: largest deviation "
+                                  (modal/fmt-number (:worst-mm pc)) " mm on "
+                                  (:views pc) " photos."))))
+                (.addEventListener c "click" (fn [_] (on-calibrate-plate!)))
+                (.appendChild box c))))))
 
       (batch-mode?)
       (render-pnp-batch-panel! box)
@@ -3173,25 +7607,108 @@
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
               (cond
-                (seq outliers)
-                (str "✓ registrata" (when rms (str " (rms " (.toFixed rms 1) "px)")) " — "
-                     (if (> (count outliers) 1) "i punti " "il punto ") (corner-labels outliers)
-                     (if (> (count outliers) 1) " non si allineano" " non si allinea")
-                     " (rosso): riclicca più preciso, o 'o' per scartarl"
-                     (if (> (count outliers) 1) "i" "o") " (nascosto o non allineabile), poi 'r'"
-                     " — oppure vai avanti così.")
+                ;; ORDER MATTERS, and it was the wrong way round until 2026-08-30.
+                ;; Above the bar there is no ✓ and there are no culprits: the
+                ;; cleaner dropped the worst two of a fit that is bad all over,
+                ;; and pointing at them in red sends the user to re-click points
+                ;; that are fine (Vincenzo, battiscopa3 grab-01 — his clicks sat
+                ;; within a pixel of a detected disc and got the blame anyway).
                 (and rms (> rms pnp/accept-rms-px))
-                (str "⚠ rms alto (" (.toFixed rms 0) "px) senza un colpevole singolo — "
-                     "clicca più preciso o controlla la faccia dichiarata")
+                (str "⚠ high rms (" (.toFixed rms 1) "px)"
+                     (when (seq outliers)
+                       (str ", and removing " (corner-labels outliers) " does not bring it down"))
+                     " — it is not a single point: check the declared FACE of the"
+                     " rings and the focal, then 'r'")
+                (seq outliers)
+                (str "✓ registered" (when rms (str " (rms " (.toFixed rms 1) "px)")) " — "
+                     (if (> (count outliers) 1) "points " "point ") (corner-labels outliers)
+                     (if (> (count outliers) 1) " do not align" " does not align")
+                     " (red): click again more precisely, remove "
+                     (if (> (count outliers) 1) "them" "it")
+                     " with the eraser (right-click), or 'o' to skip "
+                     (if (> (count outliers) 1) "them" "it") " (hidden or not alignable), then 'r'"
+                     " — or carry on as is.")
                 solved?
-                (str "✓ fit pulito, rms " (.toFixed rms 1) "px — 'p'/Esci, o ']' per un'altra foto")
+                (str "✓ clean fit, rms " (.toFixed rms 1) "px — 'p'/Exit, or ']' for another photo")
                 (nil? armed)
-                (str "Tutti i " (pnp-noun) " visibili piazzati o nascosti — premi 'r'")
+                (str "All the " (pnp-noun) " visible ones placed or hidden — press 'r'")
                 :else
-                (str (str/capitalize (pnp-noun)) " #" (lbl armed) " evidenziato — clicca dov'è, "
-                     "o 'o' se è nascosto dal pezzo. Piazzati " n "/" target
-                     (when (< n (min-pnp-picks)) (str " (ne servono ≥" (min-pnp-picks) ")")))))
+                (str (str/capitalize (pnp-noun)) " #" (lbl armed) " highlighted — click where it is, "
+                     "or 'o' if the part hides it. Placed " n "/" target
+                     (when (< n (min-pnp-picks)) (str " (needs ≥" (min-pnp-picks) ")")))))
         (.appendChild box info)
+        ;; PER-RING FACE CHOICE (Vincenzo, 2026-08-30). On a cage the panel can
+        ;; only guess which face of each ring you are looking at — it asks the
+        ;; POSE, which is what the picking is trying to establish — and offering
+        ;; the wrong one makes the user name discs after a face that is not in
+        ;; the photograph: «avevo messo p perché mi presentava solo quelli»,
+        ;; three evenings of camera-behind refusals downstream. He proposed the
+        ;; cure and it is the right one: three toggles, one per ring, for the
+        ;; judgement he actually makes by holding the cage up to the photo.
+        ;;
+        ;; Since 2026-08-31 the toggles are lit BY THE POSE: every gizmo commit
+        ;; re-reads the faces from the aligned cage (derive-faces-from-pose!).
+        ;; They stay pressable as the override — «mi fido dei tuoi occhi, non
+        ;; della posa» — and a ring too edge-on to read gets a note here
+        ;; instead of a lit button.
+        (when (cage-proxy?)
+          (let [row (.createElement js/document "div")
+                choice (get-in @session [:cage-face-choice (:current-idx @session)])]
+            (set! (.-className row) "eaq-pnp-actions")
+            (let [lab (.createElement js/document "span")]
+              (set! (.-textContent lab) "face you see:")
+              (set! (.-color (.-style lab)) "#999")
+              (set! (.-fontSize (.-style lab)) "11px")
+              (.appendChild row lab))
+            (doseq [axis [:x :y :z]]
+              (doseq [[sign txt] [[1 "p"] [-1 "m"]]]
+                (let [b (.createElement js/document "button")
+                      on? (= sign (get choice axis))]
+                  (set! (.-type b) "button")
+                  (set! (.-textContent b) (str (str/upper-case (name axis)) txt))
+                  (set! (.-color (.-style b)) (if on? "#111" "#ddd"))
+                  (set! (.-background (.-style b)) (if on? "#7fd17f" "#333"))
+                  (set! (.-border (.-style b)) (if on? "2px solid #fff" "1px solid #555"))
+                  (set! (.-title b)
+                        (str "Offer only face " txt " of ring "
+                             (str/upper-case (name axis))
+                             " — from the large disc of the double dot towards the "
+                             "small dot: counter-clockwise = p, clockwise = m. "
+                             "Press again to go back to the automatic choice."))
+                  (.addEventListener b "click" (fn [_] (toggle-cage-face! axis sign)))
+                  (.appendChild row b))))
+            (.appendChild box row)
+            ;; the profile guard, said out loud: a ring the pose sees nearly
+            ;; edge-on declares nothing (bridge/cage-face-margin-deg), and the
+            ;; panel owes the user the reason WITH the degrees — on grab-05 a
+            ;; face decided by 13–17° of margin held half a day of wrong
+            ;; diagnoses (2026-08-31)
+            (let [faces (bridge/cage-faces-from-pose (:proxy-mesh @session)
+                                                     (current-camera-pose))
+                  edge-on (sort-by (comp str first)
+                                   (keep (fn [[a {:keys [sign geo-sign elev-deg]}]]
+                                           (when (and (nil? sign) (not (contains? choice a)))
+                                             [a elev-deg geo-sign]))
+                                         faces))]
+              (when (seq edge-on)
+                (let [note (.createElement js/document "div")]
+                  ;; the guard withholds the DECLARATION, not the reading: say
+                  ;; which button the pose would press and leave the pressing to
+                  ;; him. Two dead buttons and no explanation is what he got
+                  ;; first (2026-09-01, photo 4: «non viene aggiornato quello di
+                  ;; Ym/Yp, restano deselezionati entrambi»).
+                  (set! (.-textContent note)
+                        (str/join " · "
+                                  (for [[a e s] edge-on
+                                        :let [nm (str/upper-case (name a))
+                                              face (str nm (if (pos? s) "p" "m"))]]
+                                    (str nm " is nearly edge-on (" (.toFixed e 0)
+                                         "°): too little for me to declare it — the pose"
+                                         " would say " face ", but look at the photo and press it"
+                                         " yourself (or the other one)"))))
+                  (set! (.-color (.-style note)) "#c9a94a")
+                  (set! (.-fontSize (.-style note)) "11px")
+                  (.appendChild box note))))))
         (set! (.-className corners) "eaq-pnp-corners")
         (doseq [i shown]
           (let [b (.createElement js/document "button")
@@ -3214,66 +7731,97 @@
         (set! (.-className actions) "eaq-pnp-actions")
         (let [solve (.createElement js/document "button")
               clr (.createElement js/document "button")
-              batchb (when (plate-proxy?) (.createElement js/document "button"))
+              names (.createElement js/document "button")
+              ;; not on a cage: since the faces are READ from the pose
+              ;; (31/8) with the three per-ring toggles as override, offering
+              ;; the turned-away faces wholesale only re-opens the door the
+              ;; face machinery closed (direttiva 5/9: via il lavorio)
+              faces (when-not (cage-proxy?) (.createElement js/document "button"))
+              batchb (when (and (plate-proxy?) (not (cage-proxy?)))
+                       (.createElement js/document "button"))
               exit (.createElement js/document "button")]
           (set! (.-type solve) "button")
-          (set! (.-textContent solve) "Risolvi PnP (r)")
+          (set! (.-textContent solve) "Solve PnP (r)")
           (set! (.-disabled solve) (< n (min-pnp-picks)))
           (.addEventListener solve "click" (fn [_] (on-solve-pnp!)))
           (set! (.-type clr) "button")
-          (set! (.-textContent clr) "Azzera")
+          (set! (.-textContent clr) "Reset")
           (.addEventListener clr "click" (fn [_] (clear-pnp-picks!)))
+          (set! (.-type names) "button")
+          (set! (.-textContent names) (if (:show-names? @session) "Names: on (n)" "Names (n)"))
+          (.addEventListener names "click" (fn [_] (toggle-mark-names!)))
+          (when faces
+            (set! (.-type faces) "button")
+            (set! (.-textContent faces) (if (:show-all-marks? @session)
+                                          "Both faces (F)" "Facing marks (F)"))
+            (set! (.-title faces)
+                  "Offer every mark, including the ones the current pose believes are turned away")
+            (.addEventListener faces "click" (fn [_] (toggle-all-marks!))))
           ;; a plate can register identity-free (fetta B) — offer the toggle
           (when batchb
             (set! (.-type batchb) "button")
-            (set! (.-textContent batchb) "Senza identità (b)")
+            (set! (.-textContent batchb) "No identities (b)")
             (.addEventListener batchb "click" (fn [_] (toggle-batch-mode!))))
           (set! (.-type exit) "button")
-          (set! (.-textContent exit) "Esci (p)")
+          (set! (.-textContent exit) "Exit (p)")
           (.addEventListener exit "click" (fn [_] (stop-pnp!)))
           (.appendChild actions solve)
           (.appendChild actions clr)
+          (.appendChild actions names)
+          (when faces (.appendChild actions faces))
           (when batchb (.appendChild actions batchb))
-          (.appendChild actions exit))
+          (.appendChild actions exit)
+          ;; the eraser's one line of discoverability — a gesture with no button
+          ;; is a gesture nobody finds (the missing eraser cost a whole poisoned
+          ;; session, 2026-08-28)
+          (let [hint (.createElement js/document "span")]
+            (set! (.-textContent hint) "eraser: right-click on a dot removes it")
+            (set! (.-color (.-style hint)) "#999")
+            (set! (.-fontSize (.-style hint)) "11px")
+            (set! (.-marginLeft (.-style hint)) "6px")
+            (.appendChild actions hint)))
         (.appendChild box actions)))))
 
-(defn- render-retrace-panel!
-  "Retrace controls in :retrace-el, rebuilt each update. Entry button only in
-   :gizmo mode (so a mode is never started on top of another — pnp/retrace are
-   both reached from the gizmo); in :retrace mode the six face buttons (current
-   highlighted), an offset slider, a point count + hint, and Annulla/Azzera/Esci."
+(defn- render-actions-panel!
+  "The mode-entry actions in :actions-el, rebuilt each update: in :gizmo mode
+   the proxy toggle plus the entry buttons of the marking gestures (so a mode
+   is never started on top of another — every gesture is reached from the
+   gizmo); in :marker mode that gesture's own hint and exit."
   []
-  (when-let [box (:retrace-el @session)]
+  (when-let [box (:actions-el @session)]
     (set! (.-innerHTML box) "")
     (cond
       (= :gizmo (:mode @session))
       (let [actions (.createElement js/document "div")
-            pv (.createElement js/document "button")
-            b (.createElement js/document "button")]
+            pv (.createElement js/document "button")]
         (set! (.-className actions) "eaq-pnp-actions")
         (set! (.-type pv) "button")
-        (set! (.-textContent pv) (if (:hide-proxy? @session) "Mostra proxy (v)" "Nascondi proxy (v)"))
+        (set! (.-textContent pv) (if (:hide-proxy? @session) "Show proxy (v)" "Hide proxy (v)"))
         (.addEventListener pv "click" (fn [_] (toggle-proxy!)))
-        (set! (.-type b) "button")
-        (set! (.-textContent b) "Ricalca su un piano (d)")
-        (.addEventListener b "click" (fn [_] (start-retrace!)))
         (.appendChild actions pv)
-        (.appendChild actions b)
         ;; P4a-3: place named points on a declared face (distinct from the
         ;; blindato 'm' below — that pins the branch, this names object points).
-        (let [mkb (.createElement js/document "button")]
-          (set! (.-type mkb) "button")
-          (set! (.-textContent mkb) "Segna punti (k)")
-          (.addEventListener mkb "click" (fn [_] (start-mark!)))
-          (.appendChild actions mkb))
+        ;; NOT on a cage (Vincenzo 5/9: «non si capisce che box è»): the six
+        ;; planes are the PROXY's bounding-box faces — on the old box proxy
+        ;; they were the object, on a cage they are planes tangent to the
+        ;; rings, nothing the object inside lives on. The cage's own
+        ;; object-marking tool is still to be designed.
+        (when-not (cage-proxy?)
+          (let [mkb (.createElement js/document "button")]
+            (set! (.-type mkb) "button")
+            (set! (.-textContent mkb) "Mark points (k)")
+            (.addEventListener mkb "click" (fn [_] (start-mark!)))
+            (.appendChild actions mkb)))
         ;; Blindato: mark the physical sign to pin this photo's branch. Camera
-        ;; photos only (photo 0's branch is set by the proxy alignment). A green
-        ;; tick reminds the user this photo already has its mark.
-        (when (pos? (:current-idx @session))
+        ;; photos only (photo 0's branch is set by the proxy alignment). NOT
+        ;; on a cage (Vincenzo 5/9: anacronistico lì): the Klein-branch pin
+        ;; is the BOX's twin arbiter — the cage has its own (mounting vote,
+        ;; chiral tabs), and a pen mark on the part has no box corner to pin.
+        (when (and (pos? (:current-idx @session)) (not (cage-proxy?)))
           (let [mk (.createElement js/document "button")
                 marked? (get-in @session [:marker-picks (:current-idx @session)])]
             (set! (.-type mk) "button")
-            (set! (.-textContent mk) (if marked? "Segno marcato ✓ — rimarca (m)" "Marca il segno (m)"))
+            (set! (.-textContent mk) (if marked? "Sign marked ✓ — mark again (m)" "Mark the sign (m)"))
             (.addEventListener mk "click" (fn [_] (start-marker!)))
             (.appendChild actions mk)))
         (.appendChild box actions))
@@ -3284,99 +7832,13 @@
             exit (.createElement js/document "button")]
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
-              "Clicca sul segno/freccia disegnato sul pezzo, in questa foto. Serve a dire da che lato sta il pezzo (blocca il ramo).")
+              "Click the sign/arrow drawn on the part, in this photo. It says which side the part is on (locks the branch).")
         (.appendChild box info)
         (set! (.-className actions) "eaq-pnp-actions")
         (set! (.-type exit) "button")
-        (set! (.-textContent exit) "Esci (Esc)")
+        (set! (.-textContent exit) "Exit (Esc)")
         (.addEventListener exit "click" (fn [_] (stop-marker!)))
         (.appendChild actions exit)
-        (.appendChild box actions))
-
-      (= :retrace (:mode @session))
-      (let [{:keys [axis sign offset]} (active-plane-spec)
-            rs (ricalchi)
-            active-idx (:ricalco-idx @session)
-            npts (count (get-in @session (active-r-path :points)))
-            info (.createElement js/document "div")
-            list-el (.createElement js/document "div")
-            faces (.createElement js/document "div")
-            {:keys [row]} (ui/create-slider-row {:label "Offset piano (mm)"
-                                                 :value offset
-                                                 :range-fn retrace-offset-range
-                                                 :on-input on-retrace-offset-change!})
-            actions (.createElement js/document "div")]
-        (set! (.-className info) "eaq-pnp-info")
-        (set! (.-textContent info)
-              (str "Ricalco attivo: " (or (:name (get rs active-idx)) "—") " — piano "
-                   (retrace-face-labels [axis sign]) ", clicca il contorno sulla foto ("
-                   npts " punti). '[' / ']' per rivederli dalle altre viste."))
-        (.appendChild box info)
-        ;; one row per ricalco: ● active / ○ pick-active, editable id, ✕ delete
-        (set! (.-className list-el) "eaq-mark-list")
-        (doseq [[i {:keys [name]}] (map-indexed vector rs)]
-          (let [rrow (.createElement js/document "div")
-                sel (.createElement js/document "button")
-                inp (.createElement js/document "input")
-                del (.createElement js/document "button")]
-            (set! (.-className rrow) "eaq-mark-row")
-            (set! (.-type sel) "button")
-            (set! (.-textContent sel) (if (= i active-idx) "●" "○"))
-            (set! (.-title sel) "Rendi attivo")
-            (.addEventListener sel "click" (fn [_] (select-ricalco! i)))
-            (set! (.-type inp) "text")
-            (set! (.-value inp) name)
-            (set! (.. inp -style -width) "110px")
-            (.addEventListener inp "change" (fn [^js e] (rename-ricalco! i (.. e -target -value))))
-            (set! (.-type del) "button")
-            (set! (.-textContent del) "✕")
-            (.addEventListener del "click" (fn [_] (delete-ricalco! i)))
-            (.appendChild rrow sel)
-            (.appendChild rrow inp)
-            (.appendChild rrow del)
-            (.appendChild list-el rrow)))
-        (.appendChild box list-el)
-        (set! (.-className faces) "eaq-pnp-corners")
-        (doseq [[a s] retrace-face-order]
-          (let [b (.createElement js/document "button")
-                st (.-style b)
-                cur? (and (= a axis) (= s sign))]
-            (set! (.-type b) "button")
-            (set! (.-textContent b) (retrace-face-labels [a s]))
-            ;; each button carries its face colour; the active one is full-bright
-            ;; with a white ring, the others dimmed — so the panel matches the
-            ;; coloured face in 3D (Vincenzo 2026-07-25)
-            (set! (.-color st) "#111")
-            (set! (.-background st) (hex->css (retrace-face-colors [a s])))
-            (set! (.-opacity st) (if cur? "1" "0.5"))
-            (set! (.-border st) (if cur? "2px solid #fff" "1px solid #555"))
-            (.addEventListener b "click" (fn [_] (set-retrace-face! a s)))
-            (.appendChild faces b)))
-        (.appendChild box faces)
-        (.appendChild box row)
-        (set! (.-className actions) "eaq-pnp-actions")
-        (let [nw (.createElement js/document "button")
-              undo (.createElement js/document "button")
-              clr (.createElement js/document "button")
-              exit (.createElement js/document "button")]
-          (set! (.-type nw) "button")
-          (set! (.-textContent nw) "Nuovo ricalco (n)")
-          (.addEventListener nw "click" (fn [_] (new-ricalco!)))
-          (set! (.-type undo) "button")
-          (set! (.-textContent undo) "Annulla ultimo (⌫)")
-          (set! (.-disabled undo) (zero? npts))
-          (.addEventListener undo "click" (fn [_] (undo-retrace-point!)))
-          (set! (.-type clr) "button")
-          (set! (.-textContent clr) "Azzera")
-          (set! (.-disabled clr) (zero? npts))
-          (.addEventListener clr "click" (fn [_] (clear-retrace!)))
-          (set! (.-type exit) "button")
-          (set! (.-textContent exit) "Esci (d)")
-          (.addEventListener exit "click" (fn [_] (stop-retrace!)))
-          (.appendChild actions nw)
-          (.appendChild actions undo)
-          (.appendChild actions clr)
-          (.appendChild actions exit))
         (.appendChild box actions)))))
 
 (defn- render-mark-panel!
@@ -3396,19 +7858,19 @@
             actions (.createElement js/document "div")]
         (set! (.-className info) "eaq-pnp-info")
         (set! (.-textContent info)
-              (str "Faccia: " (retrace-face-labels [axis sign])
-                   " — clicca sulla foto per segnare un punto (" (count ms) " segnati). "
-                   "'[' / ']' per rivederli dalle altre viste."))
+              (str "Face: " (face-labels [axis sign])
+                   " — click on the photo to mark a point (" (count ms) " marked). "
+                   "'[' / ']' to check them from the other views."))
         (.appendChild box info)
         (set! (.-className faces) "eaq-pnp-corners")
-        (doseq [[a s] retrace-face-order]
+        (doseq [[a s] face-order]
           (let [b (.createElement js/document "button")
                 st (.-style b)
                 cur? (and (= a axis) (= s sign))]
             (set! (.-type b) "button")
-            (set! (.-textContent b) (retrace-face-labels [a s]))
+            (set! (.-textContent b) (face-labels [a s]))
             (set! (.-color st) "#111")
-            (set! (.-background st) (hex->css (retrace-face-colors [a s])))
+            (set! (.-background st) (hex->css (face-colors [a s])))
             (set! (.-opacity st) (if cur? "1" "0.5"))
             (set! (.-border st) (if cur? "2px solid #fff" "1px solid #555"))
             (.addEventListener b "click" (fn [_] (set-mark-face! a s)))
@@ -3441,31 +7903,174 @@
               clr (.createElement js/document "button")
               exit (.createElement js/document "button")]
           (set! (.-type undo) "button")
-          (set! (.-textContent undo) "Annulla ultimo (⌫)")
+          (set! (.-textContent undo) "Undo last (⌫)")
           (set! (.-disabled undo) (zero? (count ms)))
           (.addEventListener undo "click" (fn [_] (undo-mark!)))
           (set! (.-type clr) "button")
-          (set! (.-textContent clr) "Azzera")
+          (set! (.-textContent clr) "Reset")
           (set! (.-disabled clr) (zero? (count ms)))
           (.addEventListener clr "click" (fn [_] (clear-marks!)))
           (set! (.-type exit) "button")
-          (set! (.-textContent exit) "Esci (k)")
+          (set! (.-textContent exit) "Exit (k)")
           (.addEventListener exit "click" (fn [_] (stop-mark!)))
           (.appendChild actions undo)
           (.appendChild actions clr)
           (.appendChild actions exit))
         (.appendChild box actions)))))
 
+(defn- render-live-panel!
+  "The live-capture controls: a way in (Camera), a way to shoot (Grab), a device
+   picker only once there is more than one device, and a way out. Shown only for a
+   registration plate — a live frame registers against the crown, and offering the
+   button on a box proxy would be offering a gesture that cannot work.
+
+   The camera is deliberately NOT opened on entering the session: opening a camera
+   turns on a light on the user's machine, and that should follow an intention."
+  []
+  (when-let [^js box (:live-el @session)]
+    (set! (.-innerHTML box) "")
+    (when (and (plate-proxy?) (not (:stage? @session)))
+      (let [supported? (camera/supported?)
+            on? (camera/active?)
+            info (:camera-info @session)
+            devices (:camera-devices @session)
+            ^js info-el (.createElement js/document "div")
+            ^js actions (.createElement js/document "div")]
+        (set! (.-className info-el) "eaq-pnp-info")
+        (set! (.-textContent info-el)
+              (cond
+                (not supported?)
+                (str "No camera here: getUserMedia needs a secure context "
+                     "(localhost or the desktop app, not an http:// LAN address).")
+                on?
+                (str "Live: " (:label info) " · " (first (:size info)) "×" (second (:size info))
+                     (if (cage-proxy?)
+                       " · Grab keeps the frame, unregistered: pose the cage by eye, then 'a'."
+                       " · Grab keeps the frame ONLY if it registers.")
+                     (cond
+                       (live-focal)
+                       (str " Lens: " (.toFixed (live-focal) 1) "mm-equiv ("
+                            (name (or (:focal-source @session) :?)) ").")
+                       (cage-proxy?)
+                       " The lens is measured by 'R' once the grabs are registered."
+                       :else
+                       " The first frame will measure the lens — give the plate some tilt."))
+                :else
+                "A camera in the room is a source of views: open it, aim, and grab."))
+        (.appendChild box info-el)
+        ;; The picker shows whether or not a camera is open: choosing the device
+        ;; BEFORE opening is the natural order when the one you want is the phone
+        ;; you just woke up, and a menu that only appears after you have opened
+        ;; the wrong camera is a menu that arrives too late.
+        (when (and supported? (> (count devices) 1))
+          (let [^js sel (.createElement js/document "select")]
+            (doseq [{:keys [id label]} devices]
+              (let [^js o (.createElement js/document "option")]
+                (set! (.-value o) id)
+                (set! (.-textContent o) label)
+                (when (= id (:device-id info)) (set! (.-selected o) true))
+                (.appendChild sel o)))
+            (.addEventListener sel "change" (fn [^js e] (start-camera! (.. e -target -value))))
+            (.appendChild box sel)))
+        (set! (.-className actions) "eaq-pnp-actions")
+        (let [^js toggle (.createElement js/document "button")]
+          (set! (.-type toggle) "button")
+          (set! (.-textContent toggle) (if on? "Camera off" "Camera"))
+          (set! (.-disabled toggle) (not supported?))
+          (.addEventListener toggle "click"
+                             (fn [_] (if (camera/active?)
+                                       (do (stop-camera!) (update-panel!))
+                                       (start-camera! (:device-id info)))))
+          (.appendChild actions toggle))
+        (let [^js grab (.createElement js/document "button")]
+          (set! (.-type grab) "button")
+          (set! (.-textContent grab) "Grab (g)")
+          (set! (.-disabled grab) (not on?))
+          (.addEventListener grab "click" (fn [_] (on-grab!)))
+          (.appendChild actions grab))
+        ;; Dropping a bad view: two clicks, no keyboard shortcut. A cheap view makes
+        ;; bad views, so this has to exist — but it removes a file, so it must not be
+        ;; something a stray keypress or a single mis-aimed click can do.
+        (when (seq (:photos @session))
+          (let [idx (:current-idx @session)
+                armed? (= idx (:delete-armed @session))
+                ^js del (.createElement js/document "button")]
+            (set! (.-type del) "button")
+            (set! (.-textContent del) (if armed?
+                                        (str "Sure? delete view " (inc idx))
+                                        (str "Delete view " (inc idx))))
+            (when armed? (.add (.-classList del) "eaq-danger"))
+            (.addEventListener del "click"
+                               (fn [_]
+                                 (if armed?
+                                   (do (swap! session dissoc :delete-armed)
+                                       (delete-view! idx))
+                                   (do (swap! session assoc :delete-armed idx)
+                                       (update-panel!)
+                                       ;; disarm on its own: a button left saying
+                                       ;; "Sure?" is a trap for the next click
+                                       (js/setTimeout
+                                        (fn [] (when (= idx (:delete-armed @session))
+                                                 (swap! session dissoc :delete-armed)
+                                                 (update-panel!)))
+                                        4000)))))
+            (.appendChild actions del)))
+        (.appendChild box actions)))))
+
+(defn- session-hint
+  "The procedure this session actually has, in one line. Three, because they are
+   three different jobs and one text that covers all of them covers none: a BOX is
+   aligned by hand and snapped to its own edges; a PLATE of photos registers itself
+   off the crown; an EMPTY folder has no photos at all and is filled by shooting."
+  []
+  (cond
+    (and (empty? (:photos @session)) (cage-proxy?))
+    (str "Empty session: open the Camera, frame the cage with the object inside and press Grab "
+         "(or 'g'). Every frame comes in to be registered: pose the cage by eye over the photo, "
+         "then 'a'.")
+
+    (empty? (:photos @session))
+    (str "Empty session: open the Camera, frame the plate with the object on it and press Grab "
+         "(or 'g'). The first frame MEASURES the lens — give it some tilt, "
+         "a plate shot perfectly face-on cannot tell the focal. "
+         "A frame that does not register does not come in: shoot it again.")
+
+    ;; a cage is plate-proxy? too, so it must come first: the plate's line
+    ;; advertises 'C' (hidden on a cage) and a zero-click 'a' the cage has not
+    (cage-proxy?)
+    (str "Registration cage: on each photo pose the cage by eye over the photographed one "
+         "(translation sliders and rotation circles), then 'a' reads the discs and registers; "
+         "if it refuses, click 4 discs on ONE ring with 'p' and press 'a' again. "
+         "'R' refines focal and poses together. Grab (or 'g') adds a live view, "
+         "to be registered the same way. 'v' hides/shows the cage to read the photo underneath.")
+
+    (plate-proxy?)
+    (str "Registration plate: 'a' registers every photo on its own (crown detection), "
+         "'p' for those that fail, 'R' refines focal and poses together, "
+         "'C' measures the plate itself (once per plate, it holds for the next sessions too). "
+         "Grab (or 'g') adds a live view, already registered. "
+         "'v' hides/shows the proxy to read the photo underneath.")
+
+    :else
+    (str "1) the Focal is read from EXIF — adjust it with the slider (photo 1) only if the box is "
+         "the wrong size, WITHOUT moving it — 2) then drag for position/rotation — "
+         "3) 's' to snap the box to the photo's real edges — 4) with at least 2 photos "
+         "snapped, 'f' for the joint fit on the others. "
+         "'v' hides/shows the proxy to read the photo underneath.")))
+
 (defn- update-panel! []
   (let [stage? (:stage? @session)]
+    (when-let [^js hint (:hint-el @session)]
+      (set! (.-textContent hint) (session-hint)))
     ;; In the stage the Phase-1 sub-panels don't apply — blank their boxes so
     ;; no 'Registra…'/'Ricalca…' entry buttons linger over the free-orbit view.
     (if stage?
-      (doseq [k [:pnp-el :retrace-el :mark-el]]
+      (doseq [k [:pnp-el :actions-el :mark-el :live-el]]
         (when-let [^js b (k @session)] (set! (.-innerHTML b) "")))
       (do (render-pnp-panel!)
-          (render-retrace-panel!)
-          (render-mark-panel!)))
+          (render-actions-panel!)
+          (render-mark-panel!)
+          (render-live-panel!)))
     ;; Focale is a phase-0-only control (see build-panel!'s hint): the lens
     ;; doesn't change between photos, so re-tuning it later would silently
     ;; rescale a photo the user thinks is already locked in. Disabled, not
@@ -3475,25 +8080,25 @@
       (set! (.-disabled slider) (or stage? (not (zero? (:current-idx @session))))))
     (when-let [^js btn (:stage-btn-el @session)]
       (set! (.-textContent btn) (if stage?
-                                  "◀ Esci dal palcoscenico"
-                                  "▶ Palcoscenico (camera libera)"))
+                                  "◀ Leave the stage"
+                                  "▶ Stage (free camera)"))
       (if stage? (.add (.-classList btn) "active") (.remove (.-classList btn) "active")))
     ;; Frustum toggle: only meaningful in the stage (in-pose or free), so shown there.
     (when-let [^js fb (:frustum-btn-el @session)]
       (set! (.. fb -style -display) (if stage? "block" "none"))
       (set! (.-textContent fb) (if (:show-frustums? @session)
-                                 "Frustum foto: mostrati (nascondi)"
-                                 "Frustum foto: nascosti (mostra)"))
+                                 "Photo frustums: shown (hide)"
+                                 "Photo frustums: hidden (show)"))
       (if (:show-frustums? @session) (.add (.-classList fb) "active") (.remove (.-classList fb) "active")))
     (when-let [^js message (:message-el @session)]
       (set! (.-textContent message)
             (cond
               (and stage? (:in-pose? @session))
-              "In posa. Esc = torna a orbitare · clicca un'altra foto per cambiare vista."
+              "In pose. Esc = back to orbiting · click another photo to change view."
               stage?
               (if (:show-frustums? @session)
-                "Palcoscenico: orbita l'oggetto. Clicca una foto o il suo frustum per andare in posa. Esc = esci."
-                "Palcoscenico: orbita l'oggetto. Clicca una foto per andare in posa. Esc = esci.")
+                "Stage: orbit the object. Click a photo or its frustum to go into its pose. Esc = leave."
+                "Stage: orbit the object. Click a photo to go into its pose. Esc = leave.")
               :else (or (:status-message @session) ""))))
     (when-let [strip (:filmstrip-el @session)]
       (set! (.-innerHTML strip) "")
@@ -3501,13 +8106,35 @@
         (let [btn (.createElement js/document "button")
               result (get-in @session [:acquire-results i])
               confirmed? (:rms-px result)
-              predicted? (and result (:predicted? result))]
+              predicted? (and result (:predicted? result))
+              ;; the badge answers Vincenzo's two questions and nothing else
+              ;; (direttiva 5/9): usabile? and does it vote on the LENS? A
+              ;; twin-convicted photo is quarantined by the vote; a rim-dash
+              ;; registration has no disc picks, so the joint R never sees
+              ;; it. Both stay fully usable — green — with the amber dashed
+              ;; flag; the WHY is in the tooltip, the forensics in the log.
+              no-lens? (and confirmed?
+                            (or (contains? (or (:twin-flagged @session) #{}) i)
+                                (:rim? result)))]
           (set! (.-type btn) "button")
           (set! (.-textContent btn) (if confirmed?
                                       (str (inc i) " · " (.toFixed (:rms-px result) 1) "px")
                                       (str (inc i))))
-          (set! (.-title btn) file)
-          (.add (.-classList btn) (cond confirmed? "eaq-badge-ok"
+          (set! (.-title btn)
+                (cond
+                  no-lens?
+                  (str file " — registered"
+                       (when (:rim? result) " from the rim dashes")
+                       "; does NOT contribute to the lens measurement"
+                       (if (contains? (or (:twin-flagged @session) #{}) i)
+                         " (its mounting contradicts the one voted by the session: redo it — Reset, eye pose, 'a')"
+                         " (the dashes register the pose but do not enter the joint refinement)"))
+                  confirmed? (str file " — registered")
+                  predicted? (str file " — pose PREDICTED by the fit, to confirm")
+                  (:manual? result) (str file " — posed by eye, to be registered: press 'a'")
+                  :else (str file " — to be registered: pose by eye and press 'a'")))
+          (.add (.-classList btn) (cond no-lens? "eaq-badge-nolens"
+                                        confirmed? "eaq-badge-ok"
                                         predicted? "eaq-badge-predicted"
                                         :else "eaq-badge-none"))
           ;; In the stage the current photo is the one you're posed into (or last
@@ -3538,7 +8165,6 @@
           n (count (:photos @session))
           idx (:current-idx @session)
           pnp? (= :pnp (:mode @session))
-          retrace? (= :retrace (:mode @session))
           marker? (= :marker (:mode @session))
           mark? (= :mark (:mode @session))]
       (if (:stage? @session)
@@ -3560,52 +8186,41 @@
         ;; Escape backs out of the active sub-mode ONLY (one step at a time). It
         ;; never tears the session down — an extra Esc at the top level is a no-op,
         ;; not an accidental exit (Vincenzo 2026-07-24: "è facile darne uno di più e
-        ;; uscire"). Exit is the explicit "Chiudi" button.
+        ;; uscire"). Exit is the explicit "Close" button.
           (= key "Escape")
           (do (.preventDefault e) (.stopPropagation e)
-              (cond pnp? (stop-pnp!) retrace? (stop-retrace!) marker? (stop-marker!)
+              (cond pnp? (stop-pnp!) marker? (stop-marker!)
                     mark? (stop-mark!) :else nil))
 
-        ;; 'p' toggles PnP from gizmo/pnp; inert during retrace/mark (exit first)
-          (and (not retrace?) (not mark?) (= key "p"))
+        ;; 'p' toggles PnP from gizmo/pnp; inert during mark (exit first)
+          (and (not mark?) (= key "p"))
           (do (.preventDefault e) (.stopPropagation e)
               (if pnp? (stop-pnp!) (start-pnp!)))
 
-        ;; 'd' toggles the plane-retrace from gizmo/retrace; inert during pnp/mark
-          (and (not pnp?) (not mark?) (= key "d"))
-          (do (.preventDefault e) (.stopPropagation e)
-              (if retrace? (stop-retrace!) (start-retrace!)))
-
-        ;; 'k' toggles the named-mark mode from gizmo/mark; inert during pnp/retrace
-          (and (not pnp?) (not retrace?) (not marker?) (= key "k"))
+        ;; 'k' toggles the named-mark mode from gizmo/mark; inert during pnp
+          (and (not pnp?) (not marker?) (not (cage-proxy?)) (= key "k"))
           (do (.preventDefault e) (.stopPropagation e)
               (if mark? (stop-mark!) (start-mark!)))
-
-          (and retrace? (= key "Backspace"))
-          (do (.preventDefault e) (.stopPropagation e) (undo-retrace-point!))
-
-        ;; 'n' starts a new ricalco (retrace mode only) — keeps the current face
-          (and retrace? (= key "n"))
-          (do (.preventDefault e) (.stopPropagation e) (new-ricalco!))
 
           (and mark? (= key "Backspace"))
           (do (.preventDefault e) (.stopPropagation e) (undo-mark!))
 
-        ;; 'v' hides/shows the solid proxy in the main (gizmo) view so the photo
-        ;; is readable while registering — meaningless in :retrace (no proxy) and
-        ;; :pnp (already a see-through wireframe), so gizmo-only.
-          (and (= :gizmo (:mode @session)) (= key "v"))
+        ;; 'v' hides/shows the proxy so the photo is readable while registering.
+        ;; :pnp since 2026-09-01 — its wireframe never needed hiding, but the
+        ;; cage's solid glue tabs cover the very discs being clicked, and sat
+        ;; there with 'v' dead.
+          (and (#{:gizmo :pnp} (:mode @session)) (= key "v"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-proxy!))
 
         ;; 'm' arms the blindato marker-click (pin the Klein branch by the
-        ;; physical mark). Toggles from gizmo/marker; inert during pnp/retrace/mark.
-          (and (not pnp?) (not retrace?) (not mark?) (= key "m"))
+        ;; physical mark). Toggles from gizmo/marker; inert during pnp/mark.
+          (and (not pnp?) (not mark?) (not (cage-proxy?)) (= key "m"))
           (do (.preventDefault e) (.stopPropagation e)
               (if marker? (stop-marker!) (start-marker!)))
 
         ;; 'b' (plate only) toggles the identity-free batch flow (fetta B) vs the
         ;; armed flow (fetta A) while in PnP.
-          (and pnp? (plate-proxy?) (= key "b"))
+          (and pnp? (plate-proxy?) (not (cage-proxy?)) (= key "b"))
           (do (.preventDefault e) (.stopPropagation e) (toggle-batch-mode!))
 
         ;; 'r' registers: in batch mode it assigns the identity-free clicks first
@@ -3618,52 +8233,85 @@
           (and pnp? (batch-mode?) (= key "Backspace"))
           (do (.preventDefault e) (.stopPropagation e) (undo-batch-click!))
 
+        ;; Backspace in the armed flow is the eraser's keyboard half: delete the
+        ;; pick nearest where the cursor is (right-click does the same, aimed).
+          (and pnp? (not (batch-mode?)) (= key "Backspace"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (if-let [px (:pnp-cursor-px @session)]
+                (erase-pick-at! px)
+                (set-status-message!
+                 "eraser: move the cursor onto the dot to remove, then Backspace (or right-click)")))
+
         ;; 'o' — the armed marker is occluded by the part in this view: skip it
         ;; (drop any pick, mark it hidden so nothing re-places it), then 'r'.
         ;; Armed flow only (batch has no armed target).
           (and pnp? (not (batch-mode?)) (= key "o"))
           (do (.preventDefault e) (.stopPropagation e) (skip-armed-corner!))
 
+          (and pnp? (not (cage-proxy?)) (= key "F"))
+          (do (.preventDefault e) (.stopPropagation e) (toggle-all-marks!))
+
+          (and (#{:pnp :gizmo} (:mode @session)) (= key "n"))
+          (do (.preventDefault e) (.stopPropagation e) (toggle-mark-names!))
+
           (and pnp? (not (batch-mode?)) (re-matches #"[1-8]" key))
           (do (.preventDefault e) (.stopPropagation e)
               (arm-corner! (dec (js/parseInt key 10))))
 
-          (= key "[")
+        ;; 'g' — grab a frame from the live camera and register it on the spot.
+        ;; Gated to gizmo/pnp like the other registration keys: during a mark
+        ;; the proxy pose is frozen on purpose, and a new view moving it
+        ;; underneath would be the one thing that mode must not suffer.
+          (and (not mark?) (= key "g"))
+          (do (.preventDefault e) (.stopPropagation e) (on-grab!))
+
+          (and (pos? n) (= key "["))
           (do (.preventDefault e) (.stopPropagation e)
               (enter-photo! (mod (dec idx) n)))
 
         ;; 's'/'f' act on the gizmo/camera registration — meaningless (and
-        ;; disruptive to the frozen pose) during a retrace/mark, so gate them
-        ;; out; and meaningless on a registration plate (box-only gestures —
-        ;; see plate-proxy?), where they'd only mislead, so redirect to 'p'.
-          (and (not retrace?) (not mark?) (= key "s"))
+        ;; disruptive to the frozen pose) during a mark, so gate them out; and
+        ;; meaningless on a registration plate (box-only gestures — see
+        ;; plate-proxy?), where they'd only mislead, so redirect to 'p'.
+          (and (not mark?) (= key "s"))
           (do (.preventDefault e) (.stopPropagation e)
               (if (plate-proxy?)
                 (set-status-message!
-                 "Piatto di registrazione: usa 'p' (PnP sui mark del piatto), non 's'. Gli spigoli di un piatto non registrano.")
+                 "Registration plate: use 'p' (PnP on the plate's marks), not 's'. A plate's edges do not register.")
                 (on-snap!)))
 
         ;; 'f' fits the shared multi-photo model: a box's turntable joint, or a
         ;; plate's ring (register a few with 'p', 'f' proposes the rest).
-          (and (not retrace?) (not mark?) (= key "f"))
+          (and (not mark?) (= key "f"))
           (do (.preventDefault e) (.stopPropagation e)
               (if (plate-proxy?) (on-fit-ring!) (on-fit-turntable!)))
 
-        ;; 'a' (plate only) — Auto: detect + register every photo with zero clicks
-        ;; (fetta C). The box has no analogue; say so rather than silently no-op.
-          (and (not retrace?) (not mark?) (= key "a"))
+        ;; 'a' — Auto. On a PLATE: detect + register every photo with zero clicks
+        ;; (fetta C). On a CAGE: read the crown you clicked against the whole cage
+        ;; and place the rest (cage-read-and-place!) — seeded, because a crown
+        ;; cannot say which of its equal marks is mark zero and no photograph can.
+        ;; The box has no analogue; say so rather than silently no-op.
+          (and (not mark?) (= key "a"))
           (do (.preventDefault e) (.stopPropagation e)
-              (if (plate-proxy?)
+              (if (or (plate-proxy?) (cage-proxy?))
                 (on-auto-register!)
-                (set-status-message! "Auto (a) è solo per il piatto di registrazione.")))
+                (set-status-message!
+                 "Auto (a) is for the registration plate and the cage.")))
 
           ;; capital R: refining the whole session is not something to trip into
           ;; while reaching for 'r' (which re-solves THIS photo)
-          (and (not retrace?) (not mark?) (= key "R"))
+          (and (not mark?) (= key "R"))
           (do (.preventDefault e) (.stopPropagation e)
               (on-refine-session!))
 
-          (= key "]")
+          ;; capital C for the same reason as R: calibrating the plate rewrites
+          ;; the reference every measurement in the session is against, so it is
+          ;; not something to trip into while reaching for a lowercase key
+          (and (not mark?) (not (cage-proxy?)) (= key "C"))
+          (do (.preventDefault e) (.stopPropagation e)
+              (on-calibrate-plate!))
+
+          (and (pos? n) (= key "]"))
           (do (.preventDefault e) (.stopPropagation e)
               (enter-photo! (mod (inc idx) n))))))))
 
@@ -3691,7 +8339,7 @@
 (defn- save-acquire-state! []
   (let [proxy-pose (get-in @session [:proxy-mesh :creation-pose])
         photos (into {}
-                     (map (fn [[idx {:keys [matched rms-px manual?]}]]
+                     (map (fn [[idx {:keys [matched rms-px manual? rim?]}]]
                             [(str idx)
                              (cond-> {:matched matched :rms-px rms-px}
                                ;; Persist :manual? so a hand-placed camera comes
@@ -3700,6 +8348,10 @@
                                ;; 0 would drop it as if it were a bare seed
                                ;; (transport-registered-cameras!).
                                manual? (assoc :manual? true)
+                               ;; …and :rim? so a dash registration keeps its
+                               ;; lens-flag badge (and its exemption from the
+                               ;; disc verdict) across a reload
+                               rim? (assoc :rim? true)
                                (pos? idx) (assoc :camera-pose (get-in @session [:camera-poses idx])))])
                           (:acquire-results @session)))
         ;; P4a-2 — the PnP CORRESPONDENCES (the per-photo corners the user clicked)
@@ -3733,13 +8385,6 @@
                                           ;; diversi mm"). Persisting it keeps the frozen
                                           ;; vantage across sessions.
                                           :camera-pose-0 (get-in @session [:camera-poses 0])
-                                          ;; Ricalchi (P4a-3): every named polyline
-                                          ;; (plane spec + object-frame points) +
-                                          ;; the active index, so they survive exit/
-                                          ;; re-entry (object frame = stable under
-                                          ;; later proxy moves)
-                                          :ricalchi (:ricalchi @session)
-                                          :ricalco-idx (:ricalco-idx @session)
                                           ;; Blindato marker picks (pixel per photo)
                                           ;; — the durable branch decision; re-applied
                                           ;; to every future registration via
@@ -3748,6 +8393,70 @@
                                           ;; P4a-2 — PnP correspondences per photo
                                           ;; (see the `pnp` binding above).
                                           :pnp pnp
+                                          ;; Leva 2 — the per-photo index
+                                          ;; observations that feed the session's
+                                          ;; mounting VOTE. Persisted because the
+                                          ;; arbiter must survive reloads: kept
+                                          ;; in-memory at first ('come :pnp?') and
+                                          ;; paid for live (29/8 sera) — a reload
+                                          ;; emptied the vote and the flip-face
+                                          ;; twin walked right back in on the next
+                                          ;; seeded read. The refinement still
+                                          ;; clears them (stale intrinsics), and
+                                          ;; the CAGE fingerprint travels with
+                                          ;; them: slots are measured against the
+                                          ;; MODEL's azimuths, so obs taken at
+                                          ;; k6 become lies the moment the
+                                          ;; session reopens with :phases
+                                          ;; declared — they must die with the
+                                          ;; proxy they were measured under.
+                                          ;; the faces the USER declared per photo
+                                          ;; — a judgement about the picture, not
+                                          ;; a derived value: it must survive a
+                                          ;; reload like the picks do
+                                          :cage-face-choice
+                                          (into {} (for [[i c] (:cage-face-choice @session)
+                                                         :when (seq c)]
+                                                     [(str i) c]))
+                                          ;; the photos whose pose the user
+                                          ;; aligned BY HAND (gizmo commit) —
+                                          ;; the eye seed 'a' gates by. A
+                                          ;; human act, so it survives reload
+                                          ;; like the picks do
+                                          :eye-posed (vec (sort (:eye-posed @session)))
+                                          :cage-mounting-obs
+                                          (let [pm (:proxy-mesh @session)]
+                                            {:cage {:d (:cage-d pm)
+                                                    :marks (:cage-marks pm)
+                                                    :phases (:cage-phases pm)
+                                                    ;; a flip is the sharpest
+                                                    ;; possible change to what
+                                                    ;; these observations MEAN —
+                                                    ;; they are readings of the
+                                                    ;; index's housing, and a
+                                                    ;; flip mirrors it. Missing
+                                                    ;; here for the first hours
+                                                    ;; :flips existed (1/9).
+                                                    ;; NAMES, and nil when
+                                                    ;; empty: keywords come back
+                                                    ;; from JSON as strings, and
+                                                    ;; a file written before this
+                                                    ;; key existed must still
+                                                    ;; match a flip-less cage
+                                                    :flips (cage-flips-tag pm)
+                                                    :index-phase (:cage-index-phase pm)
+                                                    ;; slot geometry moves with
+                                                    ;; the lens: obs saved at one
+                                                    ;; focal must not judge a
+                                                    ;; session running another
+                                                    ;; (battiscopa3: obs at 48
+                                                    ;; accusavano le letture a 44
+                                                    ;; per due sere)
+                                                    :focal-mm (:focal-mm @session)}
+                                             :by-photo
+                                             (into {} (for [[idx obs] (:cage-mounting-obs @session)
+                                                            :when (seq obs)]
+                                                        [(str idx) obs]))})
                                           ;; P4a-2 — lens focal (35mm-equiv) +
                                           ;; provenance, so a manual tweak survives
                                           ;; re-entry instead of reverting to the
@@ -3755,12 +8464,25 @@
                                           ;; runs before load-acquire-state!).
                                           :focal {:mm (:focal-mm @session)
                                                   :source (:focal-source @session)}
+                                          ;; which camera this session's grabs
+                                          ;; came from («label @ w×h») — it is
+                                          ;; what lets a LATER 'R', camera long
+                                          ;; closed, still file the measured
+                                          ;; lens under ~/.ridley/cameras.json
+                                          :grab-camera (:grab-camera @session)
                                           ;; P4a-3 — named marks (object-frame
                                           ;; position + normal + id) and the
                                           ;; current mark face, so they survive
                                           ;; exit/re-entry like the retrace does.
                                           :marks (:marks @session)
-                                          :mark-plane (:mark-plane @session)}))
+                                          :mark-plane (:mark-plane @session)
+                                          ;; The measured plate ('C'). Also filed
+                                          ;; under ~/.ridley/plates/, which is the
+                                          ;; copy other sessions read — this one is
+                                          ;; here so THIS session's numbers stay
+                                          ;; reproducible even after the plate is
+                                          ;; re-printed and the store overwritten.
+                                          :plate-calib (:plate-calib @session)}))
         path (acquire-state-path)]
     (swap! save-chain
            (fn [prev]
@@ -3772,28 +8494,13 @@
 
 (defn- apply-loaded-state! [text]
   (try
-    (let [{:keys [proxy-pose camera-pose-0 photos retrace ricalchi ricalco-idx marker-picks pnp focal marks mark-plane]} (js->clj (js/JSON.parse text) :keywordize-keys true)
+    (let [{:keys [proxy-pose camera-pose-0 photos marker-picks pnp focal grab-camera marks mark-plane plate-calib cage-mounting-obs cage-face-choice eye-posed]} (js->clj (js/JSON.parse text) :keywordize-keys true)
           ;; JSON keys are strings → keywordize-keys turns the integer photo/corner
           ;; keys into :0/:1/… ; parse a whole level back to int keys.
-          int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))
-          norm-plane (fn [pl] {:axis (:axis pl) :sign (:sign pl) :offset (or (:offset pl) 0.0)})]
-      ;; Ricalchi (P4a-3). Back-compat: a file saved with the old single :retrace
-      ;; is migrated to a one-element list named ricalco-1.
-      (cond
-        (seq ricalchi)
-        (swap! session assoc
-               :ricalchi (mapv (fn [r] {:name (:name r)
-                                        :plane (norm-plane (:plane r))
-                                        :points (mapv vec (or (:points r) []))})
-                               ricalchi)
-               :ricalco-idx (or ricalco-idx (dec (count ricalchi))))
-
-        (and retrace (:plane retrace) (:axis (:plane retrace)))
-        (swap! session assoc
-               :ricalchi [{:name "ricalco-1"
-                           :plane (norm-plane (:plane retrace))
-                           :points (mapv vec (or (:points retrace) []))}]
-               :ricalco-idx 0))
+          int-keys (fn [m] (into {} (map (fn [[k v]] [(js/parseInt (name k) 10) v]) m)))]
+      ;; The :ricalchi / :retrace an older file may carry are read past: the 'd'
+      ;; anchor gesture is gone from the session (2026-09-11), and whatever it
+      ;; had emitted already lives in the (acquire …) form's :marks.
       ;; Blindato marker picks — JSON stringifies the integer photo keys, so
       ;; keywordize-keys turns them into :1/:2/… ; back to ints for :current-idx
       ;; lookups (marker-lock-camera / on-marker-click!).
@@ -3810,10 +8517,53 @@
             (when (seq residuals) (swap! session assoc-in [:pnp-residuals idx] (int-keys residuals)))
             (when (seq outliers)  (swap! session assoc-in [:pnp-outliers idx] (set outliers)))
             (when (seq occluded)  (swap! session assoc-in [:pnp-occluded idx] (set occluded))))))
+      (when (seq cage-face-choice)
+        (swap! session assoc :cage-face-choice
+               (into {} (map (fn [[k v]]
+                               [(js/parseInt (name k) 10)
+                                (into {} (map (fn [[a s]] [(keyword (name a)) s]) v))])
+                             cage-face-choice))))
+      ;; the hand-aligned photos come back with their stamp: the eye seed is a
+      ;; human act, and 'a' after a reload deserves the same gate
+      (when (seq eye-posed)
+        (swap! session assoc :eye-posed (set eye-posed)))
+      ;; Leva 2 — the mounting vote comes back with the session, but ONLY under
+      ;; the cage it was measured against: slots are model-frame, so a session
+      ;; reopened with :phases declared (or another cage entirely) makes the
+      ;; old observations false witnesses — dropped, with a log line, and the
+      ;; vote rebuilds at the next 'a'. :axis/:sense live as keywords, travel
+      ;; as strings.
+      (when-let [by-photo (:by-photo cage-mounting-obs)]
+        (let [pm (:proxy-mesh @session)
+              now {:d (:cage-d pm) :marks (:cage-marks pm)
+                   :phases (:cage-phases pm)
+                   :flips (cage-flips-tag pm)
+                   :index-phase (:cage-index-phase pm)
+                   ;; the focal this state file is about to restore — obs from
+                   ;; a file saved at another lens (or before the lens was in
+                   ;; the fingerprint at all) are dropped
+                   :focal-mm (:mm focal)}
+              then (:cage cage-mounting-obs)]
+          (if (= now then)
+            (swap! session assoc :cage-mounting-obs
+                   (into {} (map (fn [[k v]]
+                                   [(js/parseInt (name k) 10)
+                                    (mapv #(-> %
+                                               (update :axis keyword)
+                                               (update :sense keyword))
+                                          v)])
+                                 by-photo)))
+            (auto-log! (str "  mounting vote discarded: it was measured on another "
+                            "cage/phasing (" (pr-str then) " → " (pr-str now)
+                            ") — it rebuilds by pressing 'a' again")))))
       ;; P4a-2 — lens focal. Restored AFTER load-exif-focal! (which ran first), so a
       ;; saved manual tweak wins; an unchanged EXIF/default value restores to itself.
       (when-let [mm (:mm focal)]
         (swap! session assoc :focal-mm mm :focal-source (keyword (:source focal))))
+      ;; the camera this session's grabs came from — restored so a later 'R'
+      ;; can still file its measured lens under ~/.ridley/cameras.json
+      (when grab-camera
+        (swap! session assoc :grab-camera grab-camera))
       ;; P4a-3 — named marks + the current mark face. Marks are object-frame
       ;; (position/normal vectors) + a string id; coerce the vectors back.
       (when (seq marks)
@@ -3846,7 +8596,20 @@
                           (:position old-pose) (:heading old-pose) (:up old-pose)
                           (:position proxy-pose) safe-heading safe-up)]
           (swap! session assoc :proxy-mesh new-mesh)))
-      (doseq [[idx-kw {:keys [camera-pose matched rms-px manual?]}] photos]
+      ;; The measured plate ('C') is only STASHED here, not applied. Two sources
+      ;; can supply one — this file and the plate store under ~/.ridley/plates/ —
+      ;; and when both did, whichever ran first won silently: the session's copy
+      ;; short-circuited the store's path, which was the only one that announced,
+      ;; so a reopened session came up calibrated and said nothing (Vincenzo,
+      ;; 2026-08-14: "non è comparso il messaggio"). Deciding in one place and
+      ;; speaking in one place is load-plate-calibration!'s job now; here we only
+      ;; carry the file's contents to it.
+      (when-let [obj (seq (:obj plate-calib))]
+        (swap! session assoc :plate-calib-from-session
+               {:obj (mapv vec obj)
+                :worst-mm (:worst-mm plate-calib)
+                :views (:views plate-calib)}))
+      (doseq [[idx-kw {:keys [camera-pose matched rms-px manual? rim?]}] photos]
         (let [idx (js/parseInt (name idx-kw))]
           (cond
             (zero? idx)
@@ -3856,7 +8619,8 @@
             (do (swap! session assoc-in [:camera-poses idx] camera-pose)
                 (swap! session assoc-in [:acquire-results idx]
                        (cond-> {:matched matched :rms-px rms-px}
-                         manual? (assoc :manual? true))))
+                         manual? (assoc :manual? true)
+                         rim? (assoc :rim? true))))
 
             ;; idx > 0 with no camera-pose: this photo's entry is incomplete
             ;; (a save that raced with another and lost — see save-acquire-
@@ -3870,7 +8634,78 @@
 (defn- load-acquire-state! []
   (-> (stl/desktop-read-file (acquire-state-path))
       (.then apply-loaded-state!)
-      (.catch (fn [_] nil)))) ;; no file yet (first snap of a fresh session) — fine
+      (.catch (fn [_] nil)) ;; no file yet (first snap of a fresh session) — fine
+      (.then (fn [_]
+               ;; a reopened grab session knows its camera (:grab-camera just
+               ;; restored) — stash the store's measured lens so R can use it
+               ;; as a SECOND STARTING POINT (multi-start). Stashed, not
+               ;; adopted: adoption stays the camera-open flow's business,
+               ;; where the session provably has no lens of its own.
+               (when-let [k (:grab-camera @session)]
+                 (-> (read-camera-store)
+                     (.then (fn [store]
+                              (when-let [mm (get-in store [k "focal-mm"])]
+                                (swap! session assoc :remembered-focal-mm mm))))
+                     (.catch (fn [_] nil))))))))
+
+(defn- announce-plate-calibration!
+  "Apply `c` to the proxy and SAY SO. Every entry into a calibrated session goes
+   through here, whichever file the calibration came from.
+
+   The saying is not a courtesy. A calibration silently changes the reference
+   every measurement in the session is taken against, and it can outlive the
+   plate that justified it: the store is keyed by diameter and crown count, so a
+   re-printed ⌀300 inherits the old one's warp under the new one's name. The line
+   on entry is what lets that be noticed."
+  [c source path]
+  (let [obj (mapv vec (:obj c))]
+    (when (= (count obj) (count (crown-ids)))
+      (swap! session assoc :plate-calib
+             {:obj obj :worst-mm (:worst-mm c) :views (:views c)})
+      (apply-plate-calibration! obj)
+      (auto-log! (str "plate MEASURED"
+                      (case source
+                        :store " (calibrated in a previous session)"
+                        :session " in this session"
+                        "")
+                      ": largest deviation "
+                      (modal/fmt-number (:worst-mm c)) " mm on " (:views c) " photos"
+                      (when-let [d (:measured-on c)] (str ", " (subs d 0 10)))
+                      ". Measurements refer to this plate."
+                      (when (= source :store)
+                        (str " If you reprinted it, delete " path))))
+      true)))
+
+(defn- load-plate-calibration!
+  "Put the measured plate back, from whichever source has one, and announce it.
+
+   This is what makes calibrating worth doing: the plate is a physical object you
+   own, so measuring it once should improve every session you shoot on it, not
+   just the one where you pressed 'C'.
+
+   The session's own copy wins over the store — it is what makes THIS session's
+   numbers reproducible after the plate has been re-measured — but both arrive
+   here, because the previous arrangement applied the session's copy elsewhere
+   and only the store's path spoke. A reopened session therefore came up
+   calibrated in silence.
+
+   Always resolves — a session with no calibration at all is the normal case."
+  []
+  (let [path (plate-store-path)
+        mine (:plate-calib-from-session @session)]
+    (cond
+      (not (plate-proxy?)) (js/Promise.resolve nil)
+      mine (do (announce-plate-calibration! mine :session path)
+               (js/Promise.resolve nil))
+      (nil? path) (js/Promise.resolve nil)
+      :else
+      (-> (stl/desktop-read-file path)
+          (.then (fn [text]
+                   ;; a store written for a different crown cannot be applied to
+                   ;; this one mark-for-mark; ignore it rather than guess
+                   (announce-plate-calibration!
+                    (js->clj (js/JSON.parse text) :keywordize-keys true) :store path)))
+          (.catch (fn [_] nil))))))
 
 ;; ============================================================
 ;; `acquire` — the emitted directive (P4a-1). Reference-citizen shape of the
@@ -4036,17 +8871,43 @@
               (Math/abs (m/dot (m/normalize (:heading m)) (m/normalize (:up m)))))]
       (when (seq missing)
         (state/capture-println
-         (str ";; plane-mark: mancano " (str/join ", " missing)
-              " — un mark ha bisogno di posizione, normale e up")))
+         (str ";; plane-mark: missing " (str/join ", " missing)
+              " — a mark needs position, normal and up")))
       (when (and d (> d plane-mark-perp-tol))
         ;; d = |cos θ| between heading and up, so the deviation from square is
         ;; 90° − θ; reported in degrees because that is what a person can judge.
         (let [dev (- 90.0 (* (/ 180.0 Math/PI) (Math/acos (min 1.0 d))))]
           (state/capture-println
-           (str ";; plane-mark: heading e up fuori squadra di "
+           (str ";; plane-mark: heading and up out of square by "
                 (modal/fmt-number dev)
-                "° — la turtle userà comunque questa coppia"))))))
+                "° — the turtle will use this pair anyway"))))))
   m)
+
+(defn ^:export plane-by-eye
+  "A plane placed BY EYE — `(plane-by-eye :big {:position … :heading … :up …})`
+   — the resting form of the pair `edit-plane-by-eye ⇄ plane-by-eye`: the
+   stage's gesture that seeds a plane on one of the registration cage's rings
+   and lets the gizmo carry it onto the part. It is edit-acquire's 'd' moved out
+   to the stage, where the user's own geometry is visible over the photo and
+   follows the plane as it moves (Vincenzo 2026-09-11). The ring is provenance:
+   which ring it started from, and how big its disc is drawn.
+
+   With a pose map it is `plane-mark`'s gentle contract — the same checks, the
+   map returned untouched. With only a ring — `(plane-by-eye :big)`, which is
+   also what Esc leaves behind when a creation is abandoned — it is the plane
+   the ring itself spans: a deferred `{:ring :big}` that `acquire` resolves
+   against its proxy, the same two-step trick as plane-from-edges, because the
+   :marks map is evaluated before the acquire that owns the rings. Ring names:
+   :big :medium :small (the bench's) or :x :y :z (the model's)."
+  [& args]
+  (let [ring (first (filter keyword? args))
+        m (first (filter map? args))]
+    (cond
+      m (plane-mark m)
+      ring {:ring ring}
+      :else (do (state/capture-println
+                 ";; plane-by-eye: needs a ring (:big :medium :small, or :x :y :z) and/or a pose map")
+                nil))))
 
 ;; ============================================================
 ;; plane-from-edges — il piano come FORMULA, non come copia
@@ -4131,32 +8992,32 @@
       (seq junk)
       ;; nomina il valore di troppo per com'è scritto: dire "un argomento così"
       ;; lascerebbe indovinare QUALE, e `#'user/A` da solo diceva il sintomo
-      (do (say (str "vuole solo i NOMI dei bordi (:uno :due) · c'è anche "
+      (do (say (str "takes only the edges' NAMES (:one :two) · there is also "
                     (str/join ", " (map #(let [t (pr-str %)]
                                            (if (> (count t) 24) (str (subs t 0 24) "…") t))
                                         junk))
-                    " · se è l'acquire, toglilo: bastano i nomi · ? plane-from-edges"))
+                    " · if it is the acquire, drop it: the names are enough · ? plane-from-edges"))
           nil)
 
       (empty? plane-from)
-      (do (say "nessun bordo nominato · ? plane-from-edges") nil)
+      (do (say "no edge named · ? plane-from-edges") nil)
 
       (seq missing)
-      (do (say (str "non trovo " (str/join ", " missing) " fra gli :edges")) nil)
+      (do (say (str "cannot find " (str/join ", " missing) " among the :edges")) nil)
 
       (< (count pts) 3)
-      (do (say "punti insufficienti per un piano") nil)
+      (do (say "not enough points for a plane") nil)
 
       :else
       (if-let [pl (pcurve/plane-from-points
                    pts {:up-hints (if plate? [(:heading pose) (:up pose)]
                                       [(:up pose) (:heading pose)])})]
         (if (< (:width-mm pl) pcurve/min-width-mm)
-          (do (say (str "NON creato · bordi in fila (larghi "
+          (do (say (str "NOT created · edges in a row (spread "
                         (n2 (:width-mm pl)) " mm, min "
-                        (n2 pcurve/min-width-mm) ") · 1 mm d'errore = "
-                        (n2 (:tilt-per-mm-deg pl)) "° · serve un bordo "
-                        "trasversale · ? plane-from-edges"))
+                        (n2 pcurve/min-width-mm) ") · 1 mm of error = "
+                        (n2 (:tilt-per-mm-deg pl)) "° · needs an edge "
+                        "across · ? plane-from-edges"))
               nil)
           (let [outward (m/v- (:position pl) centre)
                 flip? (neg? (m/dot (:heading pl) outward))
@@ -4176,9 +9037,9 @@
                     out (count (filter #(> % pcurve/plane-outlier-mm) ds))]
                 (when (pos? out)
                   (say (str en (if (= out (count ps))
-                                 " SCARTATO"
-                                 (str " · usati " (- (count ps) out) "/" (count ps) " punti"))
-                            " · fino a " (n2 (reduce max ds)) " mm fuori (max "
+                                 " DISCARDED"
+                                 (str " · used " (- (count ps) out) "/" (count ps) " points"))
+                            " · up to " (n2 (reduce max ds)) " mm off (max "
                             pcurve/plane-outlier-mm ") · ? plane-from-edges")))))
             ;; LEAVE-ONE-OUT: di quanto ruoterebbe il piano togliendo ciascun
             ;; bordo. È la domanda che la planarità in millimetri non risponde —
@@ -4199,26 +9060,39 @@
                                                                             (:heading o))))))])))
                     swings (sort-by (comp - second) (keep swing plane-from))]
                 (when (> (or (second (first swings)) 0.0) loo-swing-deg)
-                  (say (str "prove in disaccordo · "
+                  (say (str "trials disagree · "
                             (str/join " · " (map (fn [[en d]]
-                                                   (str "senza " en " " (n2 d) "°"))
+                                                   (str "without " en " " (n2 d) "°"))
                                                  swings))
                             " · ? plane-from-edges")))))
             (when (> (:flatness-mm pl) 1.0)
-              (say (str "planarità " (n2 (:flatness-mm pl)) " mm")))
+              (say (str "flatness " (n2 (:flatness-mm pl)) " mm")))
             (merge mk {:from (mapv vec (pcurve/subsample (:points pl) 12))} opts)))
-        (do (say "i bordi nominati non definiscono un piano · ? plane-from-edges") nil)))))
+        (do (say "the named edges do not define a plane · ? plane-from-edges") nil)))))
 
 (defn- resolve-plane-specs
-  "Sostituisce ogni `(plane-from-edges …)` di `:marks` col piano che nomina. Le
-   specifiche che non si risolvono spariscono, dopo aver detto perché."
-  [dir marks edges pose plate? centre]
+  "Sostituisce ogni `(plane-from-edges …)` di `:marks` col piano che nomina, e
+   ogni `(plane-by-eye :big)` senza posa col piano che quell'anello della gabbia
+   tende (bridge/ring-plane-pose). Le specifiche che non si risolvono spariscono,
+   dopo aver detto perché."
+  [dir marks edges pose plate? centre rings]
   (reduce-kv (fn [acc nm v]
-               (if-not (plane-spec? v)
-                 (assoc acc nm v)
+               (cond
+                 (plane-spec? v)
                  (if-let [mk (resolve-plane-spec dir nm v edges pose plate? centre)]
                    (assoc acc nm mk)
-                   acc)))
+                   acc)
+
+                 (bridge/ring-spec? v)
+                 (if-let [mk (bridge/ring-plane-pose rings pose (:ring v))]
+                   (assoc acc nm mk)
+                   (do (state/capture-println
+                        (str ";; plane-by-eye · :" (name nm) " · no ring " (pr-str (:ring v))
+                             " on this proxy — name :big :medium :small (or :x :y :z) "
+                             "of a registration-cage · ? plane-by-eye"))
+                       acc))
+
+                 :else (assoc acc nm v)))
              {} marks))
 
 (defn ^:export acquire
@@ -4239,7 +9113,8 @@
          ;; dopo che gli :edges esistono, prima che chiunque legga i marks
          marks (resolve-plane-specs dir (or (:marks opts) {}) edges pose
                                     (boolean (seq (:anchors posed)))
-                                    (:position pose))]
+                                    (:position pose)
+                                    (:rings posed))]
      (record-scaffolds! [posed])
      ;; A mark named like one of the proxy's faces WINS over it in
      ;; `(turtle A :at …)` (turtle/named-poses merges faces under marks, on
@@ -4249,10 +9124,10 @@
      (when-let [clash (seq (filter (set (keys faces)) (keys marks)))]
        (state/capture-println
         (str ";; acquire · " dir ": " (str/join ", " (map str clash))
-             (if (next clash) " sono nomi" " è un nome")
-             " di faccia del proxy — il mark ha la precedenza, quindi "
-             "(turtle A :at " (first clash) " …) userà il MARK. "
-             "La faccia resta raggiungibile come (" (first clash) " (:faces A)).")))
+             (if (next clash) " are names" " is a name")
+             " of a proxy face — the mark takes precedence, so "
+             "(turtle A :at " (first clash) " …) will use the MARK. "
+             "The face stays reachable as (" (first clash) " (:faces A)).")))
      ;; The same silent-precedence trap one level up: a mark and an edge that
      ;; share a name are BOTH the user's, so neither is the obvious winner, and
      ;; `(turtle A :at …)` has to pick one (the mark). Worth saying, because an
@@ -4261,9 +9136,9 @@
      (when-let [clash (seq (filter (set (keys marks)) (keys edges)))]
        (state/capture-println
         (str ";; acquire · " dir ": " (str/join ", " (map str clash))
-             (if (next clash) " sono nomi" " è un nome")
-             " sia di mark che di spigolo — (turtle A :at " (first clash)
-             " …) userà il MARK. Lo spigolo resta raggiungibile come ("
+             (if (next clash) " are names" " is a name")
+             " of both a mark and an edge — (turtle A :at " (first clash)
+             " …) will use the MARK. The edge stays reachable as ("
              (first clash) " (:edges A)).")))
      ;; P4b: note the stage so the post-eval hook (core/after refresh-viewport!)
      ;; turns this evaluated directive into the interactive palcoscenico —
@@ -4324,15 +9199,15 @@
     (let [missing (remove #(contains? e %) [:position :heading :a :b])]
       (when (seq missing)
         (state/capture-println
-         (str ";; edge-mark: mancano " (str/join ", " missing)
-              " — uno spigolo ha bisogno dei suoi due capi e di una posa che li percorra")))
+         (str ";; edge-mark: missing " (str/join ", " missing)
+              " — an edge needs its two ends and a pose that runs along them")))
       (when (and (:a e) (:b e) (:length e))
         (let [d (m/magnitude (m/v- (:b e) (:a e)))]
           (when (> (Math/abs (- d (:length e))) edge-length-tol-mm)
             (state/capture-println
-             (str ";; edge-mark: :length dice " (modal/fmt-number (:length e))
-                  " mm ma fra :a e :b ce ne sono " (modal/fmt-number d)
-                  " — uno dei due è stato modificato a mano")))))))
+             (str ";; edge-mark: :length says " (modal/fmt-number (:length e))
+                  " mm but between :a and :b there are " (modal/fmt-number d)
+                  " — one of the two was edited by hand")))))))
   e)
 
 (defn ^:export curve-mark
@@ -4370,8 +9245,8 @@
     (let [pts (:points m)]
       (when-not (and (sequential? pts) (>= (count pts) 3))
         (state/capture-println
-         (str ";; curve-mark: servono almeno 3 punti in :points — questo bordo curvo "
-              "non e' utilizzabile come evidenza per un piano")))))
+         (str ";; curve-mark: needs at least 3 points in :points — this curved edge "
+              "cannot be used as evidence for a plane")))))
   m)
 
 ;; ------------------------------------------------------------
@@ -4401,67 +9276,73 @@
        (every? #(and (vector? %) (= 2 (count %)) (keyword? (first %)) (acq? (second %))) x)))
 
 (defn- marks-by-label
-  "[[label acquire] …] → [[label marks] …], which is all fuse/declared-anchors
-   needs to know about a session."
+  "[[label acquire] …] → [[label marks edges] …], which is all
+   fuse/declared-anchors needs to know about a session. Edges ride along because
+   a declared correspondence may name one: `[[:A/spigolo :B/spigolo]]`."
   [sessions]
-  (mapv (fn [[l a]] [l (:marks a)]) sessions))
+  (mapv (fn [[l a]] [l (:marks a) (:edges a)]) sessions))
 
 (defn- report-union!
-  "Print the fit the way mesh-board prints fidelity: the numbers that decide
-   whether to trust it, per anchor, in millimetres. A fused frame that is
-   quietly 2 mm out looks exactly like a good one until an extrusion misses the
-   object — so the residual is not optional output."
+  "Print the fit: the numbers first, and a line of advice only where a number is
+   actually bad.
+
+   It used to print four paragraphs every time, prose and all, whether or not
+   anything was wrong — and the reasoning that belongs in a docstring was being
+   read out loud on every Run (Vincenzo 2026-08-14: «sarebbe meglio evitare
+   romanzi nell'output di una funzione, torniamo dati e eventualmente suggerimenti
+   su cosa fare se ci sono problemi»). He is right, and the failure mode is worse
+   than verbosity: a warning that prints unconditionally stops being read, and
+   the one time it matters it scrolls past with the rest.
+
+   So: a table, a summary line, and nothing else unless a threshold is crossed.
+   The explanations live in the manual card, which is where a long argument can
+   be read once instead of every time."
   [dir fit]
-  (state/capture-println
-   (str ";; acquire-union · " dir " → frame della prima sessione\n"
-        (str/join "\n"
-                  ;; `str`, NOT clj->js: clj->js on a keyword keeps only its name,
-                  ;; which would silently drop the :A/ label that says WHICH
-                  ;; session's mark this line is about.
-                  (map (fn [{:keys [name kind residual-mm normal-deg]}]
-                         (str ";;   " name " (" (clj->js kind) ")  "
-                              (modal/fmt-number residual-mm) " mm"
-                              (when (= kind :piano) " dal piano")
-                              (when normal-deg (str "  ·  normale " (modal/fmt-number normal-deg) "°"))))
-                       (:per-anchor fit)))
-        "\n;;   rms " (modal/fmt-number (:rms-mm fit)) " mm dai piani · normali "
-        ;; The distance rms alone is not a verdict: with three planes it can
-        ;; always be driven to zero (three constraints, six unknowns), so it once
-        ;; printed 'rms 0 mm' under a fit whose normals were 152° out (Vincenzo
-        ;; 2026-08-06). The angle travels next to it, always.
-        "fuori di " (modal/fmt-number (:max-normal-deg fit)) "° al massimo · "
-        (:planes fit) " piani"
-        (when (pos? (:points fit)) (str " + " (:points fit) " punti"))))
-  (when (> (:max-normal-deg fit) 3.0)
+  (let [{:keys [rms-mm max-normal-deg per-anchor planes points edges
+                distances-testify? suspect]} fit
+        n (fn [x] (modal/fmt-number x))]
     (state/capture-println
-     (str ";; acquire-union: normali fuori di " (modal/fmt-number (:max-normal-deg fit))
-          "° — le zone combaciano come posizione ma non come ORIENTAMENTO. "
-          "Sopra i pochi gradi non è imprecisione: è una zona marcata male, o due "
-          "zone che non sono la stessa.")))
-  (when-not (:distances-testify? fit)
-    (state/capture-println
-     (str ";; acquire-union: con tre soli piani gli scarti in mm tornano zero per "
-          "costruzione (tre equazioni, tre incognite) — non sono una prova, e qui "
-          "l'unica prova sono le NORMALI. Un quarto piano, o un mark su un punto "
-          "vero (:point? true), mette alla prova anche i millimetri.")))
-  (when-let [s (:suspect fit)]
-    (state/capture-println
-     (str ";; acquire-union: togliendo " (:name s) " lo scarto crolla da "
-          (modal/fmt-number (:rms-mm fit)) " a " (modal/fmt-number (:rms-without s))
-          " mm — è quell'aggancio a essere sbagliato, non gli altri. I minimi "
-          "quadrati spalmano il danno su tutti, per questo nessuno sembrava "
-          "colpevole. Rifallo, o togli quel mark dalla fusione.")))
-  (when-let [w (fuse/worst-anchor (:per-anchor fit))]
-    (state/capture-println
-     (str ";; acquire-union: " (:name w) " si discosta dagli altri ("
-          (modal/fmt-number (:residual-mm w)) " mm). "
-          "O è misurato male in una delle due sessioni, o i due mark che hai "
-          "dichiarato uguali non sono la stessa zona fisica.")))
-  (when (> (:rms-mm fit) 1.0)
-    (state/capture-println
-     (str ";; acquire-union: " (modal/fmt-number (:rms-mm fit))
-          " mm di scarto è molto per una fusione — quello che disegni su una "
-          "sessione cadrà storto sull'altra di altrettanto."))))
+     (str ";; acquire-union · " dir " → frame of the first session\n"
+          (str/join "\n"
+                    ;; `str`, NOT clj->js: clj->js on a keyword keeps only its
+                    ;; name, which would silently drop the :A/ label that says
+                    ;; WHICH session's mark this line is about.
+                    (map (fn [{:keys [name kind residual-mm normal-deg]}]
+                           (str ";;   " (clj->js kind) " " name "  " (n residual-mm) " mm"
+                                (when normal-deg (str " · " (n normal-deg) "°"))))
+                         per-anchor))
+          ;; The degrees are converted into millimetres per 10mm of distance,
+          ;; because that is the only way they can be compared with the rms next
+          ;; to them — and they usually WIN. A residual in mm is a rigid offset,
+          ;; the same everywhere; an angle is a lever that grows with distance
+          ;; from the anchor, which is exactly why geometry built far from a mark
+          ;; stops covering the object while the numbers look small.
+          "\n;;   rms " (n rms-mm) " mm · normals max " (n max-normal-deg) "° ("
+          (n (* 10.0 (Math/tan (* max-normal-deg (/ Math/PI 180.0)))))
+          " mm every 10 mm from the mark) · "
+          planes " planes"
+          (when (pos? (or edges 0)) (str " + " edges " edges"))
+          (when (pos? points) (str " + " points " points"))))
+    ;; ---- and only now, what is WRONG ----
+    (when (> max-normal-deg 3.0)
+      (state/capture-println
+       (str ";; ⚠ normals off by " (n max-normal-deg)
+            "°: two zones declared the same are not, or one is marked badly.")))
+    (when-let [s suspect]
+      (state/capture-println
+       (str ";; ⚠ remove " (:name s) " and the deviation goes from " (n rms-mm) " a "
+            (n (:rms-without s)) " mm: it is that anchor, not the others.")))
+    (when-let [w (fuse/worst-anchor per-anchor)]
+      (state/capture-println
+       (str ";; ⚠ " (:name w) " deviates from the others (" (n (:residual-mm w))
+            " mm): re-measure it, or it is not the same zone in the two sessions.")))
+    (when (> rms-mm 1.0)
+      (state/capture-println
+       (str ";; ⚠ " (n rms-mm) " mm of deviation: what you draw on one session "
+            "lands off on the other by as much.")))
+    (when-not distances-testify?
+      (state/capture-println
+       ";; note: few anchors — the mm return to zero by construction, look at the normals."))))
 
 (defn- loop-closure!
   "With THREE or more sessions, the only real proof available.
@@ -4490,17 +9371,23 @@
             via (fuse/transform-point (by-lbl lx) (fuse/transform-point mid p))
             mm (Math/sqrt (reduce + 0.0 (map (fn [u v] (* (- u v) (- u v))) direct via)))]
         (state/capture-println
-         (str ";; acquire-union: anello " (name (first (first sessions))) "→" (name lx)
-              "→" (name ly) " chiude a " (modal/fmt-number mm) " mm"
+         (str ";; acquire-union: loop " (name (first (first sessions))) "→" (name lx)
+              "→" (name ly) " closes at " (modal/fmt-number mm) " mm"
               (cond
-                (> mm 5.0) " — è tanto: due fusioni a due a due si contraddicono, quindi almeno una zona non è la stessa in tutte le sessioni"
-                (> mm 1.5) " — accettabile ma non ottimo"
-                :else " — le sessioni si accordano fra loro")))))
-    (when (< (count others) 2)
+                (> mm 5.0) " — that is a lot: two pairwise fusions contradict each other, so at least one zone is not the same in every session"
+                (> mm 1.5) " — acceptable but not great"
+                :else " — the sessions agree with each other")))))
+    ;; Printed only when the fit has nothing else warning about it. With two
+    ;; sessions this is ALWAYS true, so unconditionally it was a line that
+    ;; appeared on every single run and therefore stopped being read — which is
+    ;; the opposite of what a caveat is for.
+    (when (and (< (count others) 2)
+               (every? #(and (nil? (:error (:fit %)))
+                             (<= (:rms-mm (:fit %) 0.0) 1.0)
+                             (<= (:max-normal-deg (:fit %) 0.0) 3.0))
+                       fits))
       (state/capture-println
-       (str ";; acquire-union: con due sole sessioni non c'è nessun anello da chiudere, "
-            "quindi niente che possa smentire il fit. Una terza posa dello stesso "
-            "oggetto lo metterebbe alla prova.")))))
+       ";; note: only two sessions — no loop to close, so nothing that could contradict the fit."))))
 
 (defn- transform-edge
   "Carry a measured edge through the fusion motion. Its pose moves like any mark
@@ -4532,14 +9419,14 @@
     (if-let [bad (first (filter #(:error (:fit %)) fits))]
       (do (state/capture-println
            (str ";; acquire-union · " (:dir (:b bad)) ": " (:error (:fit bad))
-                "\n;;   agganci trovati: "
+                "\n;;   anchors found: "
                 (if (seq (:anchors bad))
                   (str/join ", " (map #(str (:name %)) (:anchors bad)))
                   (if declared?
-                    "nessuno — controlla i riferimenti nella lista delle corrispondenze"
-                    (str "nessuno — senza la lista delle corrispondenze i mark che "
-                         "valgono da aggancio sono quelli che portano lo STESSO NOME "
-                         "nelle due sessioni")))))
+                    "none — check the references in the correspondence list"
+                    (str "none — without the correspondence list the marks that "
+                         "count as anchors are those carrying the SAME NAME "
+                         "in both sessions")))))
           nil)
       (let [moved (mapv (fn [{:keys [lbl b fit]}]
                           (report-union! (:dir b) fit)
@@ -4641,18 +9528,42 @@
    Not fused in v1: `:shapes` stay the reference session's (a traced outline is
    geometry, not a pose; transporting it is a separate move)."
   [& args]
-  (let [[x y] args]
+  (let [[x y] args
+        ;; `(acquire-union :A A :B B)` — the labels and the sessions written as
+        ;; keyword ARGUMENTS instead of as pairs. It is the natural mistake:
+        ;; everything else that takes a name and a value in this language reads
+        ;; that way, and the shape is one bracket away from correct. Worth
+        ;; recognising by name, because the generic refusal below sends you to
+        ;; read the signature when you already know it (Vincenzo 2026-08-14).
+        kwargs? (and (>= (count args) 4)
+                     (even? (count args))
+                     (every? keyword? (take-nth 2 args))
+                     (every? acq? (take-nth 2 (rest args))))]
     (cond
+      kwargs?
+      (do (state/capture-println
+           (str ";; acquire-union: sessions go in PAIRS inside a vector, not "
+                "as keyword arguments.\n"
+                ";;   you wrote:   (acquire-union "
+                (str/join " " (map (fn [a] (if (keyword? a) (str a) "…")) args)) ")\n"
+                ";;   it goes:     (acquire-union [["
+                (str/join "] [" (map (fn [[k _]] (str k " …"))
+                                     (partition 2 args)))
+                "]])\n"
+                ";; The vector matters because ORDER counts: the first session is the "
+                "reference, and the fusion lands in its frame."))
+          nil)
+
       (not (labelled-sessions? x))
       (do (state/capture-println
-           (str ";; acquire-union: le sessioni vanno etichettate, così ogni mark resta "
-                "indirizzabile dopo la fusione:\n"
+           (str ";; acquire-union: sessions must be labelled, so every mark stays "
+                "addressable after the fusion:\n"
                 ";;   (acquire-union [[:A A] [:B B]])"))
           nil)
 
       (< (count x) 2)
       (do (state/capture-println
-           ";; acquire-union: una sessione sola non è una fusione — passane due")
+           ";; acquire-union: a single session is not a fusion — pass two")
           (second (first x)))
 
       ;; with a correspondence list: read it as written. The builder takes BOTH
@@ -4663,15 +9574,25 @@
 
       (some? y)
       (do (state/capture-println
-           (str ";; acquire-union: il secondo argomento, se c'è, è la lista delle "
-                "corrispondenze — es. [[:A/p1 :B/p3] [:A/p2 :B/p1]]"))
+           (str ";; acquire-union: the second argument, if any, is the list of "
+                "correspondences — e.g. [[:A/p1 :B/p3] [:A/p2 :B/p1]]"))
           nil)
 
       ;; without one: the shared names ARE the declaration
       :else
-      (let [marks-of (into {} (map (fn [[l a]] [l (:marks a)]) x))]
+      ;; Edges join marks as anchors here. They were measured all along and read
+      ;; by nothing: an edge pins four degrees of freedom to a plane's three, is
+      ;; measured along its whole length, and — the part that decides it — needs
+      ;; no point paired with any other point. On an object whose only flat zones
+      ;; are parallel (Vincenzo's grinder, 2026-08-14) they are the only anchors
+      ;; there are.
+      (let [marks-of (into {} (map (fn [[l a]] [l (:marks a)]) x))
+            edges-of (into {} (map (fn [[l a]] [l (:edges a)]) x))]
         (fuse-sessions x
-                       (fn [to-lbl _lbl b] [(fuse/shared-name-anchors (get marks-of to-lbl) (:marks b)) nil])
+                       (fn [to-lbl _lbl b]
+                         [(fuse/shared-name-anchors (get marks-of to-lbl) (:marks b)
+                                                    (get edges-of to-lbl) (:edges b))
+                          nil])
                        false)))))
 
 ;; ============================================================
@@ -4688,12 +9609,18 @@
     (stop-pnp!) ; removes the canvas pointer handler + placed-marker overlay
     (stop-marker!) ; removes the marker-click canvas pointer handler
     (stop-mark!) ; removes the named-mark pointer/wheel handlers + labels
-    (teardown-retrace-listeners!) ; removes retrace pointer/wheel handlers + loupe
     (teardown-frustum-listeners!) ; removes the stage click-a-frustum pointer handlers
+    (camera/unwatch-devices!)
+    ;; Release the camera. A live stream left running keeps the recording light on
+    ;; after the session that asked for it is gone — a device the user can see is
+    ;; on, with nothing on screen explaining why.
+    (camera/stop!)
     ;; The ricalco is no longer printed loose here (P4a-3): confirm! folds it into
     ;; the acquire form's :shapes via emit-acquire-code; discard/cancel emit nothing.
     (viewport/unregister-frame-callback! :edit-acquire)
     (gizmo/close!)
+    (remove-pose-sliders!)
+    (remove-pose-rings!)
     (backdrop/clear!)
     (viewport/clear-preview!)
     (viewport/show-user-geometry!)
@@ -4730,11 +9657,10 @@
    the anchor machinery. :heading = the face normal, :up = an in-plane box axis;
    object-frame position/normal lifted to world through the SAME pose the box is
    emitted at, so marks and proxy stay coincident. Names keywordized + uniquified."
-  [pose]
+  [pose seen]
   (let [{:keys [ex ey ez]} (bridge/box-basis pose)
         world-dir (fn [[nx ny nz]]
                     (m/normalize (m/v+ (m/v* ex nx) (m/v+ (m/v* ey ny) (m/v* ez nz)))))
-        seen (atom #{})
         uniq (fn [nm] (loop [n (if (seq nm) nm "mark")]
                         (if (contains? @seen n) (recur (str n "-2")) (do (swap! seen conj n) n))))]
     (mapv (fn [{:keys [name position normal]}]
@@ -4839,12 +9765,19 @@
          ;; :shapes/:marks are MERGED with what the marker already holds rather
          ;; than regenerated wholesale: this session owns the ricalchi and the
          ;; 'k' marks it can see, and nothing else in those maps is its business.
-         i3 ":shapes " (fmt-map-block ":shapes"
-                                      (merge-entries (preserved-entries ":shapes")
-                                                     (shapes-entries anchor-pose)) i3) "\n"
+         ;; :shapes is no longer WRITTEN — an anchor is a pose and lives in
+         ;; :marks. It is still emitted when the marker already carried some, so
+         ;; a form produced before this keeps its traced shapes instead of losing
+         ;; them on the next confirm; a session that has none omits the key.
+         (let [kept (preserved-entries ":shapes")]
+           (if (seq kept)
+             (str i3 ":shapes " (fmt-map-block ":shapes" kept i3) "\n")
+             ""))
          i3 ":marks " (fmt-map-block ":marks"
-                                     (merge-entries (preserved-entries ":marks")
-                                                    (marks-entries anchor-pose)) i3) "\n"
+                                     (let [seen (atom #{})]
+                                       (merge-entries (preserved-entries ":marks")
+                                                      (marks-entries anchor-pose seen)))
+                                     i3) "\n"
          ;; :edges is emitted EMPTY (this session measures none — edges are the
          ;; stage's Spigolo gesture, which runs after registration is over) but it
          ;; is emitted, so the gesture finds its slot instead of having to insert
@@ -4880,7 +9813,7 @@
         (do (modal/replace-source! from to code)
             (close!)
             (modal/run-definitions!))
-        (do (state/capture-println (str ";; acquire — nessun marcatore in sorgente, forma da copiare:\n" code))
+        (do (state/capture-println (str ";; acquire — no marker in the source, form to copy:\n" code))
             (close!))))))
 
 (defn- cancel!
@@ -4908,54 +9841,112 @@
 ;; Session mount + entry points
 ;; ------------------------------------------------------------
 
+(defn- session-json-from-folder
+  "session.json's TEXT for a folder of images with NO NOTE.md: every photo
+   out-of-ring (θ nil), in filename order.
+
+   This is not a lenient fallback, it is the registration CAGE's protocol. The
+   reference travels WITH the object, so there is no turntable, no angle to
+   record, and therefore nothing a NOTE could say that the folder doesn't:
+   every shot is free and registers on its own marks via PnP ('p'). The photo
+   table was only ever the turntable's log.
+
+   Without this, `ensure-session-json!`'s last resort — an EMPTY session, right
+   for an empty folder — would swallow a folder of real photos AND persist the
+   emptiness, so the second open wouldn't even reach this code."
+  [dir files]
+  (state/capture-println
+   (str "edit-acquire: no NOTE.md in " dir " — taking the " (count files)
+        " photos from the folder, all out-of-ring (θ free). It is the cage"
+        " protocol: register them one by one with 'p'."))
+  (js/JSON.stringify
+   (clj->js {:dir dir :photos (mapv (fn [f] [f nil]) files) :bootstrap []})
+   nil 1))
+
 (defn- build-session-json-from-note
   "Build session.json's TEXT for `dir` from its NOTE.md + image files — the
    same shape and rules cli.cljs's init-session writes, but IN-APP so a fresh
    session (photos + NOTE.md, no session.json yet) opens without the manual
    `node out/paq.js --init-session …` step. Parsing goes through the shared
    ridley.photogrammetry.note, so the tool and the CLI agree on angles and on
-   which shots are out-of-ring (θ `libera`). Returns Promise<string>; rejects
-   when there is no NOTE.md with a photo table."
+   which shots are out-of-ring (θ `libera`). With images but no NOTE, falls
+   back to `session-json-from-folder`. Returns Promise<string>; rejects only
+   when the folder has neither a NOTE with a photo table nor a single image."
   [dir]
   (-> (js/Promise.all
        #js [(-> (stl/desktop-read-file (str dir "/NOTE.md")) (.catch (fn [_] nil)))
-            (-> (stl/desktop-list-dir dir) (.catch (fn [_] #js [])))])
+            (-> (stl/desktop-list-dir dir)
+                ;; NOT swallowed. A rejection here means the file service did not
+                ;; answer — and an unanswered question is not the answer "the
+                ;; folder is empty", which is what swallowing it said: the session
+                ;; then opened EMPTY on a folder full of photos and invited the
+                ;; user to grab a frame (2026-08-23, and it read as "the app lost
+                ;; my photos" in both the desktop and the browser). An empty folder
+                ;; resolves to [] and still lands in the live-grab branch below;
+                ;; only silence gets reported.
+                (.catch (fn [err]
+                          (if (str/includes? (str (.-message err))
+                                             stl/service-unreachable)
+                            (throw err)
+                            ;; the service answered, it just could not list this
+                            ;; folder — same as an empty one, as before
+                            #js []))))])
       (.then (fn [^js results]
                (let [note-txt (aget results 0)
                      files (->> (array-seq (aget results 1))
                                 (map (fn [^js e] (.-name e)))
                                 (filter #(re-find #"(?i)\.(jpe?g|png)$" %))
                                 sort vec)]
-                 (when-not note-txt
-                   (throw (js/Error. (str "manca NOTE.md in " dir))))
-                 (let [{:keys [photos caliper]} (note/parse-note-text note-txt)]
-                   (when-not (seq photos)
-                     (throw (js/Error. (str "il NOTE.md di " dir " non ha una tabella foto"))))
-                   (let [missing (remove (set files) (map :image photos))]
-                     (when (seq missing)
-                       (state/capture-println
-                        (str "edit-acquire: foto citate nel NOTE ma assenti nella cartella: "
-                             (str/join ", " missing)))))
-                   (js/JSON.stringify
-                    (clj->js {:dir dir
-                              :photos (mapv (fn [p] [(:image p) (:theta-deg p)]) photos)
-                              :bootstrap (vec (keep #(when (:star? %) (:image %)) photos))
-                              :caliper caliper})
-                    nil 1)))))))
+                 (if-not note-txt
+                   (if (seq files)
+                     (session-json-from-folder dir files)
+                     (throw (js/Error. (str "neither NOTE.md nor images in " dir))))
+                   (let [{:keys [photos caliper]} (note/parse-note-text note-txt)]
+                     (when-not (seq photos)
+                       (throw (js/Error. (str "the NOTE.md of " dir " has no photo table"))))
+                     (let [missing (remove (set files) (map :image photos))]
+                       (when (seq missing)
+                         (state/capture-println
+                          (str "edit-acquire: photos named in the NOTE but missing from the folder: "
+                               (str/join ", " missing)))))
+                     (js/JSON.stringify
+                      (clj->js {:dir dir
+                                :photos (mapv (fn [p] [(:image p) (:theta-deg p)]) photos)
+                                :bootstrap (vec (keep #(when (:star? %) (:image %)) photos))
+                                :caliper caliper})
+                      nil 1))))))))
+
+(defn- empty-session-json
+  "session.json for a folder with nothing in it yet — the LIVE case: the session is
+   opened first and filled afterwards, one grabbed frame at a time. An empty film
+   is a legitimate starting state, not a missing file: refusing to open here would
+   mean there is no way to reach the Grab control that would create the photos the
+   refusal is complaining about."
+  [dir]
+  (js/JSON.stringify (clj->js {:dir dir :photos [] :bootstrap []}) nil 1))
 
 (defn- ensure-session-json!
-  "Resolve to session.json's TEXT for `dir`: read it if present, otherwise BUILD
-   it from NOTE.md (+ the folder's images) and write it back — so a fresh session
-   opens with no manual CLI step (Vincenzo 2026-07-26: 'non possiamo lanciare
-   --init-session a mano per ogni sessione'). Persisting is best-effort: a build
-   that can't be written still opens the session."
+  "Resolve to session.json's TEXT for `dir`: read it if present; otherwise BUILD it
+   from NOTE.md (+ the folder's images) — so a session of real photos opens with no
+   manual CLI step (Vincenzo 2026-07-26: 'non possiamo lanciare --init-session a
+   mano per ogni sessione') — and failing that, start an EMPTY one. Persisting is
+   best-effort: a document that can't be written still opens the session."
   [dir]
   (-> (stl/desktop-read-file (str dir "/session.json"))
       (.catch (fn [_]
                 (state/capture-println
-                 (str "edit-acquire: session.json assente in " dir
-                      " — la costruisco dal NOTE.md"))
+                 (str "edit-acquire: session.json missing in " dir
+                      " — building it from the folder"))
                 (-> (build-session-json-from-note dir)
+                    (.catch (fn [err]
+                              ;; an unreachable file service is not an empty folder
+                              (when (str/includes? (str (.-message err)) stl/service-unreachable)
+                                (throw err))
+                              (state/capture-println
+                               (str "edit-acquire: no readable NOTE.md in " dir
+                                    " (" err ") — opening an EMPTY session: fill it"
+                                    " by shooting live (Camera → Grab)."))
+                              (empty-session-json dir)))
                     (.then (fn [text]
                              (-> (stl/desktop-write-file text (str dir "/session.json"))
                                  (.then (fn [_] text))
@@ -4971,7 +9962,7 @@
   [proxy-mesh session-dir from-marker? build-pose]
   (-> (ensure-session-json! session-dir)
       (.then (fn [text]
-               (let [{:keys [photos]} (parse-session-json text)]
+               (let [{:keys [photos doc]} (parse-session-json text)]
                  (viewport/hide-user-geometry!)
                  ;; The camera must stay LOCKED for the whole session — but
                  ;; gizmo's own on-pointer-up unconditionally re-enables the
@@ -4991,6 +9982,9 @@
                  (viewport/register-frame-callback!
                   :edit-acquire (fn [_camera] (viewport/set-controls-enabled! false)))
                  (reset! session {:photos photos
+                                  ;; session.json as read, so appending a grabbed
+                                  ;; frame rewrites the film and nothing else
+                                  :session-doc doc
                                   :base-dir session-dir
                                   ;; build-pose = the construction turtle's pose
                                   ;; when edit-acquire ran; emit-acquire-code
@@ -5025,20 +10019,14 @@
                                   :pnp-outliers {}
                                   :pnp-armed 0
                                   :pnp-loupe-zoom loupe-zoom-default
-                                  ;; Ricalchi (P4a-3): a named polyline per traced
-                                  ;; feature; the first is created on entering the
-                                  ;; retrace ('d') mode (ensure-active-ricalco!).
-                                  ;; Overwritten by acquire-state.json on re-entry.
-                                  :ricalchi []
-                                  :ricalco-idx nil
                                   ;; P4a-3 named marks: the placed points (object
                                   ;; frame + normal + id) and the face for the NEXT
                                   ;; mark (its own plane, so switching it never
-                                  ;; clears the ricalco). Overwritten on re-entry
+                                  ;; clears anything). Overwritten on re-entry
                                   ;; by acquire-state.json (load-acquire-state!).
                                   :marks []
                                   :mark-plane {:axis 1 :sign 1 :offset 0.0}
-                                  :hide-proxy? false ; 'v' toggle in :retrace
+                                  :hide-proxy? false ; 'v' toggle
                                   :focal-mm default-focal-mm
                                   :focal-source :default
                                   :panel-el nil
@@ -5055,6 +10043,9 @@
                  ;; fresh session.
                  (-> (load-exif-focal! (first photos))
                      (.then (fn [_] (load-acquire-state!)))
+                     ;; then the plate itself: a calibration this session already
+                     ;; carries wins, otherwise the one filed under the plate
+                     (.then (fn [_] (load-plate-calibration!)))
                      (.then (fn [_]
                               ;; Put the object in a standard, intuitive pose (upright,
                               ;; turntable axis → world +Z, at the build turtle) AFTER
@@ -5066,10 +10057,45 @@
                               (backdrop/create! (viewport/get-camera))
                               (build-panel!)
                               (swap! session assoc :key-handler (modal/install-keydown! on-keydown))
-                              (enter-photo! 0)
-                              (report-focal!)))))))
+                              ;; keep the camera picker up to date for as long as
+                              ;; the session lives (a phone can arrive at any time)
+                              (watch-cameras!)
+                              ;; A session with no photos yet (the live case: it is
+                              ;; filled by grabbing) has nothing to enter — put the
+                              ;; camera at photo 0's vantage so the proxy is there to
+                              ;; aim at, and let Grab create the first view.
+                              (if (seq (:photos @session))
+                                (do (enter-photo! 0) (report-focal!))
+                                (do (viewport/set-camera-pose! (ensure-photo-pose 0))
+                                    (set-status-message!
+                                     (if (cage-proxy?)
+                                       ;; the plate's promise ("measures the lens")
+                                       ;; is not the cage's: its frames are kept
+                                       ;; unregistered, for 'p'+'a' by hand
+                                       (str "Empty session: open the camera and grab frames "
+                                            "— they are kept unregistered; on each, click 4 "
+                                            "discs on ONE ring with 'p', then press 'a'.")
+                                       (str "Empty session: open the camera and grab a frame "
+                                            "— the first one measures the lens.")))))))))))
       (.catch (fn [err]
+                ;; ALSO to the browser console: this runs after the evaluation has
+                ;; returned, so capture-println writes into a print buffer nobody
+                ;; flushes any more — the session dies and the user is told
+                ;; "Evaluation successful" and nothing else (2026-08-21, and it
+                ;; cost a long hunt to see an error that had been raised all along)
+                (js/console.error "edit-acquire: couldn't load session —" err)
                 (state/capture-println (str "edit-acquire: couldn't load session — " err))
+                ;; capture-println writes into a buffer nobody flushes any more at
+                ;; this point (see the note above); the REPL panel is the one
+                ;; surface that still reaches the user after evaluation returned
+                (auto-log!
+                 (if (str/includes? (str (.-message err)) stl/service-unreachable)
+                   (str "edit-acquire: the file service is not answering, so the photos in "
+                        session-dir " cannot be read. That service is Ridley Desktop's own "
+                        "local server (127.0.0.1:12321), and it serves a browser tab too. "
+                        "It does not start when another Ridley already holds the port: quit "
+                        "every Ridley window and open ONE.")
+                   (str "edit-acquire: couldn't load session — " err)))
                 (modal/release!)))))
 
 (defn ^:export enter!
@@ -5098,7 +10124,7 @@
 
       (not= :definitions @state/eval-source-var)
       (do (state/capture-println
-           "edit-acquire: aprilo dal pannello definizioni (Cmd+Enter), non dal REPL")
+           "edit-acquire: open it from the definitions panel (Cmd+Enter), not from the REPL")
           (acquire dir opts))
 
       :else
@@ -5107,7 +10133,7 @@
             ;; session hides geometry, so the emitted object anchors here.
             build-pose (state/get-turtle-pose)]
         (when (nil? (find-marker))
-          (throw (js/Error. (str "edit-acquire: non trovo '" marker-prefix " …)' nell'editor"))))
+          (throw (js/Error. (str "edit-acquire: cannot find '" marker-prefix " …)' in the editor"))))
         (modal/claim! :edit-acquire)
         (open-session! posed dir true build-pose)
         {:proxy posed
@@ -5133,7 +10159,6 @@
     ;; also re-render the current mode's preview, so a hot-swapped *-preview-items
     ;; (e.g. a dot size or a hide-proxy rule) shows without needing a manual redraw
     (case (:mode @session)
-      :retrace (redraw-retrace!)
       :mark (redraw-marks!)
       :pnp (do (redraw-pnp-preview!) (redraw-overlay-dots!))
       ;; gizmo/stage: in free orbit re-show the frustums too, else the plain object.

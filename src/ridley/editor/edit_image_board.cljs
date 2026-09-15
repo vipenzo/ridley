@@ -290,6 +290,7 @@
   (let [s @session
         panel (.createElement js/document "div")]
     (set! (.-id panel) "edit-image-board-panel")
+    (.setAttribute panel "data-manual" "edit-image-board")
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>edit-image-board"
                "<span class='pilot-mode-badge'>image</span></div>"

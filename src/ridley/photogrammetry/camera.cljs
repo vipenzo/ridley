@@ -42,13 +42,42 @@
     (cond
       (< theta 1e-9) [0.0 0.0 0.0]
       (< (- Math/PI theta) 1e-6)
-      ;; near pi: axis from the diagonal of (R + I)/2
-      (let [ax (Math/sqrt (max 0.0 (/ (+ m00 1.0) 2.0)))
-            ay (Math/sqrt (max 0.0 (/ (+ m11 1.0) 2.0)))
-            az (Math/sqrt (max 0.0 (/ (+ m22 1.0) 2.0)))
-            ay (if (neg? (- m01 m10)) (- ay) ay)
-            az (if (neg? (- m02 m20)) (- az) az)]
-        [(* theta ax) (* theta ay) (* theta az)])
+      ;; Near pi the usual formula is 0/0 (sin θ → 0) and the axis has to come
+      ;; from B = (R + I)/2, which at exactly pi is the outer product a·aᵀ.
+      ;;
+      ;; The diagonal of B gives the axis components' MAGNITUDES; their relative
+      ;; SIGNS have to come from B's off-diagonal, because B[i][j] = aᵢ·aⱼ. The
+      ;; previous version took the signs from (m01 − m10) and (m02 − m20)
+      ;; instead — but a rotation by pi is a SYMMETRIC matrix, so both of those
+      ;; are identically zero and neither test could ever fire. Every half-turn
+      ;; whose axis had two non-zero components came back with the wrong axis,
+      ;; and silently: `rodrigues` of the wrong rvec is a perfectly good rotation
+      ;; matrix, just not the one asked for.
+      ;;
+      ;; Found 2026-08-13 through look-at-pose, which is where it bites in
+      ;; practice: it builds `t` from the matrix and `:rvec` from this function,
+      ;; so a bad axis produced a pose whose rotation and translation disagreed —
+      ;; a synthetic camera that reported one centre and photographed from
+      ;; another. A camera looking down at a turntable from due +Y is exactly
+      ;; such a half-turn.
+      ;;
+      ;; Anchoring on the LARGEST component keeps the division well-conditioned;
+      ;; the overall sign of the axis is free (a and −a give the same rotation at
+      ;; pi), so fixing the anchor positive loses nothing.
+      (let [B [[(/ (+ m00 1.0) 2.0) (/ (+ m01 m10) 4.0) (/ (+ m02 m20) 4.0)]
+               [(/ (+ m01 m10) 4.0) (/ (+ m11 1.0) 2.0) (/ (+ m12 m21) 4.0)]
+               [(/ (+ m02 m20) 4.0) (/ (+ m12 m21) 4.0) (/ (+ m22 1.0) 2.0)]]
+            k (apply max-key #(nth (nth B %) %) [0 1 2])
+            ak (Math/sqrt (max 0.0 (nth (nth B k) k)))
+            axis (if (< ak 1e-9)
+                   ;; B has no usable diagonal — cannot happen for a true
+                   ;; rotation at pi (a is a unit vector, so some aᵢ² ≥ 1/3), but
+                   ;; a numerically battered matrix should not produce NaN
+                   [1.0 0.0 0.0]
+                   (mapv #(/ (nth (nth B k) %) ak) [0 1 2]))
+            len (Math/sqrt (reduce + 0.0 (map * axis axis)))
+            axis (if (> len 1e-9) (mapv #(/ % len) axis) axis)]
+        (mapv #(* theta %) axis))
       :else
       (let [s (/ theta (* 2.0 (Math/sin theta)))]
         [(* s (- m21 m12)) (* s (- m02 m20)) (* s (- m10 m01))]))))

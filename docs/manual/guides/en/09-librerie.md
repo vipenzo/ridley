@@ -117,7 +117,7 @@ A library is ordinary Clojure code. Everything you can write in the main editor 
     (cyl (* r 1.1) 1)))
 ```
 
-Only the top-level `def`s and `defn`s become public symbols of the library. The local variables (inside `let`, `loop`, etc.) stay private.
+Only the top-level `def`s, `defn`s and `defonce`s become public symbols of the library; `defn-` and `^:private` stay private, and a `defmacro` works inside the library but does not cross the prefix. The local variables (inside `let`, `loop`, etc.) stay private. Watch the code outside functions: it runs on every Run in which the library is active, so a top-level `register` puts its geometry in the scene every time. Chapter 19.5 explains the mechanism.
 
 ### Edit mode
 
@@ -129,10 +129,11 @@ A Cmd+Enter during edit mode evaluates the source in the editor as if it were th
 
 ### Dependencies
 
-If a library uses functions of another, declare it in the header. The header is the first line of the source, in comment format:
+If a library uses functions of another, declare it in the header. The header is the first lines of the source, in comment format, with the names separated by commas (from the panel, the Requires buttons write it):
 
 ```clojure
-;; :requires [my-shapes utils]
+;; Ridley Library: my-parts
+;; Requires: my-shapes, utils
 ```
 
 Ridley reads this declaration and loads the dependencies before the current library. If a dependency is not active or does not exist, the library is skipped with a warning.

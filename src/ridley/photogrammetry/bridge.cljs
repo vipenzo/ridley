@@ -17,10 +17,12 @@
    the proxy known and fixed (photos 1..N-1, proxy frozen); solver-pose->proxy
    needs the camera known and fixed (photo 0, where the gizmo moves the proxy
    with the camera still)."
-  (:require [ridley.math :as m]
+  (:require [clojure.string :as str]
+            [ridley.math :as m]
             [ridley.photogrammetry.camera :as cam]
             [ridley.photogrammetry.box-fit :as bf]
-            [ridley.photogrammetry.linalg :as la]))
+            [ridley.photogrammetry.linalg :as la]
+            [ridley.photogrammetry.pnp :as pnp]))
 
 (defn box-basis
   "{:ex :ey :ez} — world-space orthonormal basis of the box's own local axes
@@ -130,6 +132,52 @@
   [proxy-pose v]
   (to-local-dir (box-basis proxy-pose) v))
 
+(defn local->world-dir
+  "An OBJECT-frame direction lifted to world through `proxy-pose`'s box-basis —
+   the oriented companion of local->world (points), inverse of world->local-dir."
+  [proxy-pose [x y z]]
+  (let [{:keys [ex ey ez]} (box-basis proxy-pose)]
+    (m/normalize (m/v+ (m/v* ex x) (m/v+ (m/v* ey y) (m/v* ez z))))))
+
+;; ---- the planes a registration cage's rings span ----
+;;
+;; `(:rings cage)` is ordered biggest first, each {:axis :x|:y|:z :inner :outer …}
+;; in the cage's object frame. The bench knows the rings by SIZE — big, medium,
+;; small, what the eye tells apart — and the model by axis; both spellings are
+;; accepted, in any case.
+
+(def ^:private ring-by-size {:big 0 :medium 1 :small 2})
+
+(defn ring-of
+  "The ring entry named by `which` — :big/:medium/:small or :x/:y/:z — or nil
+   when the proxy has no such ring (not a cage, or a name it lacks)."
+  [rings which]
+  (when (and (seq rings) (keyword? which))
+    (let [k (keyword (str/lower-case (name which)))]
+      (if-let [i (ring-by-size k)]
+        (nth rings i nil)
+        (first (filter #(= k (:axis %)) rings))))))
+
+(defn ring-spec?
+  "A deferred `(plane-by-eye :big)`: a ring named, no pose yet. `acquire`
+   resolves it against its own proxy (ring-plane-pose)."
+  [v]
+  (and (map? v) (contains? v :ring) (not (contains? v :position))))
+
+(defn ring-plane-pose
+  "World pose of the plane ring `which` spans, with the cage at `proxy-pose`:
+   the cage's centre, normal = the ring's axis, up = the next axis round (so the
+   three rings' planes are mutually consistent — the same choice as
+   edit-acquire's ring presets). nil for no such ring."
+  [rings proxy-pose which]
+  (when-let [{:keys [axis]} (ring-of rings which)]
+    (let [unit (fn [i] (assoc [0.0 0.0 0.0] i 1.0))
+          n (unit (case axis :x 0 :y 1 :z 2))
+          u (unit (case axis :x 1 :y 2 :z 0))]
+      {:position (vec (:position proxy-pose))
+       :heading (local->world-dir proxy-pose n)
+       :up (local->world-dir proxy-pose u)})))
+
 (defn dims-from-mesh
   "Box extents [w h d] from `mesh`'s ACTUAL vertices (not from construction
    arguments — robust to however the box was parameterized), projected into
@@ -142,40 +190,89 @@
         extent (fn [i] (let [xs (axis-vals i)] (- (apply max xs) (apply min xs))))]
     [(extent 0) (extent 1) (extent 2)]))
 
+(defn index-anchor?
+  "True for an anchor id that is a ZERO-INDEX rather than a crown mark: `:zero`
+   on a plate, `:zero-zp` … on a cage's six marked faces.
+
+   Index marks ride in :anchors so they transport rigidly with the geometry for
+   free (see plate-detect). The name is the carrier because :anchors is a flat
+   map with no room for a second kind of key, and a prefix survives the rigid
+   transports and the calibration rewrites that replace the values.
+
+   Whether one may be PICKED depends on the proxy. On a plate, no: the index is
+   what plate-detect orients the whole plate by and what the auto-detector
+   assigns identities from, so it is machinery, not a target. On a cage, yes,
+   and it is the most valuable target there is — see pnp-target-points."
+  [id]
+  (= 0 (.indexOf (name id) "zero")))
+
 (defn pnp-target-points
   "The indexed PnP correspondence targets for `proxy-mesh` seen from
    `camera-pose` — source-agnostic so the whole picking gesture (pick indices,
    cycle, correspondence build) is identical whatever the proxy is:
 
-   - a proxy carrying named marks (:anchors — a registration PLATE) yields one
-     target per mark, its :obj the mark's position in the object/solver frame
-     (world->local, the SAME frame box corners live in, so the solver is
-     unchanged), :world the mark at the current pose, :id the mark keyword;
+   - a proxy carrying named marks (:anchors — a registration PLATE or CAGE)
+     yields one target per mark, its :obj the mark's position in the object/
+     solver frame (world->local, the SAME frame box corners live in, so the
+     solver is unchanged), :world the mark at the current pose, :id the mark
+     keyword;
    - otherwise the 8 box corners (bf/corners), :id the 0-7 corner index.
 
    Each: {:obj [x y z] :world [x y z] :visible? bool :id kw-or-int}. Colour and
    label are the UI layer's concern (edit_acquire), deliberately not here. Pure."
   [proxy-mesh camera-pose]
-  (let [proxy-pose (:creation-pose proxy-mesh)]
-    ;; :zero is the plate's asymmetric ZERO-INDEX (see plate-detect) — it rides in
-    ;; :anchors so it transports rigidly for free, but it is NOT a crown mark to
-    ;; pick, so it never appears among the pickable targets.
-    (if-let [marks (seq (sort-by key (dissoc (:anchors proxy-mesh) :zero)))]
+  (let [proxy-pose (:creation-pose proxy-mesh)
+        ;; Per-mark front-facing is right for a CAGE and wrong for a PLATE, so
+        ;; the proxy declares which it wants rather than being sniffed for.
+        ;;
+        ;; A plate's marks are all coplanar on ONE face and the user always
+        ;; photographs THAT face, so every mark is offerable — and culling them
+        ;; would actively break it, because before PnP there is no pose to test
+        ;; against except the default vantage, which frames the plate's blank
+        ;; underside: it would hide every mark and leave nothing to click on a
+        ;; fresh session.
+        ;;
+        ;; A cage has no such face. Whatever the vantage, about half its marks
+        ;; are turned away — never all of them, so the plate's failure cannot
+        ;; happen — and offering those invites a click on a disc that is not in
+        ;; the picture. Occlusion of a mark BY THE PART stays the user's 'o' key.
+        cull? (boolean (:anchor-culling? proxy-mesh))
+        cam-pos (:position camera-pose)]
+    (if-let [marks (seq (sort-by key (cond->> (:anchors proxy-mesh)
+                                       ;; …on a CAGE. A plate's index is a
+                                       ;; different animal — plate-detect reads
+                                       ;; it to orient the whole plate, and the
+                                       ;; auto-detector assigns identities from
+                                       ;; it — so there it stays out of the
+                                       ;; picking gesture, as before. The proxy
+                                       ;; declares which it is, same as culling.
+                                       (not cull?) (remove (comp index-anchor? key)))))]
       (mapv (fn [[id pose]]
               (let [world (:position pose)]
                 {:id id
+                 ;; the ZERO-INDEX is offered too, and it is the most valuable
+                 ;; disc on the proxy. A crown of n equal marks is invariant
+                 ;; under rotation and looks the same mirrored from its other
+                 ;; face, so ITS OWN picks can never say which mark is which:
+                 ;; measured on a real photograph, all 48 readings of one crown
+                 ;; fit to the same 32.5px. The index is the single disc that
+                 ;; breaks both symmetries at once, so one click on it pins the
+                 ;; ring's numbering AND its face. Withholding it — the rule
+                 ;; until 2026-08-23 — kept the one printed feature that answers
+                 ;; the question out of the only gesture that could ask it.
+                 :index? (index-anchor? id)
                  :obj (world->local proxy-pose world)
                  :world world
-                 ;; A registration plate's marks are all coplanar on ONE face and
-                 ;; the user always photographs THAT face — so every mark is on
-                 ;; the visible side, always offerable. (Per-mark front-facing is
-                 ;; a BOX notion — hide corners on the back face — that here only
-                 ;; mis-fires: before PnP there is no pose to test against except
-                 ;; the default vantage, which frames the plate's blank underside,
-                 ;; so it would hide every mark and leave nothing to click on a
-                 ;; fresh session; and PnP is seedless, needing no rough pose.)
-                 ;; Occlusion of a mark BY THE PART is the user's 'o' key.
-                 :visible? true}))
+                 ;; the mark's own printed-face normal in the OBJECT frame, so a
+                 ;; solved pose can be tested against the physical fact that the
+                 ;; disc was photographed — see camera-sees-marks?
+                 :normal (some->> (:heading pose)
+                                  (world->local-dir proxy-pose)
+                                  m/normalize)
+                 :visible? (if (and cull? cam-pos (:heading pose))
+                             (pos? (m/dot (m/normalize (:heading pose))
+                                          (m/v- cam-pos world)))
+                             true)}))
             marks)
       (let [dims (dims-from-mesh proxy-mesh proxy-pose)
             objs (bf/corners dims)
@@ -186,6 +283,68 @@
                  :world (local->world proxy-pose obj)
                  :visible? (contains? visible i)})
               (range) objs)))))
+
+(def cage-face-margin-deg
+  "Below this ELEVATION of the sight line over a ring's plane (degrees), the
+   ring does not declare a face at all: an edge-on ring is ambiguous, and a
+   declaration made from ambiguity poisons everything downstream. The number
+   is bought experience, not taste: on battiscopa3 grab-05 the Y face was
+   decided by 13–17° of margin and that verdict held half a day of wrong
+   diagnoses (2026-08-31). Twenty degrees keeps that case silent."
+  20.0)
+
+(defn cage-faces-from-pose
+  "Which FACE of each ring the camera at `camera-pose` sees, read off the poses
+   themselves — the virtual twin of Vincenzo's physical gesture «prendo in mano
+   la gabbia e la appaio alla foto» (decision of 2026-08-31: after the aligned-
+   by-eye pose, faces are READ, no longer declared photo by photo — three
+   photos in a row had hand-declared faces wrong, and every face error poisons
+   the solve and every diagnosis after it).
+
+   For ring `axis`, the face the camera sees is the sign of the component of
+   (camera − cage-centre) along the ring's world axis; the ring axes are the
+   cage's own frame at :creation-pose (box-basis), which rides every rigid
+   transport together with the anchors. The GUARD: below `margin-deg` of
+   elevation (default `cage-face-margin-deg`) the ring is nearly edge-on and
+   :sign is nil — per-mark culling of the pose stays in charge, no declaration.
+
+   A ring declared glued TURNED OVER (:cage-flips on the mesh — see
+   registration-cage's :flips) reads INVERTED: the face is named by the
+   PRINT's label, the same convention the ids and the passetto reading use,
+   and on a flipped ring the camera standing on the +axis side is looking at
+   the printed m face. Without this the derivation would re-declare the very
+   misreading the flip declaration exists to end.
+
+   Returns {:x {:sign 1|-1|nil :geo-sign 1|-1 :elev-deg d} :y … :z …}.
+   :elev-deg is reported even when readable, so the caller can SAY the margin
+   instead of asserting a verdict stronger than its evidence; :geo-sign is the
+   face the geometry alone gives, guard or no guard. The two differ exactly on
+   an edge-on ring, and the difference is the point: :sign is what may be
+   DECLARED (it moves picks, so it must be safe), :geo-sign is what may be
+   SUGGESTED — 'the pose would say Ym, you decide'. Offering nothing there was
+   worse than offering a guess labelled as one: it left the user with two dead
+   buttons and no hint of what the model saw (Vincenzo 2026-09-01, photo 4 of
+   battiscopa3, whose Y ring is the 13–17° case the guard was built for). Pure."
+  ([proxy-mesh camera-pose]
+   (cage-faces-from-pose proxy-mesh camera-pose nil))
+  ([proxy-mesh camera-pose {:keys [margin-deg]}]
+   (let [pose (:creation-pose proxy-mesh)
+         {:keys [ex ey ez]} (box-basis pose)
+         margin (or margin-deg cage-face-margin-deg)
+         flips (or (:cage-flips proxy-mesh) #{})
+         v (m/normalize (m/v- (:position camera-pose) (:position pose)))]
+     (into {}
+           (map (fn [[axis a]]
+                  (let [d (m/dot v a)
+                        elev (* (js/Math.asin (min 1.0 (js/Math.abs d)))
+                                (/ 180.0 js/Math.PI))
+                        geo (if (contains? flips axis)
+                              (if (pos? d) -1 1)
+                              (if (pos? d) 1 -1))]
+                    [axis {:sign (when (>= elev margin) geo)
+                           :geo-sign geo
+                           :elev-deg elev}])))
+           {:x ex :y ey :z ez}))))
 
 (defn plate-detect
   "The extras a registration PLATE carries for identity-free registration (fetta
@@ -219,6 +378,37 @@
   [{:keys [face-normal zero-obj]} solver-pose]
   (when (and face-normal zero-obj solver-pose)
     (pos? (m/dot face-normal (m/v- (cam/camera-center solver-pose) zero-obj)))))
+
+(def behind-face-cos
+  "How far behind a mark's printed face a solved camera may fall before the pose
+   is called impossible — a cosine, ≈4.6°. Not zero: a mark seen almost exactly
+   edge-on sits at cos ≈ 0, and a pose that is merely IMPRECISE would then flip
+   the sign of a mark that was legitimately, if badly, clicked. Anything further
+   behind than this is not imprecision — it is the wrong side."
+  -0.08)
+
+(defn camera-sees-marks?
+  "True when `solver-pose` puts the camera on the printed side of EVERY mark in
+   `cis` (indices into `targets`, i.e. the marks the user says they clicked).
+
+   The generalisation of camera-sees-marked-face? from a plate — one face, one
+   normal, one zero-index — to a proxy whose marks face different ways, which is
+   what a CAGE is. The physical fact is unchanged and just as sharp: those discs
+   were photographed, so the camera was in front of each of them. A pose that
+   puts it behind one is not unlikely, it is impossible.
+
+   Targets carrying no :normal (box corners) never veto. Pure."
+  [targets cis solver-pose]
+  (when solver-pose
+    (let [c (cam/camera-center solver-pose)]
+      (every? (fn [i]
+                (let [{:keys [normal obj]} (nth targets i nil)]
+                  (or (nil? normal)
+                      (let [v (m/v- c obj)
+                            len (Math/sqrt (m/dot v v))]
+                        (or (zero? len)
+                            (> (/ (m/dot normal v) len) behind-face-cos))))))
+              cis))))
 
 (defn mirror-crown-index
   "The index the SAME physical disc takes under the plate's own mirror symmetry:
@@ -281,3 +471,66 @@
                    (+ (* dx dx) (* dy dy)))
                  js/Infinity))]
     (apply min-key cost (klein-images camera-pose proxy-pose))))
+
+;; ── per-photo registration quality: the stage's ✓/⚠ flag ─────────────────────
+
+(def poor-registration-px
+  "Above this per-photo PnP rms a PLATE (or box) photo reprojects visibly off,
+   so points clicked on it are worth less. Measured on param-plate-paper: ~4-5px
+   on the turntable ring, 1.4px looking straight down, 9-11px on the two grazing
+   shots. The gap is wide and 8px sits in it. A CAGE is judged by its own bar
+   instead — see registration-verdict."
+  8.0)
+
+(def grazing-deg
+  "Below this elevation above the plate's marked face a photo counts as GRAZING.
+   Measured across a whole session, the reprojection rms tracks elevation and
+   nothing else: 84° → 1.4px, ~39° (the ring) → 4.2-5.2px, 19° → 9.4px,
+   15° → 10.7px. That is the signature of a systematic camera-model error (an
+   imperfect focal, unmodelled radial distortion), which a fronto-parallel plane
+   absorbs into its distance and an oblique one cannot — not of sloppy clicking.
+   Worth separating, because the advice is the opposite: on a grazing photo
+   re-clicking does NOT help."
+  25.0)
+
+(defn registration-verdict
+  "What is wrong with one photo's registration, or nil when nothing is — the
+   decision behind the stage's per-photo ✓/⚠ flag, pure so the bench can hold
+   it still. `kind` is :plate, :cage or :box; `rms-px` the recorded per-photo
+   fit (nil when never solved); `behind?` whether the camera sits behind the
+   plate's marked face; `elevation-deg` the camera's elevation over that face.
+
+     → :flipped   the camera is behind the marked face — impossible, re-register
+       :grazing   correct but looser, shot nearly in the plate's plane
+       :loose     rms above the target's own bar with no such excuse
+       nil        nothing wrong
+
+   The rules were the PLATE's, and gating them on the target kind is the whole
+   point. Vincenzo (2026-08-29), on a cage session: «le foto dalla 2 in avanti
+   sono flaggate col triangolino — sembrano corrette», and they WERE. Three
+   plate assumptions were being applied to a cage because the stage's 'is a
+   plate' test was 'has named anchors', which a cage satisfies:
+   - :flipped is the planar mirror twin, real only for a single marked face. A
+     cage carries marks on BOTH faces of three orthogonal rings and is
+     photographed from all around ON PURPOSE — measured on the battiscopa
+     session, photo 3 sat at rms 7.7px, clean, and was branded impossible for
+     being 6mm past the model's +Z plane.
+   - :grazing needs a marked plane to graze; a cage has none (for ANY viewing
+     direction some ring faces the camera at ≥35° — cage.cljs, WHY THREE RINGS).
+   - the rms bar is the target's own: 8px for a plate (sub-pixel snaps on
+     4032px photos), but the solver's acceptance bar (pnp/accept-rms-px, 12)
+     for a cage — live-grab cage sessions sit at 5-12px over ~20px of physical
+     model slop (mid-ring planarity, per-mounting phases), so the plate's bar
+     flags photos that are healthy by the cage's own standard.
+   So for a :cage, `behind?` and `elevation-deg` are ignored whatever they say."
+  [{:keys [kind rms-px behind? elevation-deg]}]
+  (if (and (= kind :plate) behind?)
+    ;; not gated on a recorded rms: an impossible pose is impossible whether or
+    ;; not this photo ever recorded one
+    :flipped
+    (when rms-px
+      (cond
+        (<= rms-px (if (= kind :cage) pnp/accept-rms-px poor-registration-px)) nil
+        ;; an unknown elevation earns no excuse — fall through to :loose
+        (and (= kind :plate) elevation-deg (< elevation-deg grazing-deg)) :grazing
+        :else :loose))))

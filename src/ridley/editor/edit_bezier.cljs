@@ -363,6 +363,7 @@
         point-label (if anchor? "Handle" "Point")
         panel (.createElement js/document "div")]
     (set! (.-id panel) "edit-bezier-panel")
+    (.setAttribute panel "data-manual" "edit-bezier")
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>edit-bezier"
                "<span class='pilot-mode-badge'>" mode "</span></div>"

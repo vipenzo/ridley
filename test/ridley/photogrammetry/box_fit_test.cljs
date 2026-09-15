@@ -49,6 +49,45 @@
           p (la/mat*mat m mt)]
       (is (vclose? (flatten p) (flatten (la/identity-mat 3)) 1e-9)))))
 
+(deftest half-turns-round-trip
+  (testing "a rotation by pi survives matrix -> rvec -> matrix
+
+   The old round-trip cases stopped at |rvec| = 2.9, short of the pi branch, and
+   that branch was wrong: it read the axis' signs from (m01 - m10) and
+   (m02 - m20), which are identically ZERO for a half-turn because such a matrix
+   is symmetric. Any axis with two non-zero components came back with the wrong
+   signs — a different rotation, returned without complaint.
+
+   Compare MATRICES, not rvecs: at exactly pi the axis is only defined up to
+   sign (a and -a name the same rotation), so an rvec comparison would fail on a
+   correct answer."
+    (doseq [axis [[1.0 0.0 0.0] [0.0 1.0 0.0] [0.0 0.0 1.0]
+                  [0.0 0.8189 0.5738]   ; the look-at case that found this
+                  [0.7071 0.7071 0.0] [0.0 0.7071 -0.7071]
+                  [0.5774 -0.5774 0.5774]]]
+      (let [m (cam/rodrigues (mapv #(* Math/PI %) axis))
+            back (cam/rodrigues (cam/rot-mat->rodrigues m))]
+        (is (vclose? (flatten back) (flatten m) 1e-6)
+            (str "half-turn about " axis " did not survive the round trip"))))))
+
+(deftest look-at-pose-is-self-consistent
+  (testing "the pose look-at-pose returns puts the camera where it was asked to
+
+   :rvec and :t are built from the same rotation matrix, so an rvec that does not
+   encode that matrix yields a pose whose rotation and translation disagree —
+   a camera that reports one centre and photographs from another. This is how the
+   pi bug surfaced (a synthetic turntable view from due +Y, 2026-08-13), and it is
+   the property worth pinning: whatever the axis-angle conversion does inside,
+   camera-center must give the eye back."
+    (doseq [eye [[0.0 491.5 344.1]    ; due +Y, looking down: exactly a half-turn
+                 [0.0 -491.5 344.1]
+                 [491.5 0.0 344.1]
+                 [0.0 0.0 600.0]
+                 [-347.5 347.5 344.1]]]
+      (let [pose (cam/look-at-pose eye [0.0 0.0 0.0] [0.0 0.0 1.0])]
+        (is (vclose? (cam/camera-center pose) eye 1e-6)
+            (str "camera-center disagrees with the eye it was built from: " eye))))))
+
 (deftest projection-basics
   (testing "a point on the optical axis projects to the principal point"
     (let [k (cam/intrinsics-from-fov 60.0 1000 800)

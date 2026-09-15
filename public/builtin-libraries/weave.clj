@@ -47,8 +47,10 @@
 
 ;(register debug-hm (attach (heightmap-to-mesh (weave-hm 1)) (u 30)))
 
-(register AA
-          (attach
-           (loft-n 128 (heightmap (circle 20 256) (weave-hm 1) :amplitude 4 :center true :tile-x 5 :tile-y 5) (f 100))
-           (d 50)))
+;; A top-level (register …) in a library runs at EVERY Run of whoever has the
+;; library active and puts its geometry in their scene — demos stay commented:
+;(register AA
+;          (attach
+;           (loft-n 128 (heightmap (circle 20 256) (weave-hm 1) :amplitude 4 :center true :tile-x 5 :tile-y 5) (f 100))
+;           (d 50)))
 

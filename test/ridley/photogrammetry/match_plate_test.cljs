@@ -256,6 +256,193 @@
           res (mp/fit-crown blobs marks zero-obj (k*) judge {:disc-r DISC-R :face-normal [0 0 1]})]
       (is (nil? res) "senza corona rilevata, fit-crown non registra (fail-safe)"))))
 
+;; --- the real webcam frame that failed the first live gate (2026-08-11) ---------
+;; The 37 blob centres the detector actually returned on a Logitech C922 frame
+;; (1920×1080) of the plate with a printer cartridge on it, on a cutting mat, with a
+;; tool full of hex holes in the background. Indices 0-4 and 6-11 are the eleven
+;; VISIBLE crown discs (the twelfth is behind the cartridge); everything else is mat
+;; dirt, the cartridge, and the tool. Kept as literal data because this is the frame
+;; that broke it, and a synthetic imitation of clutter is not the same witness.
+(def ^:private c922-blobs
+  [[464 768] [755 756] [233 650] [984 628] [143 461] [645 1010] [197 276] [1083 446]
+   [347 140] [1054 273] [750 74] [931 145] [1327 173] [1366 25] [642 1046] [1459 5]
+   [1350 7] [1082 996] [670 981] [979 1019] [701 977] [776 237] [1106 990] [714 1077]
+   [636 985] [635 438] [396 882] [474 1050] [1792 328] [786 236] [1380 5] [253 10]
+   [653 1043] [810 506] [758 372] [1517 215] [1212 2]])
+
+(def ^:private c922-crown-idx [0 1 2 3 4 6 7 8 9 10 11])
+
+(deftest finds-the-crown-in-a-real-cluttered-webcam-frame
+  ;; The first live gate failed here, and the cause was not the webcam. Stage 1 judges
+  ;; an ellipse by inlier COUNT — a weak judge — and on this frame a conic through mat
+  ;; dirt and the tool's hex holes gathered 12 points against the crown's 11 and won,
+  ;; so stage 2 never saw the crown at all. Underneath that was plain arithmetic: a
+  ;; RANSAC sample is useful only when all five points are crown, which here is ~1%,
+  ;; and 250 draws often produced NONE.
+  ;;
+  ;; The plate in this frame has its zero-index hidden under the cartridge, so the
+  ;; RIGHT answer is not a pose — it is `:zero-not-visible`, which is only reachable
+  ;; by having identified the crown among the junk first. That makes this one
+  ;; assertion cover both repairs at once.
+  (println "\n=== fit-crown: il fotogramma webcam VERO che aveva fallito ===")
+  (let [judge (fn [[px py] r]
+                (let [r2 (* r r)]
+                  (boolean (some (fn [[bx by]]
+                                   (<= (+ (* (- bx px) (- bx px)) (* (- by py) (- by py))) r2))
+                                 c922-blobs))))
+        ;; production hands fit-crown the top-scored blobs, and the intrinsics of the
+        ;; seed focal it is trying
+        k (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 28.0 (/ 1920 1080)) 1920 1080)
+        blobs (vec (take 24 c922-blobs))
+        t0 (system-time)
+        res (mp/fit-crown-explained blobs marks zero-obj k judge
+                                    {:disc-r DISC-R :face-normal [0 0 1]})
+        t1 (system-time)
+        ;; the live path tries a LADDER of seed focals; stage 1 reads pixels only, so
+        ;; it is hoisted out of the ladder and every rung reuses it. This measures
+        ;; both halves, because "it seemed to hang" was a real report and the fix has
+        ;; to be a number, not an intention.
+        rings (mp/crown-ring-hypotheses blobs {})
+        t2 (system-time)
+        _ (dotimes [_ 6] (mp/fit-crown-explained blobs marks zero-obj k judge
+                                                 {:disc-r DISC-R :face-normal [0 0 1]
+                                                  :rings rings}))
+        t3 (system-time)]
+    (println (str "  37 blob (11 corona veri + sporco + fori) → "
+                  (or (some-> (:reason res) name) "riconosciuta")
+                  " · corona " (:crown-hits res)))
+    (println (str "  anelli trovati: " (mapv count rings)
+                  " · costo: un passaggio " (.toFixed (- t1 t0) 0) "ms"
+                  " · ricerca anelli " (.toFixed (- t2 t1) 0) "ms"
+                  " · 6 focali " (.toFixed (- t3 t2) 0) "ms"))
+    ;; A grab has to feel like a camera. These bounds are generous on purpose — they
+    ;; guard the SHAPE of the cost, not this machine's speed. What they forbid is the
+    ;; return of what was measured here before the ring-size filter: 8086ms for one
+    ;; pass and 48914ms for six, which is what "it seems to hang" was. The live path
+    ;; pays ONE pass on this frame, because a covered zero-index is a fact about the
+    ;; picture and the seed ladder stops asking other focals about it.
+    (is (< (- t1 t0) 2000)
+        (str "un passaggio deve restare nell'ordine del mezzo secondo ("
+             (.toFixed (- t1 t0) 0) "ms)"))
+    (is (< (- t3 t2) 6000)
+        (str "e sei focali — il caso peggiore — non devono sembrare un blocco ("
+             (.toFixed (- t3 t2) 0) "ms)"))
+    (is (= :zero-not-visible (:reason res))
+        "la corona va trovata in mezzo al disordine, e lo zero coperto va detto")
+    (is (>= (:crown-hits res) 10)
+        (str "almeno 10 dei mark visibili identificati (ne ha " (:crown-hits res) ")")))
+
+  (testing "…e con lo zero-indice scoperto, la stessa scena registra"
+    ;; What turning the plate does, done here by adding the blob the cartridge was
+    ;; hiding (at the pixel the live diagnosis reprojected it to). The recovered ring
+    ;; must land on the ELEVEN REAL crown discs — that is the identity being right,
+    ;; not merely a score being high.
+    (let [uncovered (conj (vec (take 24 c922-blobs)) [486 718])
+          judge (fn [[px py] r]
+                  (let [r2 (* r r)]
+                    (boolean (some (fn [[bx by]]
+                                     (<= (+ (* (- bx px) (- bx px)) (* (- by py) (- by py))) r2))
+                                   uncovered))))
+          k (cam/intrinsics-from-fov (cam/equiv-focal->hfov-deg 28.0 (/ 1920 1080)) 1920 1080)
+          res (mp/fit-crown uncovered marks zero-obj k judge
+                            {:disc-r DISC-R :face-normal [0 0 1]})
+          true-crown (mapv #(nth c922-blobs %) c922-crown-idx)
+          reproj (vals (:pixels res))
+          on-a-real-disc (count (filter (fn [b] (some #(< (dist-px % b) 15.0) reproj))
+                                        true-crown))]
+      (println (str "  con lo zero scoperto → "
+                    (if res (str "corona " (:crown-hits res) " · " on-a-real-disc "/"
+                                 (count true-crown) " dischetti veri centrati")
+                        "NIL")))
+      (is (some? res) "scoperto lo zero, la scena registra")
+      (when res
+        (is (>= on-a-real-disc 10)
+            (str "l'anello ricostruito cade sui dischetti VERI (" on-a-real-disc "/"
+                 (count true-crown) ")"))))))
+
+(deftest a-speck-cannot-stand-in-for-the-zero-index
+  ;; The failure this guards is the worst one the design can have, and it happened:
+  ;; on grab-06 (2026-08-11) the printer cartridge covered the zero-index, a speck of
+  ;; dirt with radius 4px sat 9px from where it belonged, the presence test asked only
+  ;; "is there a blob here", and the frame REGISTERED. The residual was 1.9px and
+  ;; proved nothing — a crown of equal marks is 12-fold symmetric, so an identity
+  ;; rotated by 30° reprojects just as perfectly. Only the zero-index says which way
+  ;; the plate faces, so a speck standing in for it means an unknown rotation
+  ;; delivered as a good measurement.
+  (println "\n=== il giudizio pesa la TAGLIA: un granello non è un dischetto ===")
+  (let [pose (synth/viewpoint 40 45 230.0)
+        crown-objs (mapv :obj marks)
+        crown-px (mapv #(cam/project (k*) pose %) crown-objs)
+        zero-px (cam/project (k*) pose zero-obj)
+        ;; The impostor is described by its RATIO to a real disc — 4px against 13px,
+        ;; the measured numbers from that frame — scaled to whatever a disc images at
+        ;; HERE. Carrying the raw pixels of another scene into this one is how the
+        ;; first version of this test rejected its own good case.
+        expected-r (* DISC-R (mp/crown-image-scale (into {} (map-indexed vector crown-px)) marks))
+        real-r expected-r
+        speck-r (* expected-r (/ 4.0 13.0))
+        with-speck (conj (mapv (fn [p] {:center p :radius-px real-r}) crown-px)
+                         {:center [(+ (first zero-px) 9.0) (second zero-px)]
+                          :radius-px speck-r})
+        judge (mp/blob-judge with-speck)
+        res (mp/fit-crown-explained crown-px marks zero-obj (k*) judge
+                                    {:disc-r DISC-R :face-normal [0 0 1]})]
+    (println (str "  corona vera + granello dove sta lo zero → "
+                  (or (some-> (:reason res) name) "REGISTRATA (male!)")))
+    (is (= :zero-not-visible (:reason res))
+        "un granello non deve valere come zero-indice: la rotazione resterebbe ignota")
+
+    (testing "…mentre un dischetto VERO nello stesso posto viene accettato"
+      (let [with-disc (conj (mapv (fn [p] {:center p :radius-px real-r}) crown-px)
+                            {:center zero-px :radius-px real-r})
+            ok (mp/fit-crown crown-px marks zero-obj (k*) (mp/blob-judge with-disc)
+                             {:disc-r DISC-R :face-normal [0 0 1]})]
+        (println (str "  corona vera + zero vero → "
+                      (if ok (str "registrata, corona " (:crown-hits ok)) "NIL")))
+        (is (some? ok) "il giudizio pesato non deve rifiutare un piatto buono")
+        (is (:zero-hit? ok) "…e lo zero vero deve contare")))))
+
+(deftest a-covered-zero-index-is-named-not-lumped-in
+  ;; "Not recognised" and "recognised, but the reference is covered" have OPPOSITE
+  ;; remedies — frame it better vs TURN THE PLATE — and one message for both sends
+  ;; the user to fix the wrong thing. It is also the ordinary case: anything big
+  ;; enough to sit on the plate is big enough to hide a mark 6mm inside the crown
+  ;; (2026-08-11: a printer cartridge did exactly that, and the diagnosis took half
+  ;; an hour).
+  (println "\n=== fit-crown: uno zero-indice COPERTO si chiama per nome ===")
+  (let [pose (synth/viewpoint 40 45 230.0)
+        crown-objs (mapv :obj marks)
+        crown-px (mapv #(cam/project (k*) pose %) crown-objs)
+        ;; the zero-index is neither among the blobs nor a disc the judge can see:
+        ;; that is what "covered" means to everything downstream
+        judge (disc-judge pose crown-objs 20.0)
+        res (mp/fit-crown-explained crown-px marks zero-obj (k*) judge
+                                    {:disc-r DISC-R :face-normal [0 0 1]})]
+    (println (str "  → " (name (:reason res)) " · corona " (:crown-hits res)
+                  " · «" (:message res) "»"))
+    (is (= :zero-not-visible (:reason res)) "il motivo deve essere lo zero coperto")
+    (is (>= (:crown-hits res) 10) "…e deve dire che la corona invece si vede")
+    (is (re-find #"[Tt]urn the plate" (:message res)) "…e il rimedio, per esteso")
+    (is (nil? (mp/fit-crown crown-px marks zero-obj (k*) judge
+                            {:disc-r DISC-R :face-normal [0 0 1]}))
+        "fit-crown resta fail-safe: senza zero-indice non registra"))
+
+  (testing "una corona che non c'è NON viene annunciata come coperta"
+    ;; the ordering trap: a decoy ring also fails the zero test, and reporting it as
+    ;; "the crown is recognised but the reference is covered" would be a lie
+    (let [pose (synth/viewpoint 40 45 230.0)
+          centre-px (cam/project (k*) pose [0.0 0.0 PLATE-Z])
+          judge (disc-judge pose (conj (mapv :obj marks) zero-obj) 20.0)
+          blobs (mapv (fn [i] (let [a (* i (/ (* 2 Math/PI) 9))]
+                                [(+ (first centre-px) (* 400.0 (Math/cos a)))
+                                 (+ (second centre-px) (* 400.0 (Math/sin a)))]))
+                      (range 9))
+          res (mp/fit-crown-explained blobs marks zero-obj (k*) judge
+                                      {:disc-r DISC-R :face-normal [0 0 1]})]
+      (println (str "  anello finto → " (name (:reason res))))
+      (is (not= :zero-not-visible (:reason res))
+          "un anello che non è la corona non deve dire 'gira il piatto'"))))
+
 ;; ---------------------------------------------------------------------------
 ;; Turntable ring — register a photo with ZERO clicks from an already-registered
 ;; one. The plate spins about its axis; a 1-DOF search over the rotation θ must

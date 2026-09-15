@@ -1,25 +1,29 @@
 ; === Recursive Tree ===
 ;
-; A 3D fractal tree built with push-state/pop-state branching.
+; A 3D fractal tree built with nested turtle scopes.
 ;
 ; At each level of recursion, the trunk splits into several branches.
 ; Each branch is thinner and shorter than its parent, angled outward
-; with a random-ish spread (using the golden angle for even distribution).
-; Branches are extruded cylinders joined at the fork points.
+; with a golden-angle twist for even distribution. Every segment is a
+; cone frustum whose far radius is the next level's near radius, so the
+; branches taper continuously across the forks.
 ;
 ; Demonstrates:
-; - push-state / pop-state for branching (save and restore turtle pose)
+; - (turtle ...) scopes for branching: the child turtle starts from the
+;   parent's pose, moves on its own copy, and the parent is untouched when
+;   the scope returns — the pose comes back to the fork by itself
 ; - Recursive functions with (defn) in the DSL
 ; - Parametric design: depth, branching factor, taper ratio
-; - Mixing extrusion (cyl) with turtle navigation
+; - A primitive (cone, axis along the heading) placed by turtle navigation
+; - A function that RETURNS its meshes (a vector), registered once at the end
 ;
 ; Try changing:
-; - max-depth for more or fewer levels (3-6 range is good)
+; - max-depth for more or fewer levels (3-5 range is good)
 ; - n-branches for bushier or sparser trees
 ; - spread-angle for wider or tighter branching
 ; - taper for how quickly branches thin out
 
-
+(def max-depth 4)
 (def n-branches 3)
 (def spread-angle 35)
 (def taper 0.65)
@@ -27,19 +31,21 @@
 
 (defn branch [depth length radius]
   (when (> depth 0)
-    ; Draw this branch segment
-    (cyl radius (- radius (* radius (- 1 taper))) length)
-    (f length)
-    ; Spawn child branches
-    (dotimes [i n-branches]
-      (push-state)
-      (tr (* i (/ 360 n-branches)))  ; distribute around trunk
-      (tv spread-angle)              ; angle outward
-      (tr (* i golden-angle))        ; golden angle twist for variety
-      (branch (dec depth)
-              (* length taper)
-              (* radius taper))
-      (pop-state))))
+    (let [r-child (* radius taper)
+          ; this segment: a frustum along the heading, from radius to r-child
+          segment (cone radius r-child length)]
+      (f length)
+      ; the children: each in its own scope, so every child forks from the
+      ; SAME pose — the tip of this segment — whatever its siblings did
+      (into [segment]
+            (mapcat (fn [i]
+                      (turtle
+                        (tr (* i (/ 360 n-branches)))   ; distribute around the trunk
+                        (tv spread-angle)               ; angle outward
+                        (tr (* i golden-angle))         ; golden-angle twist for variety
+                        (branch (dec depth) (* length taper) r-child)))
+                    (range n-branches))))))
 
-; Ground the tree: start with trunk going up
-(branch 4 20 3)
+; Ground the tree: the trunk goes up (cones grow along the heading, and the
+; turtle starts facing +X, so tilt it vertical first)
+(register tree (concat-meshes (turtle :reset (tv 90) (branch max-depth 20 3))))

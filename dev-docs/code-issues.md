@@ -262,6 +262,37 @@ Test: `test/ridley/sdf/auto_bounds_test.cljs` (5 test, scritti prima del cambio:
 
 **Fix possibile** (non tentato): allineare la formula a `turtle/arc-v` e aggiungere il test che `arc-2d-endpoint` ha già ricevuto — confronto della closed form contro una tessellazione fine — per entrambe le varianti 3D, così il segno non può più divergere in silenzio.
 
+### La stessa famiglia, da un'altra porta: un modale mangiato in silenzio — CHIUSO 2026-08-21
+
+**Sintomo**: `(edit-acquire "…" {…})` valutata dal pannello definizioni dice
+"Evaluation successful" e **non apre niente**. Nessun errore, nessun pannello.
+Riprovando, si apre.
+
+**Meccanismo**: lo stesso flag `modal-evaluator/skip-next` del difetto qui sotto,
+ma la fuga non era più in `reeval-script!` — lì ogni chiamante passa `false`, il
+perimetro del 2026-07-09 regge. I due che armano LEGITTIMAMENTE il flag (il
+`cancel!` di un tweak permanente, quello di edit-bezier) lo fanno subito prima di
+`run-definitions!`, contando sul proprio marcatore per consumarlo **durante quella
+corsa**. Se il marcatore non c'è più — il buffer è stato modificato nel frattempo,
+la forma sta in un ramo che non viene eseguito, la corsa va in errore prima — il
+flag sopravvive e mangia la PROSSIMA apertura di un modale qualunque.
+
+Riprodotto: flag armato a mano senza sessione aperta → primo Run non apre
+("Evaluation successful"), secondo Run apre.
+
+**Fix**: due mosse, una sul silenzio e una sulla causa.
+1. `run-definitions!` **disarma il flag che quella corsa non ha consumato**. Un
+   flag non consumato è per definizione un flag il cui marcatore non è arrivato,
+   quindi la sua vita finisce con la corsa per cui era stato armato. Questo chiude
+   la famiglia invece dell'istanza: non conta più chi arma e se il buffer cambia.
+2. `consume-skip!` **parla** quando consuma con nessuna sessione aperta — la
+   condizione che identifica una fuga (armato + niente in corso). Il ramo era muto
+   per costruzione, ed è la ragione per cui questa famiglia si è ripresentata due
+   volte in due mesi senza lasciare tracce.
+
+Verificato dal vivo: con la correzione, un flag armato e non consumato viene
+disarmato dalla sua corsa e `edit-acquire` apre al PRIMO Run.
+
 ### edit-attach: il primo rientro dopo un OK non apre la sessione — RISOLTO 2026-07-09
 
 **Contesto**: confermando (OK) una sessione `edit-attach` e reinvocandola subito dopo (stesso mesh o un altro), il primo tentativo di riapertura non fa nulla — nessun pannello, nessun indicatore turtle, la sessione non si apre affatto — nessun errore in console del browser. Il secondo tentativo funziona normalmente.

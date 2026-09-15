@@ -132,6 +132,107 @@
                          (+ v (* sigma (synth/gauss rng)))]}))
                marks))))
 
+(deftest cleans-a-bad-point-even-when-the-total-looks-acceptable
+  ;; Live webcam frames sit at 5-12px, not the 1-3px a phone photo gives, and the
+  ;; cleaning loop used to stop as soon as the rms fell under accept-rms-px (12).
+  ;; So every frame kept its worst point. Measured on a real session (2026-08-11):
+  ;; ten marks at 1-5px with ONE at 26-34px, which alone was three quarters of the
+  ;; reported error — and the joint refine could not help, because the damage was
+  ;; in the correspondences, not the poses (10.158 → 10.120 px over four views).
+  (println "\n=== PnP: un punto sbagliato va tolto anche se il totale è 'accettabile' ===")
+  ;; Built like the real thing: a PLATE (12 coplanar marks) on a 1920-wide frame,
+  ;; ten marks at ordinary sub-pixel noise and ONE mis-snapped by 30px — the exact
+  ;; signature the session showed.
+  (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+        pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+        marks (ring-marks 12 58.0 1.5)
+        rng (synth/rng 9)
+        clean (vec (map-indexed
+                    (fn [i w] {:ci i
+                               :world w
+                               :px (let [[u v] (cam/project kk pose w)]
+                                     [(+ u (* 0.4 (synth/gauss rng)))
+                                      (+ v (* 0.4 (synth/gauss rng)))])})
+                    marks))
+        bad (update-in clean [5 :px] (fn [[u v]] [(+ u 30.0) v]))
+        before (pnp/solve-pnp bad kk {:max-outliers 0})
+        sol (pnp/solve-pnp bad kk {})]
+    (println (str "  soglia grossolano su 1920px " (fmt (* pnp/outlier-floor-frac 1920.0) 1)
+                  "px · senza pulizia rms " (fmt (:rms-px before) 2)
+                  "px → con pulizia " (fmt (:rms-px sol) 2) "px · scartati "
+                  (mapv :ci (:outliers sol))))
+    (is (some? sol))
+    ;; the whole point: the UNCLEANED fit is already "acceptable", so the old loop
+    ;; stopped there and kept the bad point
+    (is (<= (:rms-px before) pnp/accept-rms-px)
+        "il residuo senza pulizia sta sotto la soglia — è per questo che passava")
+    (is (some #(= 5 (:ci %)) (:outliers sol))
+        "il mark mis-agganciato va tolto lo stesso")
+    (is (< (:rms-px sol) 1.5)
+        (str "tolto quello, il resto è pulito (" (fmt (:rms-px sol) 2) "px)")))
+
+  (testing "un punto sbagliato di 9px fra undici sotto il pixel va tolto lo stesso
+
+   È il caso che il rilevamento automatico dei dischetti produce, e che la soglia
+   assoluta lasciava passare: undici mark a 0.4px e uno a 9px, cioè venti volte
+   gli altri, sotto un pavimento di 14.4px tarato sui click a mano. Misurato su
+   una sessione vera da 12 viste (2026-08-14): SEI foto portavano esattamente un
+   pick sballato fra 6.1 e 9.4px, nessuno veniva scartato, e tenevano la sessione
+   a 2.1px — abbastanza convincenti, tutti insieme, da essere scambiati per un
+   piatto imbarcato. Con la soglia giusta la stessa sessione sta a 0.6px."
+    (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+          pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+          marks (ring-marks 12 58.0 1.5)
+          rng (synth/rng 17)
+          clean (vec (map-indexed
+                      (fn [i w] {:ci i :world w
+                                 :px (let [[u v] (cam/project kk pose w)]
+                                       [(+ u (* 0.4 (synth/gauss rng)))
+                                        (+ v (* 0.4 (synth/gauss rng)))])})
+                      marks))
+          bad (update-in clean [3 :px] (fn [[u v]] [(+ u 7.0) (- v 6.0)]))
+          sol (pnp/solve-pnp bad kk {})]
+      (is (some #(= 3 (:ci %)) (:outliers sol))
+          "un pick a ~9px fra dieci sotto il pixel è sbagliato, non rumore")
+      (is (< (:rms-px sol) 0.8)
+          (str "e tolto quello il resto è pulito (" (fmt (:rms-px sol) 2) "px)"))))
+
+  (testing "ma un click a mano non viene punito per essere un click a mano
+
+   La soglia assoluta è scesa da 0.75% a 0.15% della larghezza — 6px invece di 30
+   su una foto da 4032. Quello che protegge il percorso a mano non è più il
+   pavimento ma la metà RELATIVA del test: con click a 3px di rumore la mediana è
+   dell'ordine del pixel e `outlier-factor × mediana` supera il pavimento, quindi
+   lì comanda ancora quella. Questo è ciò che va verificato — il comportamento,
+   non la costante, che era quello che il test diceva prima e che ha impedito di
+   cambiarla per il caso giusto."
+    (let [kk {:fx 3000.0 :fy 3000.0 :cx 2016.0 :cy 1512.0 :k1 0.0 :k2 0.0}
+          pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+          rng (synth/rng 23)
+          corr (vec (map-indexed
+                     (fn [i w] {:ci i :world w
+                                ;; 3px di rumore: la mano, su una foto da telefono
+                                :px (let [[u v] (cam/project kk pose w)]
+                                      [(+ u (* 3.0 (synth/gauss rng)))
+                                       (+ v (* 3.0 (synth/gauss rng)))])})
+                     (ring-marks 12 58.0 1.5)))
+          sol (pnp/solve-pnp corr kk {})]
+      (is (empty? (:outliers sol))
+          (str "nessun click onesto va scartato (scartati " (mapv :ci (:outliers sol)) ")"))))
+
+  (testing "dati puliti: non si scarta niente"
+    (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+          pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+          rng (synth/rng 11)
+          corr (vec (map (fn [w] {:world w
+                                  :px (let [[u v] (cam/project kk pose w)]
+                                        [(+ u (* 0.4 (synth/gauss rng)))
+                                         (+ v (* 0.4 (synth/gauss rng)))])})
+                         (ring-marks 12 58.0 1.5)))
+          sol (pnp/solve-pnp corr kk {})]
+      (is (empty? (:outliers sol))
+          "il rumore ordinario non deve far scartare punti innocenti"))))
+
 (deftest recovers-pose-from-coplanar-plate-marks
   ;; The plate gate that triggered the planar-PnP work: 12 marks all on the
   ;; plate's top face are exactly coplanar, so estimate-dlt is singular. The
@@ -197,3 +298,98 @@
       (let [box-pose (cam/look-at-pose [220.0 -140.0 160.0] [0.0 0.0 0.0] [0.0 0.0 1.0])
             box-corr (correspondences-for box-pose 0.3 (synth/rng 12))]
         (is (= :dlt (:method (pnp/solve-pnp box-corr kk {}))))))))
+
+(deftest a-fit-that-does-not-collapse-has-no-single-culprit
+  ;; The premise the app's spoken diagnosis rests on, and it had never been
+  ;; asserted. `accept-rms-px` states it in prose — a mislabel spreads its damage
+  ;; over every residual, so the tell that a dropped point WAS the culprit is
+  ;; that the rms collapses under the bar once it goes. The editor used to name
+  ;; the dropped points as culprits whenever the cleaner had dropped any, with
+  ;; no collapse test at all.
+  ;;
+  ;; Vincenzo found it from the outside (battiscopa3, 2026-08-30): four solves in
+  ;; a row, four DIFFERENT pairs accused, every one a point he had clicked within
+  ;; a pixel of a detected disc. «mi chiede di correggere punti che credo siano
+  ;; giusti» — he was right. The measured trace was 15.5 → 14.6 → 13.8px, nine
+  ;; tenths of a pixel per rejection: the two dropped points were merely the
+  ;; worst two of a uniformly bad fit, and which two was arbitrary.
+  (println "\n=== PnP: senza crollo non c'è un colpevole singolo ===")
+  (let [kk {:fx 1400.0 :fy 1400.0 :cx 960.0 :cy 540.0 :k1 0.0 :k2 0.0}
+        pose (cam/look-at-pose [90.0 -70.0 200.0] [0.0 0.0 0.0] [0.0 1.0 0.0])
+        marks (ring-marks 12 58.0 1.5)
+        rng (synth/rng 21)
+        clean (vec (map-indexed
+                    (fn [i w] {:ci i :world w
+                               :px (let [[u v] (cam/project kk pose w)]
+                                     [(+ u (* 0.4 (synth/gauss rng)))
+                                      (+ v (* 0.4 (synth/gauss rng)))])})
+                    marks))
+        trace (fn [corr]
+                ;; the greedy loop, printed honestly: the RAW rms of each set,
+                ;; not solve-pnp's own already-cleaned figure
+                (loop [cs corr acc []]
+                  (let [r (pnp/solve-pnp cs kk {:max-outliers 0})
+                        acc (conj acc (:rms-px r))]
+                    (if (or (< (count cs) 8) (>= (count acc) 3))
+                      acc
+                      (let [worst (apply max-key :residual-px (:per-point r))]
+                        (recur (vec (remove #(= (:ci %) (:ci worst)) cs)) acc))))))]
+
+    (testing "ONE mislabeled mark: the drop collapses the rms — a real culprit"
+      (let [bad (assoc-in clean [5 :px] (get-in clean [9 :px]))
+            t (trace bad)
+            sol (pnp/solve-pnp bad kk {})]
+        (println (str "  un mark scambiato · traccia " (mapv #(fmt % 1) t)
+                      " → verdetto " (fmt (:rms-px sol) 1) "px, scartati "
+                      (mapv :ci (:outliers sol))))
+        (is (seq (:outliers sol)) "the cleaner must reject something")
+        (is (<= (:rms-px sol) pnp/accept-rms-px)
+            (str "the fit collapses under the bar, so the dropped point IS the "
+                 "culprit and may be named — got " (fmt (:rms-px sol) 2) "px"))))
+
+    (testing "MANY moderately-wrong points: every drop shaves a little, nothing collapses"
+      ;; The disease as it actually presented: eight of the twelve picks were
+      ;; automatic proposals blob-snapped from a wrong pose, each off by tens of
+      ;; pixels — not one culprit but a bad majority. The cleaner is allowed two
+      ;; rejections, so it can only ever nibble; the two it picks are the worst
+      ;; two of a continuum, and which two is arbitrary noise.
+      ;;
+      ;; (A wrong FOCAL was the first thing tried here and it does not work as a
+      ;; specimen: on a coplanar ring the pose absorbs it almost entirely —
+      ;; measured, 0.49px becomes 2.0px for a lens wrong by a tenth. Worth
+      ;; knowing on its own: one flat crown cannot measure a lens.)
+      (let [nudged (reduce (fn [c i] (update-in c [i :px]
+                                                (fn [[u v]]
+                                                  (let [a (* 2.4 i)]
+                                                    [(+ u (* 25.0 (Math/cos a)))
+                                                     (+ v (* 25.0 (Math/sin a)))]))))
+                           clean (range 8))
+            t (trace nudged)
+            sol (pnp/solve-pnp nudged kk {})]
+        (println (str "  otto proposte mal-agganciate · traccia " (mapv #(fmt % 1) t)
+                      " → verdetto " (fmt (:rms-px sol) 1) "px, scartati "
+                      (mapv :ci (:outliers sol))))
+        (is (> (:rms-px sol) pnp/accept-rms-px)
+            (str "two rejections cannot rescue a bad majority — got "
+                 (fmt (:rms-px sol) 2) "px"))
+        ;; the discriminant itself: the drops buy almost nothing
+        (is (> (/ (nth t 2) (nth t 0)) 0.75)
+            (str "two rejections must leave most of the error standing "
+                 "(" (fmt (nth t 0) 1) " → " (fmt (nth t 2) 1) "px)"))))
+
+    (testing "and the collapse RATIO is what separates them"
+      (let [bad (assoc-in clean [5 :px] (get-in clean [9 :px]))
+            t-one (trace bad)
+            nudged (reduce (fn [c i] (update-in c [i :px]
+                                                (fn [[u v]]
+                                                  (let [a (* 2.4 i)]
+                                                    [(+ u (* 25.0 (Math/cos a)))
+                                                     (+ v (* 25.0 (Math/sin a)))]))))
+                           clean (range 8))
+            t-many (trace nudged)
+            ratio (fn [t] (/ (nth t 2) (nth t 0)))]
+        (println (str "  crollo con un colpevole: " (fmt (* 100 (ratio t-one)) 1)
+                      "% dell'errore resta · senza colpevole: "
+                      (fmt (* 100 (ratio t-many)) 1) "%"))
+        (is (< (ratio t-one) 0.1) "a real culprit leaves almost nothing behind")
+        (is (> (ratio t-many) 0.75) "a bad majority leaves almost everything")))))

@@ -51,8 +51,22 @@ Display keys, honoured by the stage:
 
 - `:show` — `false` hides it, `:prove` also draws the points it came from,
   absent draws the plain segment;
-- `:label` — `false` for no name over the photograph, a string for a different
-  one.
+- `:label` — `true` writes its name over the photograph, a string writes that
+  text instead, `false` or absent writes nothing.
+
+**`:label` reads differently inside the Spigolo gesture**, and knowing which is
+which saves a puzzled minute. In the gesture every edge is named unless it says
+`:label false`, because there you are working through a list and a list whose
+items are unnamed on the thing is a riddle. On the ordinary stage the default is
+the other way round — nothing is named unless it asks — because a fused
+acquisition can hold every edge of every session, and naming them all buries the
+photograph.
+
+So to see an edge's name while simply looking at the stage, ask for it:
+
+```clojure
+:edges {:becco (edge-mark {… :label true})}
+```
 
 ## Notes
 

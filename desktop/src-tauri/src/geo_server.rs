@@ -4,10 +4,66 @@
 //! async for file I/O).
 
 use crate::sdf_ops::{self, MeshData};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use tiny_http::{Header, Method, Response, Server};
 
 const PORT: u16 = 12321;
+
+/// The app's main window, so a native file panel can be attached to it.
+///
+/// A panel built with no parent is a window of its own: on macOS it can end up
+/// BEHIND the app, and bringing the app forward does not bring it with them —
+/// which leaves the user looking at an app that ignores every click, because the
+/// thing waiting for them is somewhere they cannot see (reported 2026-08-12:
+/// "clicco Open e non succede niente"). Attached to the window it becomes a
+/// SHEET: physically part of the window, so it cannot be behind it and it always
+/// comes forward with it.
+static MAIN_WINDOW: OnceLock<Mutex<Option<tauri::WebviewWindow>>> = OnceLock::new();
+
+/// Called from the Tauri setup once the window exists (the server starts before
+/// it, so this cannot be an argument to `start`).
+pub fn set_main_window(window: tauri::WebviewWindow) {
+    let cell = MAIN_WINDOW.get_or_init(|| Mutex::new(None));
+    if let Ok(mut slot) = cell.lock() {
+        *slot = Some(window);
+    }
+}
+
+fn main_window() -> Option<tauri::WebviewWindow> {
+    MAIN_WINDOW
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|slot| slot.clone())
+}
+
+/// True while a native file panel is up.
+///
+/// The server is a single accept loop, so a panel blocks EVERY other request
+/// until the user answers it — including a second request for a panel, which
+/// then opens the moment the first one closes. The guard turns that into an
+/// immediate "nothing chosen", which is what a second click on Open should mean
+/// when a picker is already waiting.
+static PICKER_OPEN: AtomicBool = AtomicBool::new(false);
+
+struct PickerGuard;
+
+impl PickerGuard {
+    fn acquire() -> Option<Self> {
+        if PICKER_OPEN.swap(true, Ordering::SeqCst) {
+            None
+        } else {
+            Some(PickerGuard)
+        }
+    }
+}
+
+impl Drop for PickerGuard {
+    fn drop(&mut self) {
+        PICKER_OPEN.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Return the user's home directory.
 fn handle_home_dir() -> Result<String, String> {
@@ -48,9 +104,19 @@ fn handle_pick_save_path(request: &mut tiny_http::Request) -> Result<String, Str
     let req: Req =
         serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {}", e))?;
 
+    let _guard = match PickerGuard::acquire() {
+        Some(g) => g,
+        // a panel is already waiting for the user: "nothing chosen"
+        None => return Ok("null".to_string()),
+    };
+
     let mut dialog = rfd::FileDialog::new()
         .set_title(req.title.as_deref().unwrap_or("Save"))
         .set_file_name(&req.suggested_name);
+    let parent = main_window();
+    if let Some(w) = parent.as_ref() {
+        dialog = dialog.set_parent(w);
+    }
 
     match req.filters {
         Some(fs) if !fs.is_empty() => {
@@ -106,7 +172,16 @@ fn handle_pick_open_path(request: &mut tiny_http::Request) -> Result<String, Str
         serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {}", e))?
     };
 
+    let _guard = match PickerGuard::acquire() {
+        Some(g) => g,
+        None => return Ok("null".to_string()),
+    };
+
     let mut dialog = rfd::FileDialog::new().set_title(req.title.as_deref().unwrap_or("Open"));
+    let parent = main_window();
+    if let Some(w) = parent.as_ref() {
+        dialog = dialog.set_parent(w);
+    }
 
     match req.filters {
         Some(fs) if !fs.is_empty() => {
@@ -135,7 +210,7 @@ fn handle_read_file(request: &mut tiny_http::Request) -> Result<Vec<u8>, String>
         .headers()
         .iter()
         .find(|h| h.field.as_str() == "X-File-Path")
-        .map(|h| h.value.as_str().to_string())
+        .map(|h| expand_tilde(h.value.as_str()))
         .ok_or_else(|| "missing X-File-Path header".to_string())?;
 
     // Drain body (unused)
@@ -186,7 +261,7 @@ fn handle_delete_file(request: &mut tiny_http::Request) -> Result<String, String
         .headers()
         .iter()
         .find(|h| h.field.as_str() == "X-File-Path")
-        .map(|h| h.value.as_str().to_string())
+        .map(|h| expand_tilde(h.value.as_str()))
         .ok_or_else(|| "missing X-File-Path header".to_string())?;
 
     // Drain body
@@ -197,13 +272,29 @@ fn handle_delete_file(request: &mut tiny_http::Request) -> Result<String, String
     Ok("{\"deleted\":true}".to_string())
 }
 
+/// Expand a leading `~` into the user's home directory. The front end already
+/// tries to do this (stl/expand-home), but its lookup is a synchronous XHR that
+/// can fail quietly inside a WKWebView — and a `~` that reaches the filesystem
+/// verbatim asks for `CWD/~/…`, which for a Finder-launched app is `/~`:
+/// permission denied, write rejected, and (before 2026-08-24) nobody told the
+/// user. The server knows its own $HOME; there is no reason to trust the client
+/// to have known it.
+fn expand_tilde(path: &str) -> String {
+    if path == "~" || path.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            return format!("{}{}", home, &path[1..]);
+        }
+    }
+    path.to_string()
+}
+
 /// Write raw bytes to a given path (from X-File-Path header).
 fn handle_write_file(request: &mut tiny_http::Request) -> Result<String, String> {
     let path = request
         .headers()
         .iter()
         .find(|h| h.field.as_str() == "X-File-Path")
-        .map(|h| h.value.as_str().to_string())
+        .map(|h| expand_tilde(h.value.as_str()))
         .ok_or_else(|| "missing X-File-Path header".to_string())?;
 
     let mut bytes = Vec::new();
@@ -224,8 +315,23 @@ fn handle_write_file(request: &mut tiny_http::Request) -> Result<String, String>
 
 pub fn start() {
     thread::spawn(|| {
-        let server =
-            Server::http(format!("127.0.0.1:{}", PORT)).expect("Failed to start geo server");
+        // NOT expect(). This thread is detached: a panic here killed it alone,
+        // the window opened as usual, and every file operation returned nothing
+        // for the rest of the run — a folder of photos read as an empty session
+        // (2026-08-23). Binding fails for one reason in practice, and it is one
+        // the user can act on: another Ridley already holds the port.
+        let server = match Server::http(format!("127.0.0.1:{}", PORT)) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("geo-server: cannot listen on 127.0.0.1:{}: {}", PORT, e);
+                eprintln!(
+                    "geo-server: another Ridley is probably already open. THIS window \
+                     will not be able to read or write files — quit the other one and \
+                     reopen it."
+                );
+                return;
+            }
+        };
         eprintln!("geo-server: listening on http://127.0.0.1:{}", PORT);
 
         let cors = Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap();
@@ -245,31 +351,35 @@ pub fn start() {
 
             let path = request.url().to_string();
 
-            // /pick-save-path — open native dialog, return chosen path (JSON body)
-            if path == "/pick-save-path" {
-                let (status, json) = match handle_pick_save_path(&mut request) {
-                    Ok(json) => (200, json),
-                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
-                };
-                let resp = Response::from_string(json)
-                    .with_status_code(status)
-                    .with_header(cors.clone())
-                    .with_header(content_type.clone());
-                let _ = request.respond(resp);
-                continue;
-            }
-
-            // /pick-open-path — open native open dialog, return chosen path (JSON body)
-            if path == "/pick-open-path" {
-                let (status, json) = match handle_pick_open_path(&mut request) {
-                    Ok(json) => (200, json),
-                    Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
-                };
-                let resp = Response::from_string(json)
-                    .with_status_code(status)
-                    .with_header(cors.clone())
-                    .with_header(content_type.clone());
-                let _ = request.respond(resp);
+            // A native file panel waits for a HUMAN, and everything else in this
+            // app goes through this one accept loop — so handling a picker inline
+            // freezes reads, writes and CSG for as long as the panel is up, and
+            // queues any second picker request to spring open the moment the
+            // first one closes. Both were real (2026-08-12: a panel left behind
+            // the window made the app look dead). So the pickers answer on their
+            // own thread and the loop stays free; PickerGuard then sees a second
+            // request WHILE the first is waiting, and declines it.
+            if path == "/pick-save-path" || path == "/pick-open-path" {
+                let cors = cors.clone();
+                let content_type = content_type.clone();
+                let open = path == "/pick-open-path";
+                thread::spawn(move || {
+                    let mut request = request;
+                    let r = if open {
+                        handle_pick_open_path(&mut request)
+                    } else {
+                        handle_pick_save_path(&mut request)
+                    };
+                    let (status, json) = match r {
+                        Ok(json) => (200, json),
+                        Err(e) => (500, format!("{{\"error\":\"{}\"}}", e)),
+                    };
+                    let resp = Response::from_string(json)
+                        .with_status_code(status)
+                        .with_header(cors)
+                        .with_header(content_type);
+                    let _ = request.respond(resp);
+                });
                 continue;
             }
 

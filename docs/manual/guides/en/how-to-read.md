@@ -10,8 +10,9 @@ Origine: manual-redesign-plan §3.0 (mappa per fasi di lavoro, mai
 pubblicata prima) + decisione 2026-06-10 sui percorsi di lettura.
 
 - La mappa riproduce §3.0 del piano. Il cap. 18 (Acquiring and replacing) c'è
-  dal 2026-07-16, come fase "Acquire" propria. Resta fuori il cap. 19
-  (Estendere Ridley), che non esiste ancora.
+  dal 2026-07-16, come fase "Acquire" propria; il cap. 20 (Acquiring from
+  photographs) dal 2026-09-06, tradotto il 2026-09-09.
+  Il cap. 19 (Extending Ridley) c'è dal 2026-09-10, tradotto il 2026-09-15.
 - I cinque percorsi sono la risposta al problema "a chi è rivolto il
   manuale": invece di un lettore unico, cinque itinerari dichiarati.
   Il quinto (il primo nell'ordine della pagina) è il curioso che deve
@@ -64,9 +65,12 @@ Polish         13. Text
 Finish         17. Exporting and printing
 
 Acquire        18. Acquiring and replacing
+               20. Acquiring from photographs
+
+Extend         19. Extending Ridley
 ```
 
-The map reads like this: the "Raw material" chapters describe the data Ridley works with (2D shapes, paths, meshes), the "Build" ones the techniques that turn that data into solids, and so on down to export. "Acquire" sits at the end because it is the one phase that does not start from nothing: it is the workflow for when you already have the object in front of you and want to rebuild it in Ridley, and it presupposes almost all the others. The numbers do not follow the phases because the teaching sequence is a different thing: for example chapter 2 (primitives) comes before 3 (2D shapes) because it is more rewarding to build something solid right away, even though conceptually 2D shapes are raw material.
+The map reads like this: the "Raw material" chapters describe the data Ridley works with (2D shapes, paths, meshes), the "Build" ones the techniques that turn that data into solids, and so on down to export. "Acquire" sits at the end because it is the one phase that does not start from nothing: it is the workflow for when you already have the object in front of you and want to rebuild it in Ridley, from a mesh (ch. 18) or from photographs alone (ch. 20), and it presupposes almost all the others. The numbers do not follow the phases because the teaching sequence is a different thing: for example chapter 2 (primitives) comes before 3 (2D shapes) because it is more rewarding to build something solid right away, even though conceptually 2D shapes are raw material.
 
 ## Five readers, five routes
 

@@ -155,6 +155,16 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn- with-default-pose [node]
   (assoc node :creation-pose default-creation-pose))
 
+(defn- check-sdf-number!
+  "Throw if `v` is not a finite number. Same rationale as check-sdf-nodes!:
+   a missing k serializes as null (and NaN/Infinity also become null in JSON),
+   so the Rust parser rejects the whole request with a cryptic error."
+  [op-label param-name v]
+  (when-not (and (number? v) (js/isFinite v))
+    (throw (js/Error. (str op-label ": " param-name " must be a number, got "
+                           (let [s (pr-str v)]
+                             (if (> (count s) 60) (str (subs s 0 60) " …") s)))))))
+
 ;; ── SDF node constructors (pure data) ───────────────────────────
 ;; Every public-facing constructor stamps a default :creation-pose at
 ;; world origin. Top-level rotate/scale pivot on that pose, mirroring
@@ -162,6 +172,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
 ;; via compile-expr remain untagged — only the root is positional.
 
 (defn sdf-sphere [r]
+  (check-sdf-number! "sdf-sphere" "r" r)
   (with-default-pose {:op "sphere" :r r}))
 
 (defn sdf-box
@@ -169,9 +180,15 @@ need the Rust backend — make sure the desktop app's geometry server is running
    (sdf-box size) — cube with given side
    (sdf-box a b c) — a→Y(right), b→Z(up), c→X(heading)."
   ([size] (sdf-box size size size))
-  ([a b c] (with-default-pose {:op "box" :sx c :sy a :sz b})))
+  ([a b c]
+   (check-sdf-number! "sdf-box" "a" a)
+   (check-sdf-number! "sdf-box" "b" b)
+   (check-sdf-number! "sdf-box" "c" c)
+   (with-default-pose {:op "box" :sx c :sy a :sz b})))
 
 (defn sdf-cyl [r h]
+  (check-sdf-number! "sdf-cyl" "r" r)
+  (check-sdf-number! "sdf-cyl" "h" h)
   ;; :feature-r drives mesh smoothness around the side (see min-feature-size).
   (with-default-pose {:op "cyl" :r r :h h :feature-r r}))
 
@@ -187,6 +204,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
    the exact frustum surface — accurate enough for booleans and visual
    meshing, though not a true Euclidean SDF outside the surface."
   [r1 r2 h]
+  (check-sdf-number! "sdf-cone" "r1" r1)
+  (check-sdf-number! "sdf-cone" "r2" r2)
+  (check-sdf-number! "sdf-cone" "h" h)
   (let [half-h (/ h 2)
         slope  (/ (- r2 r1) h)
         max-r  (max r1 r2)]
@@ -212,6 +232,10 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Box with rounded corners as a true SDF.
    Parameters match mesh box convention: (sdf-rounded-box a b c r)."
   [a b c r]
+  (check-sdf-number! "sdf-rounded-box" "a" a)
+  (check-sdf-number! "sdf-rounded-box" "b" b)
+  (check-sdf-number! "sdf-rounded-box" "c" c)
+  (check-sdf-number! "sdf-rounded-box" "r" r)
   (with-default-pose {:op "rounded-box" :sx c :sy a :sz b :r r}))
 
 (declare compile-expr)
@@ -220,6 +244,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Torus in the XY plane around the Z axis.
    R = major radius (center of tube to torus axis), r = minor radius (tube)."
   [R r]
+  (check-sdf-number! "sdf-torus" "R" R)
+  (check-sdf-number! "sdf-torus" "r" r)
   (-> (compile-expr
        (list '- (list 'sqrt
                       (list '+
@@ -342,6 +368,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
 
 (defn sdf-blend [a b k]
   (check-sdf-nodes! "sdf-blend" [a b])
+  (check-sdf-number! "sdf-blend" "k" k)
   (-> {:op "blend" :a a :b b :k k} (merge-meta a b)))
 
 (defn sdf-blend-difference
@@ -351,18 +378,22 @@ need the Rust backend — make sure the desktop app's geometry server is running
    Anchors come from the minuend (a)."
   [a b k]
   (check-sdf-nodes! "sdf-blend-difference" [a b])
+  (check-sdf-number! "sdf-blend-difference" "k" k)
   (-> {:op "blend-difference" :a a :b b :k k} (inherit-meta a)))
 
 (defn sdf-shell [a thickness]
   (check-sdf-nodes! "sdf-shell" [a])
+  (check-sdf-number! "sdf-shell" "thickness" thickness)
   (-> {:op "shell" :a a :thickness thickness} (inherit-meta a)))
 
 (defn sdf-offset [a amount]
   (check-sdf-nodes! "sdf-offset" [a])
+  (check-sdf-number! "sdf-offset" "amount" amount)
   (-> {:op "offset" :a a :amount amount} (inherit-meta a)))
 
 (defn sdf-morph [a b t]
   (check-sdf-nodes! "sdf-morph" [a b])
+  (check-sdf-number! "sdf-morph" "t" t)
   (-> {:op "morph" :a a :b b :t t} (merge-meta a b)))
 
 (defn sdf-displace
@@ -376,6 +407,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
 ;; ── SDF transforms ──────────────────────────────────────────────
 
 (defn sdf-move [node dx dy dz]
+  (check-sdf-number! "sdf-move" "dx" dx)
+  (check-sdf-number! "sdf-move" "dy" dy)
+  (check-sdf-number! "sdf-move" "dz" dz)
   (-> {:op "move" :a node :dx dx :dy dy :dz dz}
       (with-meta-from node (pose-translate dx dy dz))))
 
@@ -384,6 +418,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
    translating :anchors. Used by cp-* in attach: anchors and geometry
    slide in opposite directions from the creation-pose, which stays put."
   [node dx dy dz]
+  (check-sdf-number! "sdf-move-keeping-creation-pose" "dx" dx)
+  (check-sdf-number! "sdf-move-keeping-creation-pose" "dy" dy)
+  (check-sdf-number! "sdf-move-keeping-creation-pose" "dz" dz)
   (let [base {:op "move" :a node :dx dx :dy dy :dz dz}
         pose-fn (pose-translate dx dy dz)]
     (cond-> base
@@ -436,6 +473,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    so we silently flip the angle before sending it to libfive — the angle
    stored in the JSON tree for :y is the negated form."
   [node axis angle]
+  (check-sdf-number! "sdf-rotate" "angle" angle)
   (cond
     (keyword? axis)
     (let [rad (* angle (/ Math/PI 180))
@@ -489,6 +527,9 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Scale an SDF node. Uniform or per-axis."
   ([node s] (sdf-scale node s s s))
   ([node sx sy sz]
+   (check-sdf-number! "sdf-scale" "sx" sx)
+   (check-sdf-number! "sdf-scale" "sy" sy)
+   (check-sdf-number! "sdf-scale" "sz" sz)
    (-> {:op "scale" :a node :sx sx :sy sy :sz sz}
        (with-meta-from node (pose-scale sx sy sz)))))
 
@@ -502,6 +543,7 @@ need the Rust backend — make sure the desktop app's geometry server is running
    sdf-box / sdf-sphere don't expose `var` nodes in their JSON tree —
    their dependence on x/y/z is implicit inside the libfive backend."
   [node axis angle-deg]
+  (check-sdf-number! "sdf-rotate-axis" "angle" angle-deg)
   (let [[ax-r ay-r az-r] axis
         mag (Math/sqrt (+ (* ax-r ax-r) (* ay-r ay-r) (* az-r az-r)))]
     (when-not (pos? mag)
@@ -593,6 +635,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn sdf-gyroid
   "Gyroid TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
+  (check-sdf-number! "sdf-gyroid" "period" period)
+  (check-sdf-number! "sdf-gyroid" "thickness" thickness)
   (let [s (/ (* 2 js/Math.PI) period)]
     (with-default-pose
       (sdf-shell
@@ -605,6 +649,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn sdf-schwarz-p
   "Schwarz-P TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
+  (check-sdf-number! "sdf-schwarz-p" "period" period)
+  (check-sdf-number! "sdf-schwarz-p" "thickness" thickness)
   (let [s (/ (* 2 js/Math.PI) period)]
     (with-default-pose
       (sdf-shell
@@ -617,6 +663,8 @@ need the Rust backend — make sure the desktop app's geometry server is running
 (defn sdf-diamond
   "Diamond (Schwarz-D) TPMS. period = cell size, thickness = wall thickness."
   [period thickness]
+  (check-sdf-number! "sdf-diamond" "period" period)
+  (check-sdf-number! "sdf-diamond" "thickness" thickness)
   (let [s (/ (* 2 js/Math.PI) period)]
     (with-default-pose
       (sdf-shell
@@ -927,15 +975,43 @@ need the Rust backend — make sure the desktop app's geometry server is running
   "Default SDF meshing resolution (voxels per unit)."
   15)
 
+(defn cubify-bounds
+  "Expand a meshing region to the cube around its own centre whose side is
+   the region's longest span.
+
+   libfive derives the octree depth from the region's SHORTEST axis
+   (`Region::withResolution`: level = ceil(log2(min_dimension / min_feature)))
+   and then subdivides every axis that many times. A flat region therefore
+   starves its long axes: a 60×60×4 box at 6 voxels/unit gets 2^5 = 32 cells
+   per axis, i.e. 1.9-unit cells in x and y, and a 2-unit tube dissolves into
+   beads (`(sdf-torus 28 1)` came out as 4-28 components, 2026-09-14). Rings,
+   plates and discs all have flat auto-bounds, so any small detail on them was
+   under-resolved regardless of `*sdf-resolution*`.
+
+   A cube gives every axis the requested density. The extra empty space costs
+   little: libfive culls it by interval arithmetic at the coarse levels, so the
+   work stays proportional to the surface. Bounds are a meshing region, not a
+   clip (use `sdf-clip` for that), so enlarging them changes no geometry."
+  [bounds]
+  (let [side (apply max (map (fn [[lo hi]] (- hi lo)) bounds))
+        half (/ side 2)]
+    (mapv (fn [[lo hi]]
+            (let [c (/ (+ lo hi) 2)]
+              [(- c half) (+ c half)]))
+          bounds)))
+
 (defn materialize
   "Materialize an SDF tree into a triangle mesh via libfive.
-   bounds: [[xmin xmax] ...] — if nil, auto-computed from tree
+   bounds: [[xmin xmax] ...] — if nil, auto-computed from tree. Either way the
+   region sent to libfive is cubified first (see `cubify-bounds`): libfive
+   sizes its voxels from the shortest axis, so a flat region would starve the
+   long ones.
    resolution: voxels per unit (default 15)
    Anchors and creation-pose on the SDF root carry over to the resulting mesh."
   ([node] (materialize node nil 15))
   ([node bounds] (materialize node bounds 15))
   ([node bounds resolution]
-   (let [bounds (or bounds (auto-bounds node))
+   (let [bounds (cubify-bounds (or bounds (auto-bounds node)))
          payload (clj->js {:tree node :bounds bounds :resolution resolution})
          result (invoke-sync "/sdf-mesh" payload)
          mesh (js->mesh result)]

@@ -34,6 +34,7 @@
             [ridley.editor.edit-acquire :as edit-acquire]
             [ridley.editor.acquire-stage :as acquire-stage]
             [ridley.photogrammetry.plate :as plate]
+            [ridley.photogrammetry.cage :as cage]
             [ridley.editor.mesh-board :as mesh-board]
             [ridley.editor.impl :as macro-impl]
             [ridley.geometry.warp :as warp]
@@ -230,7 +231,7 @@
    'turtle-transform-mesh turtle/transform-mesh
    ;; NOTE: attach-state and att-* functions are defined in macro-defs
    ;; Path/shape utilities
-   'path->data   path/path-from-state
+   'path->data   path/path-data
    'make-shape   shape/make-shape
    'shape?       shape/shape?
    ;; Generative operations (legacy ops namespace)
@@ -267,6 +268,11 @@
    'morphed          sfn/morphed
    'angle            sfn/angle
    'displace-radial  sfn/displace-radial
+   'shape-centroid   sfn/shape-centroid
+   'smoothstep       sfn/smoothstep
+   ;; the length of the sweep a shape-fn is being evaluated for (loft: the
+   ;; path; revolve: the centroid's arc) — nil outside loft/revolve
+   'current-path-length (fn [] sfn/*path-length*)
    ;; Procedural noise and displacement
    'noise            sfn/noise
    'fbm              sfn/fbm
@@ -481,7 +487,19 @@
    'save-mesh           stl/download-mesh
    ;; Registration-plate paper variant: printable mark sheet + its saver
    'marks->svg          plate-svg/marks->svg
+   ;; a plate over ~⌀150 doesn't fit an A4 at 100%, and "fit to page" would
+   ;; rescale the one thing that must be exact — so it prints as two halves
+   'marks->svg-halves   plate-svg/marks->svg-halves
+   'sheet-fits-a4?      plate-svg/fits-on-a4?
    'save-svg            stl/download-svg
+   ;; write to a path the CODE names, with no picker — the dialog is right when a
+   ;; human is choosing, wrong when the destination is already part of what was
+   ;; written. `~` is expanded.
+   'save-text-at        stl/save-text-at
+   'save-3mf-at         stl/save-3mf-at
+   ;; save-3mf-set-at: più file 3MF in UNA cartella, con una sola domanda su dove
+   ;; metterli — vedi la sua docstring per perché non è N chiamate a save-3mf-at.
+   'save-3mf-set-at     stl/save-3mf-set-at
    'export              (fn export-smart
                           ([] (let [meshes (viewport/get-current-meshes)
                                     fname  (or (first (registry/registered-names)) "model")]
@@ -658,6 +676,15 @@
    ;; zero-index under :anchors), so `(edit-acquire dir {:proxy (registration-plate
    ;; :d 130)})` needs no file import and the emitted (acquire …) is self-contained.
    'registration-plate  plate/registration-plate
+   ;; registration-cage: the parametric CAGE proxy — three orthogonal rings, six
+   ;; crowns (both faces of each ring) + a zero-index per face under :anchors.
+   ;; The reference travels WITH the part instead of the part standing on the
+   ;; reference, so every photograph self-registers, the sphere of views is
+   ;; reachable in one session, and the marks sit at the part's own depth.
+   'registration-cage   cage/registration-cage
+   ;; cage-printable-ring: un anello nel SUO frame (piatto in XY, linguette in
+   ;; su) — quel che serve per stampare, senza ruotare niente nello slicer.
+   'cage-printable-ring cage/printable-ring
    ;; edit-plane-mark (dev-docs/brief-plane-marks.md §Seguito): wrap a plane mark
    ;; INSIDE the emitted (acquire …)'s :marks to re-open it on the stage —
    ;;   :marks {:piano-1 (edit-plane-mark {…})}
@@ -706,6 +733,16 @@
    ;; una specifica differita che `acquire` risolve — lo stesso trucco a due
    ;; tempi di edit-plane-mark.
    'plane-from-edges    edit-acquire/plane-from-edges
+   ;; plane-by-eye: a plane placed BY EYE on the stage — seeded on a ring of the
+   ;; registration cage, carried onto the part with the gizmo (edit-acquire's
+   ;; 'd', moved out to the stage where the user's geometry is visible over the
+   ;; photo and follows the plane live). Same grammar as the pair above:
+   ;;   :marks {:coperchio (edit-plane-by-eye :big)}      arms it (creation)
+   ;;   :marks {:coperchio (plane-by-eye :big {…})}       what OK leaves behind
+   ;; `(plane-by-eye :big)` alone is the plane the ring itself spans, resolved
+   ;; by acquire like plane-from-edges (Vincenzo 2026-09-11).
+   'edit-plane-by-eye   acquire-stage/request-eye-edit!
+   'plane-by-eye        edit-acquire/plane-by-eye
    'edit-edge-mark      (fn [& [e]] (acquire-stage/request-edge-edit! :retta e))
    ;; edit-acquire (dev-docs/brief-param-acq-v1.md): now a MARKER in the edit-*
    ;; family. The `edit-acquire` macro dispatches a dir-string first arg here

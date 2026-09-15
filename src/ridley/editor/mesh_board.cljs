@@ -213,7 +213,7 @@
     (when ratio
       (let [pct (max 0 (min 100 (* 100 (- 1 ratio))))
             tag (when (seq label) (str " [" label "]"))]
-        (state/capture-println (str "mesh-board:" tag " riferimento vs candidato — fedeltà "
+        (state/capture-println (str "mesh-board:" tag " reference vs candidate — fidelity "
                                     (.toFixed pct 1) "%")))))
   reference)
 

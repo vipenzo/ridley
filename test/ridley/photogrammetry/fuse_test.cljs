@@ -60,7 +60,7 @@
                              (anchor :fianco [45 3 2] [1 0 0])
                              (anchor :becco [3 40 -2] [0 1 0])])]
     (is (some? (:error fit)) "must refuse rather than pick one of the four")
-    (is (re-find #"sistemazioni|ASIMMETRICO" (:error fit)))))
+    (is (re-find #"placements|ASYMMETRIC" (:error fit)))))
 
 (deftest sliding-a-mark-INSIDE-its-plane-changes-nothing
   ;; THE property this design exists for (Vincenzo 2026-08-05: a plane is easy to
@@ -94,7 +94,12 @@
                              (anchor :fianco [45 3 2] [1 0 0])])]
     (is (some? (:error fit))
         "two planes fix the rotation and two of three translations — refusing is honest")
-    (is (re-find #"TERZO piano|intersezione" (:error fit)))))
+    ;; the refusal must name a remedy that EXISTS. It used to send the user to a
+    ;; point-mark gesture the app does not have; now the first thing it offers is
+    ;; an edge, which is both reachable and the stronger anchor.
+    (is (re-find #"intersection" (:error fit)))
+    (is (re-find #"EDGE" (:error fit))
+        (str "the reachable remedy should come first: " (:error fit)))))
 
 (deftest two-planes-plus-one-real-point-are-enough
   ;; Nobody enumerated this case: it works because the guard is the RANK of the
@@ -121,7 +126,7 @@
 
 (deftest one-mark-is-refused-by-name
   (let [fit (fuse/fit-rigid [(anchor :a [0 0 0] [0 0 1])])]
-    (is (re-find #"almeno DUE" (:error fit)))))
+    (is (re-find #"at least TWO" (:error fit)))))
 
 (deftest collinear-marks-are-refused
   (let [fit (fuse/fit-rigid [(anchor :a [0 0 0]) (anchor :b [20 0 0]) (anchor :c [50 0 0])])]
@@ -129,7 +134,7 @@
 
 (deftest marks-too-close-together-are-refused
   (let [fit (fuse/fit-rigid [(anchor :a [0 0 0]) (anchor :b [1.5 0.5 0]) (anchor :c [0 1.2 0.4])])]
-    (is (re-find #"troppo vicini" (:error fit))
+    (is (re-find #"too close" (:error fit))
         "a 1.6 mm baseline on a 100 mm object multiplies click noise")))
 
 (deftest the-floor-gate-identical-sessions-fuse-to-the-identity
@@ -214,7 +219,7 @@
         refused (filterv :error fits)]
     (is (seq refused)
         "at least one pair must own up to the ambiguity instead of picking a branch")
-    (is (every? #(re-find #"sistemazioni|ASIMMETRICO" (:error %)) refused)
+    (is (every? #(re-find #"placements|ASYMMETRIC" (:error %)) refused)
         "and say what would settle it")))
 
 (deftest one-asymmetric-point-settles-the-mirror
@@ -281,15 +286,15 @@
   (testing "a reference that names no session is refused by name"
     (let [[_ errs] (fuse/declared-anchors sessions [[:piano-1 :B/piano-1]] :A :B)]
       (is (= 1 (count errs)))
-      (is (re-find #"non dice a quale sessione" (first errs)))))
+      (is (re-find #"does not say which session" (first errs)))))
 
   (testing "an unknown label is refused by name"
     (let [[_ errs] (fuse/declared-anchors sessions [[:A/piano-1 :Z/piano-1]] :A :B)]
-      (is (re-find #"etichetta :Z" (first errs)))))
+      (is (re-find #"label :Z" (first errs)))))
 
   (testing "a mark that does not exist is refused by name"
     (let [[_ errs] (fuse/declared-anchors sessions [[:A/piano-1 :B/manca]] :A :B)]
-      (is (re-find #"non esiste" (first errs)))))
+      (is (re-find #"does not exist" (first errs)))))
 
   (testing "a row can name MORE than two sessions — one row per ZONE, not per couple"
     ;; With three sessions, [[:A/p1 :B/p1 :C/p1] …] says 'this zone, seen by all
@@ -360,3 +365,138 @@
       ;; three planes left: their millimetres are zero by construction, which
       ;; would frame the anchor that was doing the work
       (is (not= :notch (:name (:suspect fit)))))))
+
+;; ---------------------------------------------------------------------------
+;; Edges as anchors
+;;
+;; The case that forced them (Vincenzo, 2026-08-14): an object whose only two
+;; flat zones are PARALLEL. Two parallel planes are one direction, no care makes
+;; them two, and the remaining advice — a mark on a real point — named a gesture
+;; that does not exist. Four measured edges per session sat in `:edges`, read by
+;; nothing.
+
+(defn- edge-anchor
+  "One named twin EDGE: a point on the line and a direction along it, in session
+   B's frame, plus the same line in A's frame."
+  ([nm pos dir] (edge-anchor nm pos dir known-rt))
+  ([nm pos dir rt]
+   {:name nm :edge? true
+    :from-pos pos :from-dir dir
+    :to-pos (fuse/transform-point rt pos)
+    :to-dir (fuse/transform-dir rt dir)}))
+
+(deftest two-parallel-planes-and-ONE-edge-are-still-not-enough
+  (testing "sliding along the edge is free, and the parallel planes do not mind
+
+   Worth pinning because it is the plausible wrong answer, and I wrote it as a
+   passing test before checking it. Count the freedoms: two parallel planes fix
+   the normal (2 of the rotation) and the distance along it (1 of the
+   translation) — the second plane repeats what the first said. One edge fixes
+   the remaining spin and the translation ACROSS itself, but by construction says
+   nothing about sliding ALONG itself. Six minus five is one, and it is real.
+
+   The guard that catches it is the RANK of the fitted system, not a checklist —
+   which is why it caught a case nobody had enumerated."
+    (let [fit (fuse/fit-rigid [(anchor :sopra [0 0 0] [0 0 1])
+                               (anchor :sotto [0 0 -20] [0 0 1])
+                               (edge-anchor :spigolo [12 -4 -8] [0.8 0.6 0.0])])]
+      (is (some? (:error fit))
+          "refusing is honest: one degree of freedom is genuinely unconstrained"))))
+
+(deftest two-parallel-planes-and-two-crossing-edges-are-enough
+  (testing "the grinder's case, as it actually resolves
+
+   An object whose only flat zones are parallel (Vincenzo, 2026-08-14). The
+   planes contribute what they can; the second edge, not parallel to the first,
+   closes the slide the first one left open."
+    (let [fit (fuse/fit-rigid [(anchor :sopra [0 0 0] [0 0 1])
+                               (anchor :sotto [0 0 -20] [0 0 1])
+                               (edge-anchor :e1 [12 -4 -8] [0.8 0.6 0.0])
+                               (edge-anchor :e2 [-6 9 -3] [0.5 -0.87 0.0])])]
+      (is (nil? (:error fit)) (:error fit))
+      (is (approx= 0.0 (rt-error fit [70 -50 40]) 1e-4)
+          "and it is the SAME motion, checked 100mm away from the anchors"))))
+
+(deftest two-edges-alone-determine-the-motion
+  (testing "two non-parallel lines are six constraints between them"
+    (let [fit (fuse/fit-rigid [(edge-anchor :a [0 0 0] [1 0 0])
+                               (edge-anchor :b [5 20 -3] [0.1 0.9 0.2])])]
+      (is (nil? (:error fit)) (:error fit))
+      (is (approx= 0.0 (rt-error fit [80 -60 55]) 1e-4)))))
+
+(deftest two-parallel-edges-are-refused
+  (testing "parallel lines leave the roll about their common direction free"
+    (let [fit (fuse/fit-rigid [(edge-anchor :a [0 0 0] [1 0 0])
+                               (edge-anchor :b [0 15 6] [1 0 0])])]
+      (is (some? (:error fit))
+          "two rails say nothing about turning around them — refusing is honest"))))
+
+(deftest painting-an-edge-from-either-end-is-the-same-edge
+  (testing "neither the direction painted nor where you started is a claim
+
+   An edge is declared by painting over it, and nothing decides which end you
+   start from or which way you sweep. So a reversed direction, and a :position
+   slid anywhere along the line, must give the SAME fit — the same freedom a
+   plane mark's origin has within its plane."
+    (let [base [(anchor :sopra [0 0 0] [0 0 1])
+                (anchor :fianco [45 3 2] [1 0 0])
+                (edge-anchor :spigolo [12 -4 -8] [0.8 0.6 0.0])]
+          straight (fuse/fit-rigid base)
+          ;; same line: direction reversed, and the point moved 30mm along it
+          flipped (fuse/fit-rigid
+                   (conj (vec (take 2 base))
+                         (let [e (nth base 2)
+                               d (m/normalize (:from-dir e))]
+                           (assoc e
+                                  :from-dir (mapv - d)
+                                  :from-pos (mapv + (:from-pos e) (mapv #(* 30.0 %) d))))))]
+      (is (nil? (:error flipped)) (:error flipped))
+      (is (approx= (rt-error straight [70 -50 40]) (rt-error flipped [70 -50 40]) 1e-6)
+          "the same line, described differently, is the same anchor"))))
+
+(deftest a-mispaired-edge-is-caught-before-any-fit
+  (testing "the angle between two edges cannot change under a rigid motion either
+
+   The pre-check that catches a mis-paired PLANE has to cover edges for the same
+   reason and by the same argument: angles are invariant, so a pair that reads
+   80° in one session and 10° in the other is not the same pair of edges. Without
+   this, the distance residuals can still be driven to zero and the answer looks
+   perfect."
+    (let [good (edge-anchor :a [0 0 0] [1 0 0])
+          ;; declared to be the same edge, but its twin runs 80° off
+          wrong (assoc (edge-anchor :b [5 20 -3] [0 1 0])
+                       :from-dir [0.9 0.436 0.0])
+          fit (fuse/fit-rigid [good wrong (anchor :piano [3 3 3] [0 0 1])])]
+      (is (some? (:error fit)))
+      (is (re-find #"same zones" (:error fit))
+          (str "expected the mis-pairing to be named, got: " (:error fit))))))
+
+(deftest an-edges-reported-residual-is-the-distance-between-the-LINES
+  (testing "not between the two origins, which are wherever the painting started
+
+   The report is what a user acts on, so measuring the wrong quantity there is
+   not cosmetic. Edges were first reported through the point branch, and a
+   perfectly matched pair came back at 12-20mm with an rms of 13mm — numbers that
+   described only where two people began their strokes, under a fit that was
+   sound (Vincenzo 2026-08-14). He read them as a bad fusion, which is exactly
+   what they looked like.
+
+   Here the two twins are the SAME line with their stored positions slid 40mm
+   apart along it. The residual must be zero."
+    (let [dir [0.6 0.8 0.0]
+          slid (mapv #(* 40.0 %) dir)
+          fit (fuse/fit-rigid
+               [(anchor :sopra [0 0 0] [0 0 1])
+                (anchor :fianco [45 3 2] [1 0 0])
+                ;; same physical line; the 'from' side starts 40mm further along
+                (let [e (edge-anchor :spigolo [10 -5 -6] dir)]
+                  (assoc e :from-pos (mapv + (:from-pos e) slid)))])
+          row (first (filter #(= :spigolo (:name %)) (:per-anchor fit)))]
+      (is (nil? (:error fit)) (:error fit))
+      (is (= :spigolo (:kind row)) "and it must be reported AS an edge")
+      (is (< (:residual-mm row) 1e-6)
+          (str "slid 40mm along its own line, the residual must stay 0, got "
+               (:residual-mm row)))
+      (is (< (:rms-mm fit) 1e-6)
+          (str "and the rms is built from those, so it must not inherit the slide: "
+               (:rms-mm fit))))))

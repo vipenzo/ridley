@@ -82,7 +82,30 @@
    really is a physical point — a corner, a printed dot — has to say so with
    `:point? true`, and then its full position is used."
   [a]
-  (and (:from-dir a) (:to-dir a) (not (:point? a))))
+  (and (:from-dir a) (:to-dir a) (not (:point? a)) (not (:edge? a))))
+
+(defn edge-anchor?
+  "Is this anchor a measured EDGE — a line, not a plane and not a point?
+
+   An edge is the strongest anchor this channel can produce, and for a while it
+   was the one the fusion could not read. It pins four degrees of freedom to a
+   plane's three; it is measured along its whole length rather than at one spot;
+   and — the part that matters most here — declaring it needs no point paired
+   with any other point, which is the thing that makes plane marks easy and
+   clicked points hard.
+
+   It arrived because a real object refused the alternatives (Vincenzo,
+   2026-08-14): a coffee grinder whose only two flat zones are PARALLEL. Two
+   parallel planes are one direction, no amount of care makes them two, and the
+   remaining advice — a mark on a real point — named a gesture that does not
+   exist. Meanwhile four measured edges per session sat in `:edges`, unused.
+
+   Like a plane, an edge has NO SIDE: a stroke painted from either end describes
+   the same line, so only the line is believed, never the arrow. And like a
+   plane's origin, WHERE along it you happened to paint is not a feature — so
+   sliding along the edge costs nothing."
+  [a]
+  (and (:edge? a) (:from-dir a) (:to-dir a)))
 
 (defn- independent-normals?
   "Do these normals span 3D — i.e. do the planes pin the translation from every
@@ -156,15 +179,86 @@
             t (la/v-sub (centroid pt) (la/mat*vec R (centroid pf)))]
         {:R R :t t}))))
 
-(defn- seed-once
-  "The seed for ONE sign assignment: planes first, so that when the plane marks
-   alone determine the motion the origins are never consulted."
+(defn- directed?
+  "Does this anchor carry a DIRECTION that a rotation must carry onto its twin —
+   a plane's normal or an edge's own direction? Both are sign-free lines, and both
+   seed the rotation the same way. A point carries none."
+  [a]
+  (or (plane-anchor? a) (edge-anchor? a)))
+
+(defn- seed-from-directions
+  "Closed-form (R, t) from any two non-parallel DIRECTIONS — plane normals, edge
+   directions, or one of each — with the translation from whatever each anchor
+   constrains.
+
+   `seed-from-planes` covers the three-plane case and needs three; below that it
+   returns nil, and the fallback was `seed-from-points`, which compares ORIGINS.
+   For an edge the origin is where the painting began: slide it 40mm along its own
+   line, which changes nothing about the object, and the seed lands in a different
+   basin — measured, a fit that was exact came back 210mm away (2026-08-14). An
+   edge must seed from its direction, like the plane it is standing in for.
+
+   Translation rows: a plane pins `n · t`; an edge pins `t` along the two
+   directions ACROSS itself, and nothing along its length."
   [anchors]
-  (or (seed-from-planes anchors)
-      (when (>= (count anchors) 2) (seed-from-points anchors))))
+  (let [ds (filterv directed? anchors)]
+    (when (>= (count ds) 2)
+      (let [nf (mapv #(m/normalize (:from-dir %)) ds)
+            nt (mapv #(m/normalize (:to-dir %)) ds)
+            ;; the two most nearly perpendicular make the sturdiest triad
+            [i j] (first (sort-by (fn [[i j]] (js/Math.abs (m/dot (nth nt i) (nth nt j))))
+                                  (for [i (range (count ds)) j (range (inc i) (count ds))]
+                                    [i j])))
+            Ff (triad (nth nf i) (nth nf j))
+            Ft (triad (nth nt i) (nth nt j))]
+        (when (and Ff Ft)
+          (let [R (la/mat*mat Ft (la/transpose Ff))
+                ;; one row per constrained direction
+                cons- (mapcat (fn [a]
+                                (let [n (m/normalize (:to-dir a))
+                                      rhs-of (fn [u] [(vec u)
+                                                      (m/dot (la/v-sub (:to-pos a)
+                                                                       (la/mat*vec R (:from-pos a)))
+                                                             u)])]
+                                  (if (edge-anchor? a)
+                                    ;; across the line, both ways; never along it
+                                    (let [k (apply min-key #(js/Math.abs (nth n %)) [0 1 2])
+                                          u1 (m/normalize (m/cross n (assoc [0.0 0.0 0.0] k 1.0)))
+                                          u2 (m/cross n u1)]
+                                      [(rhs-of u1) (rhs-of u2)])
+                                    [(rhs-of n)])))
+                              ds)
+                rows (mapv first cons-)
+                rhs (mapv second cons-)
+                A (la/transpose rows)]
+            (when-let [t (la/solve (la/mat*mat A rows) (la/mat*vec A rhs))]
+              {:R R :t t})))))))
+
+(defn- seed-once
+  "The seed for ONE sign assignment: DIRECTIONS first — plane normals and edge
+   directions — so that when they determine the motion the origins are never
+   consulted. Origins are the last resort, and only over anchors whose origin is
+   actually a claim (see seed-from-directions)."
+  [anchors]
+  ;; Deliberately surgical. With no edges among the anchors this is exactly what
+  ;; it always was, down to which anchors seed-from-points sees — a broader
+  ;; reordering was tried and it moved cases that had been settled for months.
+  ;; What changes is only what an EDGE is allowed to contribute: never its
+  ;; origin, which is where the painting began.
+  (let [pts (if (some edge-anchor? anchors)
+              (filterv (complement edge-anchor?) anchors)
+              anchors)]
+    (or (seed-from-planes anchors)
+        (when (>= (count pts) 2) (seed-from-points pts))
+        (seed-from-directions anchors))))
 
 (defn- flip-planes
-  "The anchors with the plane normals selected by `mask` turned around."
+  "The anchors with the DIRECTIONS selected by `mask` turned around.
+
+   Edges are enumerated alongside planes: their direction is sign-free too (a
+   stroke painted from either end is the same line), so the residual does not
+   care — but the SEED does, because a triad built from the flipped direction
+   lands in a different basin. Enumerating is how the right basin is reached."
   [anchors mask]
   (let [idx (into {} (map-indexed (fn [i a] [(:name a) i]) (filterv plane-anchor? anchors)))]
     (mapv (fn [a] (if (and (plane-anchor? a) (bit-test mask (get idx (:name a) 0)))
@@ -198,15 +292,35 @@
    sliding within the plane costs nothing, because a plane mark's origin is not
    a reproducible feature) plus the misalignment of the normals.
 
+   An EDGE anchor contributes the distance between the two LINES (the part of
+   the displacement across the edge — sliding along it is free, for the same
+   reason a plane's origin is free) plus the misalignment of the directions,
+   taken without a sign because a stroke painted from either end is the same
+   line.
+
    A POINT anchor contributes the full three-component displacement, because
    there the origin IS the claim.
 
-   Constant length either way (4 numbers), because lm/solve needs it: a plane's
-   in-plane freedom is expressed as a zero, not as a missing residual."
+   Each KIND has a fixed length — 4 for a plane or a point, 6 for an edge — which
+   is what lm/solve needs: the residual vector must not change length between
+   iterations, and since an anchor never changes kind, it does not. Within a
+   plane, the in-plane freedom is expressed as a zero rather than as a missing
+   residual, for the same reason."
   [rt {:keys [from-pos to-pos from-dir to-dir] :as a}]
   (let [moved (transform-point rt from-pos)
         d (la/v-sub moved to-pos)]
-    (if (plane-anchor? a)
+    (cond
+      (edge-anchor? a)
+      (let [t (m/normalize to-dir)
+            moved-d (transform-dir rt from-dir)
+            ;; no side: compare the LINES, not the arrows (see edge-anchor?)
+            s (if (neg? (m/dot moved-d t)) -1.0 1.0)
+            ;; only the part of the displacement ACROSS the edge; along it is free
+            perp (la/v-sub d (la/v-scale t (m/dot d t)))
+            dd (la/v-scale (la/v-sub (la/v-scale moved-d s) t) plane-normal-arm-mm)]
+        (into (vec perp) dd))
+
+      (plane-anchor? a)
       (let [n (m/normalize to-dir)
             moved-n (transform-dir rt from-dir)
             ;; A PLANE HAS NO SIDE. The stage points a fitted normal 'toward the
@@ -220,6 +334,7 @@
             s (if (neg? (m/dot moved-n n)) -1.0 1.0)
             dn (la/v-scale (la/v-sub (la/v-scale moved-n s) n) plane-normal-arm-mm)]
         (into [(m/dot d n)] dn))
+
       ;; A POINT contributes its position and NOTHING ELSE. Declaring `:point?`
       ;; says 'believe where this is'; it says nothing about a direction, and the
       ;; :heading such a mark carries is whatever the plane gesture happened to
@@ -227,6 +342,7 @@
       ;; wrecked the very fit the point was added to rescue (Vincenzo 2026-08-06:
       ;; the notch reported 84° and 170° of 'normal' error, and dragged the
       ;; rotation with it at a 5 mm arm).
+      :else
       [(nth d 0) (nth d 1) (nth d 2) 0.0])))
 
 (defn- residual-fn [anchors sigma-mm]
@@ -249,11 +365,23 @@
 
    Without it the fusion picked a branch per session pair and the loop did not
    close — 33 mm around A→B→C→A on Vincenzo's own three sessions (2026-08-06),
-   with every pairwise report claiming a perfect fit."
+   with every pairwise report claiming a perfect fit.
+
+   An EDGE contributes only the part ACROSS its line. Its origin is where the
+   painting began and slides freely along it, so the along-line component is not
+   merely untrustworthy — it is arbitrary, and it can be as large as the branch
+   separation this is trying to read. Measured: an edge whose twin started 40mm
+   further along the same line moved the chosen branch and put 2.9mm into a fit
+   that should have been exact. Across the line the number is still trustworthy,
+   and still tells the branches apart."
   [rt anchors]
   (Math/sqrt (/ (reduce + 0.0
-                        (map (fn [{:keys [from-pos to-pos]}]
-                               (let [d (la/v-sub (transform-point rt from-pos) to-pos)]
+                        (map (fn [{:keys [from-pos to-pos to-dir] :as a}]
+                               (let [d (la/v-sub (transform-point rt from-pos) to-pos)
+                                     d (if (edge-anchor? a)
+                                         (let [t (m/normalize to-dir)]
+                                           (la/v-sub d (la/v-scale t (m/dot d t))))
+                                         d)]
                                  (m/dot d d)))
                              anchors))
                 (max 1 (count anchors)))))
@@ -264,7 +392,7 @@
    The residual no longer cares which way a plane's normal points, but the
    closed-form seed does: it composes triads out of those very vectors, and a
    normal pointing the other way is a different branch entirely. The signs are
-   few and discrete (2^k over the planes), so they are enumerated rather than
+   few and discrete (2^k over the directed anchors), so they are enumerated rather than
    guessed: build the seed for each assignment, keep those that fit the planes
    as well as the best one does, and among THOSE take the one that puts the
    object where the origins say it is."
@@ -334,28 +462,46 @@
                     :votes (outward-votes rt anchors)}))))))
 
 (defn- per-anchor
-  "What each anchor costs after the fit. For a plane: its distance from the twin
-   PLANE (mm) and how far the normal is turned (degrees) — deliberately NOT how
-   far the two origins ended up from each other, which is not an error. For a
-   point: the full distance between the origins.
+  "What each anchor costs after the fit — each measured against WHAT IT CLAIMS,
+   which is the whole point of the table.
 
-   This is the table that lets a wrong twin be found instead of averaged in."
+     plane    distance from the twin PLANE, and how far the normal is turned.
+              Deliberately NOT how far the two origins ended up from each other,
+              which is not an error.
+     edge     distance between the two LINES, and how far the directions are
+              turned. Also not the distance between the two origins: an edge's
+              origin is wherever the painting started and slides freely along it.
+     point    the full distance between the origins, because there the origin IS
+              the claim.
+
+   Getting this wrong is not cosmetic. Edges were reported as points at first,
+   and the numbers that came back — 12 to 20 mm on correctly matched edges, and
+   an rms of 13 mm computed from them — described nothing but where two people
+   happened to start painting (Vincenzo 2026-08-14). The fit underneath was
+   sound; only the report was measuring a quantity the geometry never claimed."
   [rt anchors]
   (mapv (fn [{:keys [name from-pos to-pos from-dir to-dir] :as a}]
           (let [moved (transform-point rt from-pos)
+                d0 (la/v-sub moved to-pos)
                 plane? (plane-anchor? a)
-                d (if plane?
-                    (js/Math.abs (m/dot (la/v-sub moved to-pos) (m/normalize to-dir)))
-                    (la/v-norm (la/v-sub moved to-pos)))
-                ;; only a plane has an orientation to be wrong about; a point's
-                ;; :heading is not part of what it claims
-                ang (when (and plane? from-dir to-dir)
-                      ;; between LINES, not rays: a plane has no side
+                edge? (edge-anchor? a)
+                d (cond
+                    plane? (js/Math.abs (m/dot d0 (m/normalize to-dir)))
+                    ;; across the line only; along it costs nothing
+                    edge? (let [t (m/normalize to-dir)]
+                            (la/v-norm (la/v-sub d0 (la/v-scale t (m/dot d0 t)))))
+                    :else (la/v-norm d0))
+                ;; a point's :heading is not part of what it claims; a plane's and
+                ;; an edge's are, and both are read between LINES, not rays —
+                ;; neither has a side
+                ang (when (and (or plane? edge?) from-dir to-dir)
                       (let [c (max -1.0 (min 1.0 (js/Math.abs
                                                   (m/dot (transform-dir rt from-dir)
                                                          (m/normalize to-dir)))))]
                         (* (/ 180.0 Math/PI) (Math/acos c))))]
-            {:name name :kind (if plane? :piano :punto) :residual-mm d :normal-deg ang}))
+            {:name name
+             :kind (cond plane? :piano edge? :spigolo :else :punto)
+             :residual-mm d :normal-deg ang}))
         anchors))
 
 (defn- angle-deg [a b]
@@ -383,9 +529,14 @@
 
    Returns a human sentence, or nil when the anchors are mutually consistent."
   [anchors]
-  (let [ps (filterv plane-anchor? anchors)
-        ;; ACUTE angles: a plane has no side (anchor-residuals), so 116° and 64°
-        ;; between the same two faces are the same statement.
+  ;; Edges belong in this check as much as planes do: the angle between two
+  ;; measured lines is just as invariant under a rigid motion as the angle
+  ;; between two normals, and a mis-paired edge is exactly as fatal. Only points
+  ;; stay out — a point carries no direction to take an angle with.
+  (let [ps (filterv #(or (plane-anchor? %) (edge-anchor? %)) anchors)
+        ;; ACUTE angles: neither a plane nor an edge has a side
+        ;; (anchor-residuals), so 116° and 64° between the same two are the same
+        ;; statement.
         acute (fn [a b] (let [x (angle-deg a b)] (min x (- 180.0 x))))
         pairs (for [i (range (count ps)) j (range (inc i) (count ps))]
                 (let [a (nth ps i) b (nth ps j)
@@ -396,12 +547,12 @@
         bad (filter #(> (:delta %) angle-tol-deg) pairs)]
     (when (seq bad)
       (let [w (apply max-key :delta bad)]
-        (str "gli agganci non possono essere le stesse zone: fra " (:a w) " e " (:b w)
-             " le facce formano " (js/Math.round (:from w)) "° in una sessione e "
-             (js/Math.round (:to w)) "° nell'altra, e l'angolo fra due facce non "
-             "cambia muovendo l'oggetto. Controlla di aver marcato le stesse zone "
-             "in tutte e due — su un pezzo con facce parallele è facile prendere "
-             "quella sbagliata")))))
+        (str "the anchors cannot be the same zones: between " (:a w) " e " (:b w)
+             " the faces form " (js/Math.round (:from w)) "° in one session and "
+             (js/Math.round (:to w)) "° in the other, and the angle between two faces does not "
+             "change by moving the object. Check that you marked the same zones "
+             "in both — on a part with parallel faces it is easy to take "
+             "the wrong one")))))
 
 (def min-baseline-mm
   "POINT anchors closer together than this do not span the object: the rotation
@@ -443,21 +594,27 @@
   ([anchors] (fit-rigid anchors {}))
   ([anchors {:keys [sigma-mm no-loo?] :or {sigma-mm 0.2}}]
    (let [planes (filterv plane-anchor? anchors)
-         points (filterv (complement plane-anchor?) anchors)
+         edges (filterv edge-anchor? anchors)
+         ;; Edges are not points, and lumping them in here was a real fault: an
+         ;; edge's :position is WHEREVER the painting started, free to slide along
+         ;; the line, so two edges whose stored positions happen to fall close
+         ;; together would have been refused for a "short baseline" that means
+         ;; nothing about them.
+         points (filterv #(and (not (plane-anchor? %)) (not (edge-anchor? %))) anchors)
          short-baseline? (and (>= (count points) 2)
                               (< (la/v-norm (la/v-sub (:from-pos (second points))
                                                       (:from-pos (first points))))
                                  min-baseline-mm))]
      (cond
        (< (count anchors) 2)
-       {:error (str "servono almeno DUE agganci fra le due sessioni (ne ho trovato "
-                    (count anchors) "). Con i piani ne servono TRE, con le normali "
-                    "che guardano in direzioni diverse")}
+       {:error (str "at least TWO anchors between the two sessions are needed (I found "
+                    (count anchors) "). With planes THREE are needed, with normals "
+                    "looking in different directions")}
 
        short-baseline?
-       {:error (str "i mark-punto di aggancio sono troppo vicini fra loro (meno di "
-                    min-baseline-mm " mm): la rotazione che determinano è rumore. "
-                    "Prendine due lontani, agli estremi dell'oggetto")}
+       {:error (str "the anchor point-marks are too close to each other (less than "
+                    min-baseline-mm " mm): the rotation they determine is noise. "
+                    "Take two far apart, at the ends of the object")}
 
        ;; BEFORE fitting: the angles between the normals must already agree.
        ;; Fitting first and judging after does not work here — the distance part
@@ -502,9 +659,9 @@
                                                       (m/normalize to-dir)))))
                                (mapv :name)))]
          (if (empty? cands)
-           {:error (str "i mark di aggancio non determinano una rotazione: sono allineati, "
-                        "oppure le loro normali sono parallele fra loro. "
-                        "Serve un aggancio che guardi in un'altra direzione")}
+           {:error (str "the anchor marks do not determine a rotation: they are collinear, "
+                        "or their normals are parallel to each other. "
+                        "An anchor looking in another direction is needed")}
            (let [res {:params (:params winner) :cost (:cost winner)}
                  rt (:rt winner)
                  pa (per-anchor rt anchors)
@@ -512,39 +669,54 @@
              ;; 'not enough constraints' comes BEFORE 'more than one answer':
              ;; when both are true, the first is the more useful thing to be told.
              (if (underdetermined? rfn (:params res))
-               {:error (str "questi agganci non fissano tutto il movimento: "
+               {:error (str "these anchors do not pin down the whole motion: "
                             (if (and (>= (count planes) 2) (empty? points))
-                              (str "due piani lasciano libero lo scorrimento lungo la loro "
-                                   "intersezione. Aggiungi un TERZO piano con la normale in "
-                                   "un'altra direzione, oppure un mark su un punto vero")
-                              (str "gli agganci sono allineati o le normali sono tutte "
-                                   "parallele fra loro. Serve un aggancio fuori da quella "
-                                   "direzione")))}
+                              ;; Naming the point-mark first was writing a cheque the
+                              ;; app cannot cash: nothing in the UI produces a mark
+                              ;; whose ORIGIN is a physical feature. The plane gesture's
+                              ;; origin is the centroid of wherever you clicked, so
+                              ;; declaring `:point? true` on one would be declaring
+                              ;; something untrue (Vincenzo 2026-08-14: «come faccio a
+                              ;; inserirlo?» — he could not, and there was no way to
+                              ;; know that from here). So the reachable remedy goes
+                              ;; first, and the point is named as what it is: something
+                              ;; you can only write by hand, if you have the numbers.
+                              (str "two planes leave the sliding along their "
+                                   "intersection free. The simplest way to close it is an "
+                                   "EDGE: measure it in both sessions and "
+                                   "call it by the same name among the :edges — it counts as "
+                                   "an anchor on its own, and asks you to pair no point "
+                                   "between the photos. Alternatively a third plane with its "
+                                   "normal in another direction")
+                              (str "the anchors are collinear or the normals are all "
+                                   "parallel to each other. An anchor outside that "
+                                   "direction is needed")))}
                (if rival
-                 {:error (str "questi agganci ammettono DUE sistemazioni lontane "
+                 {:error (str "these anchors admit TWO placements "
                               (js/Math.round (la/v-norm (la/v-sub (transform-point (:rt rival) probe)
                                                                   (transform-point rt probe))))
-                              " mm l'una dall'altra, e combaciano ugualmente bene: su un "
-                              "pezzo quasi simmetrico sono l'una lo specchio dell'altra. "
-                              "Tre facce da sole non bastano MAI a distinguerle: una mezza "
-                              "rotazione attorno a una qualunque delle tre normali riporta "
-                              "le tre facce su se stesse. Non è una questione di "
-                              "precisione, e non posso sceglierne una a caso. Serve un "
-                              "aggancio ASIMMETRICO: un dettaglio che esista da una parte "
-                              "sola — uno spigolo, un rilievo, una tacca — marcato in "
-                              "entrambe le sessioni e dichiarato punto vero con "
-                              "`(plane-mark {… :point? true})`. In alternativa una quarta "
-                              "faccia messa di traverso"
+                              " mm apart from each other, and they match equally well: on a "
+                              "nearly symmetric part they are each other's mirror. "
+                              "Three faces alone are NEVER enough to tell them apart: a half "
+                              "turn around any of the three normals brings "
+                              "the three faces back onto themselves. It is not a matter of "
+                              "precision, and I cannot pick one at random. An "
+                              "ASYMMETRIC anchor is needed: a detail that exists on one side "
+                              "only — an edge, a relief, a notch — marked in "
+                              "both sessions and declared a true point with "
+                              "`(plane-mark {… :point? true})`. Alternatively a fourth "
+                              "face set crosswise"
                               (when (seq dissenting)
-                                (str ". Per inciso: il verso di "
+                                (str ". Incidentally: the sense of "
                                      (apply str (interpose " e " (map str dissenting)))
-                                     " contraddice quello degli altri mark, quindi quello "
-                                     "è comunque da rivedere")))}
+                                     " contradicts that of the other marks, so that "
+                                     "needs a second look anyway")))}
                  (assoc rt
                         :rvec (vec (take 3 (:params res)))
                         :n (count anchors)
                         :planes (count planes)
                         :points (count points)
+                        :edges (count edges)
                         :per-anchor pa
                     ;; reported NEXT TO the distance rms, never instead of it: with
                     ;; three planes the distances alone can always be zeroed, so a
@@ -557,7 +729,12 @@
                     ;; only the normals carry information (they are 2 constraints
                     ;; each against 3 rotational unknowns, so they are checked
                     ;; from the third plane on).
-                        :distances-testify? (> (+ (count planes) (* 3 (count points))) 3)
+                    ;; An edge pins the translation along TWO directions (across
+                    ;; itself), so it testifies more than a plane and less than a
+                    ;; point.
+                        :distances-testify? (> (+ (count planes) (* 2 (count edges))
+                                                  (* 3 (count points)))
+                                               3)
                         :rms-mm (Math/sqrt (/ (reduce + 0.0 (map #(* % %) ds)) (count ds)))
                         :max-mm (reduce max 0.0 ds)
                         ;; LEAVE-ONE-OUT, the same move the PnP makes on a
@@ -620,24 +797,50 @@
      ;; the person who clicked it knows whether it is reproducible.
      :point? (boolean (or (:point? to) (:point? from)))}))
 
+(defn edge-anchor-of
+  "One correspondence between two MEASURED EDGES — the same physical edge seen in
+   two sessions. `to` is the reference session's edge, `from` the one to be
+   carried onto it; both are `edge-mark` values, so :position is one end and
+   :heading runs along the edge.
+
+   Neither the end you started painting from nor the direction you painted in is
+   a claim about the object: only the LINE is (see edge-anchor?). nil when either
+   is unusable."
+  [nm to from]
+  (when (and (:position to) (:position from) (:heading to) (:heading from))
+    {:name nm
+     :edge? true
+     :from-pos (vec (:position from)) :to-pos (vec (:position to))
+     :from-dir (vec (:heading from)) :to-dir (vec (:heading to))}))
+
 (defn resolve-ref
-  "`:A/piano-1` against `sessions` ([[label marks] …]) → [label mark-name pose],
-   or {:missing <human sentence>} naming exactly what could not be found."
+  "`:A/piano-1` against `sessions` ([[label marks edges] …]) → [label name value
+   kind], kind being :mark or :edge — or {:missing <human sentence>} naming
+   exactly what could not be found.
+
+   Marks are looked up first and edges second, so a name that exists as both
+   resolves to the mark. That is not arbitrary: everywhere else in this channel a
+   mark wins a name clash over an edge and says so, and the escape hatch must not
+   quietly disagree with the implicit rule it exists to override."
   [sessions ref]
   (let [lbl (some-> (namespace ref) keyword)
         nm (keyword (name ref))
-        marks (some (fn [[l ms]] (when (= l lbl) ms)) sessions)]
+        entry (some (fn [e] (when (= lbl (first e)) e)) sessions)
+        marks (second entry)
+        edges (nth entry 2 nil)]
     (cond
-      (nil? lbl) {:missing (str ref " non dice a quale sessione appartiene: "
-                                "scrivilo come :etichetta/nome-del-mark")}
-      (nil? marks) {:missing (str "l'etichetta :" (name lbl) " di " ref
-                                  " non è fra le sessioni passate")}
-      (nil? (get marks nm)) {:missing (str "il mark " ref " non esiste in quella sessione")}
-      :else [lbl nm (get marks nm)])))
+      (nil? lbl) {:missing (str ref " does not say which session it belongs to: "
+                                "write it as :label/mark-name")}
+      (nil? entry) {:missing (str "the label :" (name lbl) " di " ref
+                                  " is not among the sessions passed")}
+      (get marks nm) [lbl nm (get marks nm) :mark]
+      (get edges nm) [lbl nm (get edges nm) :edge]
+      :else {:missing (str "mark " ref " does not exist in that session "
+                           "(neither among the :marks nor among the :edges)")})))
 
 (defn declared-anchors
   "Correspondences between the reference session and the one labelled `lbl`,
-   from the declared pair list. `sessions` is [[label marks] …].
+   from the declared pair list. `sessions` is [[label marks edges] …].
    Returns [anchors errors]; an anchor is named after its SOURCE side
    (`:B/piano-1`), so the residual table says which mark of which session cost
    what."
@@ -645,17 +848,31 @@
   (let [resolved (mapv (fn [pair] (mapv #(resolve-ref sessions %) pair)) pairs)
         errs (->> resolved (mapcat identity) (keep :missing) distinct vec)
         pick (fn [refs l] (some (fn [r] (when (and (vector? r) (= l (first r))) r)) refs))
+        mismatch (atom [])
         anchors (->> resolved
                      (keep (fn [refs]
                              (let [to (pick refs ref-lbl) from (pick refs lbl)]
                                (when (and to from)
-                                 (assoc (anchor-of (keyword (name (first from)) (name (second from)))
-                                                   (nth to 2) (nth from 2))
-                                        ;; the zone's name on the REFERENCE side: what
-                                        ;; the fused value calls the zone itself
-                                        :ref-name (second to))))))
+                                 (let [nm (keyword (name (first from)) (name (second from)))]
+                                   ;; A plane paired with an edge is not a
+                                   ;; correspondence — the two say different kinds
+                                   ;; of thing about the object, and fitting one to
+                                   ;; the other would be believing a normal is a
+                                   ;; direction along an edge. Refuse by name.
+                                   (if (not= (nth to 3) (nth from 3))
+                                     (do (swap! mismatch conj
+                                                (str "the anchor between " (second to) " e " nm
+                                                     " pairs a plane with an edge: "
+                                                     "they are two different things and do not "
+                                                     "correspond"))
+                                         nil)
+                                     (assoc ((if (= :edge (nth to 3)) edge-anchor-of anchor-of)
+                                             nm (nth to 2) (nth from 2))
+                                            ;; the zone's name on the REFERENCE side: what
+                                            ;; the fused value calls the zone itself
+                                            :ref-name (second to))))))))
                      vec)]
-    [anchors errs]))
+    [anchors (vec (distinct (concat errs @mismatch)))]))
 
 (defn shared-name-anchors
   "Correspondences by EQUAL NAME between the reference session's marks and
@@ -669,15 +886,25 @@
    exactly what a declaration is. Renaming a mark is a text edit in the source,
    done while you still remember which zone it was.
 
-   Only :marks — `:faces` are generated per proxy, so a shared `:top` would be a
-   false correspondence between two different boxes and the fit would believe it."
-  [ref-marks marks]
-  (->> (keys marks)
-       (keep (fn [nm]
-               (some-> (anchor-of nm (get ref-marks nm) (get marks nm))
-                       (assoc :ref-name nm))))
-       (sort-by :name)
-       vec))
+   Marks AND edges, never `:faces` — the faces are generated per proxy, so a
+   shared `:top` would be a false correspondence between two different boxes and
+   the fit would believe it. Marks and edges are kept apart everywhere else in
+   this channel precisely because they mean different things, and that is why
+   they can share this rule safely: a name is matched against its own kind, so a
+   mark called `:becco` and an edge called `:becco` never pair with each other."
+  ([ref-marks marks] (shared-name-anchors ref-marks marks nil nil))
+  ([ref-marks marks ref-edges edges]
+   (->> (concat
+         (keep (fn [nm]
+                 (some-> (anchor-of nm (get ref-marks nm) (get marks nm))
+                         (assoc :ref-name nm)))
+               (keys marks))
+         (keep (fn [nm]
+                 (some-> (edge-anchor-of nm (get ref-edges nm) (get edges nm))
+                         (assoc :ref-name nm)))
+               (keys edges)))
+        (sort-by :name)
+        vec)))
 
 (defn worst-anchor
   "The anchor whose residual stands out from the others — a candidate for a

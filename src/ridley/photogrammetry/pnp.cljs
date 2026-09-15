@@ -282,20 +282,50 @@
   12.0)
 
 (def ^:private outlier-factor 3.0)
-(def ^:private outlier-floor-px 30.0)
+
+(def outlier-floor-frac
+  "The absolute half of the gross-outlier test, as a fraction of the image WIDTH.
+
+   It has been lowered twice, each time because it was carrying an assumption
+   about how the points were produced. It began as a flat 30px — 0.75% of a
+   4032px phone photo, right for HAND-CLICKED corners, where a few pixels of
+   error is just the hand. Scaling it to the image width fixed the 1920px live
+   frame, but kept the assumption.
+
+   Automatic blob detection broke it. A detected disc centre lands within half a
+   pixel, so eleven good marks sit at 0.4px and a wrong one at 9px is TWENTY
+   times the rest — obviously wrong by any reading, and still under a 14.4px
+   floor. Measured on a twelve-view ⌀300 session (2026-08-14): six photographs
+   carried exactly one blown pick each, at 6.1 to 9.4px, with every other mark
+   sub-pixel. None was dropped. They held the session at 2.1px, and they were
+   convincing enough as a group to be mistaken for a warped plate.
+
+   0.15% is 2.9px on a 1920px frame and 6px on a 4032px photo. On hand-clicked
+   work the RELATIVE half of the test (`outlier-factor` × the median of the
+   others) is larger than this and still governs, so that path keeps the
+   behaviour it was tuned for; on sub-pixel detections the floor is what has to
+   move, because there the median is small and the relative test alone would flag
+   ordinary noise."
+  0.0015)
+
+(defn- outlier-floor-px
+  "The gross-outlier floor in px for this image, read off the intrinsics — the
+   principal point is the image centre, so the width is 2·cx."
+  [{:keys [cx]}]
+  (* outlier-floor-frac 2.0 (or cx 2016.0)))
 
 (defn- gross-outlier?
   "Is the worst per-point residual a GROSS outlier — far above the rest — rather
    than ambient hand-click noise? Only then is dropping it justified; dropping to
    chase noise would wrongly flag innocent corners. True when the worst residual
-   clears an absolute floor AND is several times the median of the others."
-  [per-point]
+   clears the image-relative floor AND is several times the median of the others."
+  [per-point intrinsics]
   (when (> (count per-point) 1)
     (let [sorted (vec (sort > (map :residual-px per-point)))
           worst (first sorted)
           others (rest sorted)
           med (nth (vec (sort others)) (quot (count others) 2))]
-      (and (> worst outlier-floor-px)
+      (and (> worst (outlier-floor-px intrinsics))
            (> worst (* outlier-factor (max 1e-6 med)))))))
 
 (defn- coplanar?
@@ -315,6 +345,21 @@
              spread (fn [p] (la/v-norm (la/v-sub p o)))
              extent (reduce max 0.0 (map spread pts))]
          (< (reduce max 0.0 (map off pts)) (* 1e-3 (max 1e-9 extent))))))))
+
+(defn- dominant-plane-subset
+  "The correspondences lying on the plane that MOST of them share, or nil when
+   they do not cluster on one. Used to rescue a DLT that had too little depth to
+   work with (see `solve-once`)."
+  [correspondences]
+  (let [pts (mapv :world correspondences)]
+    (when-let [{:keys [o n]} (plane-frame pts)]
+      (let [off (mapv #(Math/abs (la/v-dot (la/v-sub % o) n)) pts)
+            extent (reduce max 0.0 (map #(la/v-norm (la/v-sub % o)) pts))
+            bar (* 0.05 (max 1e-9 extent))
+            on-plane (mapv first (filter (fn [[_ d]] (< d bar))
+                                         (map vector correspondences off)))]
+        (when (and (>= (count on-plane) 4) (< (count on-plane) (count correspondences)))
+          on-plane)))))
 
 (defn- solve-once
   "One seedless-estimate + refine pass over `correspondences`, or nil if
@@ -348,17 +393,63 @@
                  (estimate-homography correspondences intrinsics))
         start (if seeded? seed (or dlt planar seed))]
     (when start
-      (assoc (refine correspondences intrinsics start {:sigma-px sigma-px})
-             :method (cond dlt :dlt planar :planar :else :seed)))))
+      (let [first-pass (assoc (refine correspondences intrinsics start {:sigma-px sigma-px})
+                              :method (cond dlt :dlt planar :planar :else :seed))]
+        ;; A DLT needs points that SPAN depth, and "not coplanar" is not the same
+        ;; as "spans depth". A cage photographed with a whole crown clicked and
+        ;; two stray marks from a second ring is comfortably non-coplanar — the
+        ;; strays are tens of mm off the plane — yet twelve of the fourteen points
+        ;; carry no depth information at all, so the two that do carry all of it,
+        ;; and their noise with it. Measured on a real session (2026-08-20, foto
+        ;; 5): 12 marks on one ring + 2 on another gave an rms of 9736px, while
+        ;; the same points seeded from the dominant ring's homography give a
+        ;; normal fit.
+        ;;
+        ;; So when the DLT comes back visibly bad, seed instead from the plane
+        ;; most of the points share and refine against ALL of them: the off-plane
+        ;; points are then doing what they are actually good for — breaking the
+        ;; homography's mirror ambiguity and pinning depth — rather than being
+        ;; asked to condition an estimator on their own. Keep whichever fits
+        ;; better, so this can only help.
+        ;;
+        ;; Only on a bad first pass, and only under :auto — a caller who NAMES an
+        ;; estimator gets that estimator, or the forcing is a lie and no test can
+        ;; measure the thing it says it is measuring.
+        ;;
+        ;; Where it actually bites is INSIDE the outlier loop, and that is worth
+        ;; recording: on the real session's foto 5 the DLT over all fourteen
+        ;; points was fine (12.5px). Then the cleaning dropped the worst two —
+        ;; and one of them was `ym01`, one of the only TWO points off the crown's
+        ;; plane. What remained was eleven coplanar points and one, on which the
+        ;; DLT returned 7700px. The rejection is blind to what a point
+        ;; CONTRIBUTES: it removes the largest residual, which is exactly the kind
+        ;; of lone off-plane point that is both noisy and structurally essential.
+        (if (and dlt (= method :auto) (> (:rms-px first-pass) accept-rms-px))
+          (or (when-let [sub (dominant-plane-subset correspondences)]
+                (when-let [h (estimate-homography sub intrinsics)]
+                  (let [alt (assoc (refine correspondences intrinsics h {:sigma-px sigma-px})
+                                   :method :planar-seeded)]
+                    (when (< (:rms-px alt) (:rms-px first-pass)) alt))))
+              first-pass)
+          first-pass)))))
 
 (defn solve-pnp
-  "Robust PnP: seedless DLT (≥6 correspondences) + LM refine, then GREEDY
-   outlier rejection — while the fit is dirtier than accept-rms-px and there are
-   points to spare (never below min-correspondences), drop the highest-residual
-   correspondence and refit. Recovers a clean pose from the good corners even
-   when one or two were mislabeled, and reports which were dropped so the caller
-   can flag them for re-clicking. Falls back to a caller-supplied coarse `:seed`
-   (e.g. the gizmo pose) when there are too few points for DLT.
+  "Robust PnP: seedless DLT (≥6 correspondences) + LM refine, then GREEDY outlier
+   rejection — while a GROSS outlier survives and there are points to spare (never
+   below min-correspondences, never more than :max-outliers), drop the
+   highest-residual correspondence and refit. Recovers a clean pose from the good
+   points even when one or two were mislabeled, and reports which were dropped so
+   the caller can flag them for re-clicking. Falls back to a caller-supplied coarse
+   `:seed` (e.g. the gizmo pose) when there are too few points for DLT.
+
+   The cleaning used to STOP as soon as the rms fell under `accept-rms-px`, which
+   quietly conflated two different questions: 'is this registration usable?' and
+   'is one of these points mislabeled?'. On live webcam frames the fits sit at
+   5-12px, so the loop exited immediately and every frame kept its worst point —
+   measured 2026-08-11: residuals of 1-5px on ten marks with ONE at 26-34px, which
+   alone made three quarters of the reported error and dragged the pose with it.
+   A gross outlier is a wrong point whether or not the total happens to be under
+   the bar, so only `gross-outlier?` (and the counts) may stop the loop now.
 
    `:method` selects the seedless estimator — :auto (default) DLT-then-planar,
    :dlt (box corners), :planar (a flat registration plate) — see solve-once.
@@ -374,12 +465,19 @@
     (loop [corr indexed
            outliers []]
       (when-let [r (solve-once corr intrinsics sigma-px seed method)]
-        (if (or (<= (:rms-px r) accept-rms-px)
-                (<= (count corr) min-correspondences)
+        (if (or (<= (count corr) min-correspondences)
                 (>= (count outliers) max-outliers)
-                ;; only reject a GROSS outlier — never drop good corners to
-                ;; chase ambient click noise
-                (not (gross-outlier? (:per-point r))))
+                ;; Stop only when the fit is BOTH acceptable AND free of a gross
+                ;; outlier. There are two different diseases and each has its own
+                ;; tell: a mislabeled point on a symmetric target spreads its damage
+                ;; over every residual (caught by the rms), while a mis-snapped one
+                ;; stands alone above the rest (caught by gross-outlier?). Requiring
+                ;; both tells to fire — which is what stopping on either check did —
+                ;; let a live frame at 11.6px keep a 30px point, three quarters of
+                ;; its whole error, because the total happened to sit under the bar.
+                (and (<= (:rms-px r) accept-rms-px)
+                     ;; never drop good points to chase ambient click noise
+                     (not (gross-outlier? (:per-point r) intrinsics))))
           (-> r
               (assoc :outliers (mapv #(dissoc % ::i) outliers))
               (update :per-point (fn [pp] (mapv #(dissoc % ::i) pp))))

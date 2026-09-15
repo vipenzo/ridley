@@ -46,3 +46,124 @@
     ;; 6 points on a line have no proper ellipse through them with a tight band
     (let [pts [[0.0 0.0] [100.0 0.0] [200.0 0.0] [300.0 0.0] [400.0 0.0] [500.0 0.0]]]
       (is (empty? (ellipse/fit-inliers pts {:min-inliers 6 :thr 0.01}))))))
+
+;; ── la famiglia concentrica (leva 1 dello zero-click, 2026-08-29) ────────────
+
+(deftest concentric-family-finds-the-full-rings
+  ;; Three near-concentric rings (centres a few px apart, as perspective really
+  ;; leaves them) plus scattered junk: the concentric family must return the
+  ;; two full rings CLEAN. The third, sparse ring (eight discs, centre 10px off
+  ;; the seeds) is the measured LIMIT of today's pinned search — printed, not
+  ;; asserted, because it is the success criterion of the next iteration, and
+  ;; on the real bench the sparse rings do surface, only inside contaminated
+  ;; supersets (see the 2026-08-29 audit in HANDOVER-cage-zero-click.md).
+  (println "\n=== ellisse: la famiglia concentrica e l'anello povero ===")
+  (let [r (synth/rng 7)
+        ;; ring A: 12 discs, big; ring B: 12, middle; ring C: EIGHT, small —
+        ;; centres offset from each other like projected circle centres are
+        ring (fn [cx cy a b rot n phase]
+               (mapv (fn [i] (ellipse-pt cx cy a b rot (+ phase (* i (/ (* 2 Math/PI) n)))))
+                     (range n)))
+        A (ring 960.0 720.0 620.0 410.0 0.3 12 0.1)
+        B (ring 952.0 728.0 430.0 300.0 0.5 12 0.4)
+        C (ring 968.0 714.0 250.0 160.0 0.2 8 0.2)
+        junk [[960.0 720.0] [980.0 700.0] [500.0 300.0] [1500.0 1100.0]
+              [700.0 1200.0] [1300.0 260.0] [420.0 900.0] [1520.0 620.0]]
+        jitter (fn [pts] (mapv (fn [[x y]] [(+ x (* 1.5 (synth/gauss r)))
+                                            (+ y (* 1.5 (synth/gauss r)))]) pts))
+        pts (vec (concat (jitter A) (jitter B) (jitter C) junk))
+        idx-of (fn [lo n] (set (range lo (+ lo n))))
+        [ia ib ic] [(idx-of 0 12) (idx-of 12 12) (idx-of 24 8)]
+        opts {:iters 2000 :thr 0.04 :min-inliers 8 :top-k 6}
+        hyps (ellipse/fit-concentric-ranked pts opts)
+        covers (fn [ring-set]
+                 (first (filter (fn [h] (>= (count (filter ring-set h))
+                                            (dec (count ring-set))))
+                                hyps)))
+        purity (fn [h ring-set] (when h (/ (count (filter ring-set h)) (count h))))]
+    (println (str "  " (count pts) " punti (12+12+8 su tre anelli + " (count junk)
+                  " spazzatura) → " (count hyps) " ipotesi, taglie "
+                  (pr-str (mapv count hyps))))
+    (doseq [[nome ring-set] [["A (12)" ia] ["B (12)" ib]]]
+      (let [h (covers ring-set)]
+        (println (str "  anello " nome ": "
+                      (if h (str "trovato, " (count h) " inlier, purezza "
+                                 (.toFixed (* 100.0 (purity h ring-set)) 0) "%")
+                          "NON trovato")))
+        (is (some? h) (str "l'anello " nome " emerge fra le ipotesi"))
+        (when h
+          (is (>= (purity h ring-set) 0.8)
+              (str "e l'ipotesi è quasi tutta anello vero (" nome ")")))))
+    ;; the measured limit, on the record: today the 8-disc ring at a 10px-off
+    ;; centre does not emerge on this scene — when it starts to, celebrate and
+    ;; tighten this into an assertion
+    (let [h (covers ic)]
+      (println (str "  anello C (8, povero): "
+                    (if h (str "trovato (" (count h) " inlier) — IL LIMITE È CADUTO,"
+                               " promuovi questa stampa ad asserzione")
+                        "NON trovato (limite misurato di oggi)"))))))
+
+(deftest comb-teeth-names-positions-and-benches-riders
+  ;; The comb as the identity's opening move (lever 1): a sparse crown — eight
+  ;; of twelve positions, gaps included — plus two riders ON the ellipse at
+  ;; half-step anomalies (the audited shape of the concentric family's
+  ;; contaminated supersets) plus a through-plastic twin 2px from a true disc.
+  ;; Every true point must get a TOOTH consistent with its construction
+  ;; position under one rotation+handedness, the riders must get none, and a
+  ;; tooth takes ONE claimant.
+  (println "\n=== ellisse: il pettine dà a ogni punto il suo dente ===")
+  (let [r (synth/rng 3)
+        step (/ (* 2 Math/PI) 12)
+        pos [0 1 2 3 4 6 8 9]
+        at (fn [p] (ellipse-pt 950.0 700.0 520.0 340.0 0.6 (* p step)))
+        on (mapv at pos)
+        riders [(at 5.5) (at 10.5)]
+        twin (let [[x y] (at 2)] [(+ x 2.0) (+ y 1.5)])
+        jitter (fn [pts] (mapv (fn [[x y]] [(+ x (synth/gauss r)) (+ y (synth/gauss r))]) pts))
+        pts (vec (concat (jitter on) riders [twin]))    ; 0-7 true, 8-9 riders, 10 twin
+        res (ellipse/comb-teeth pts (vec (range (count pts))) 12)
+        teeth (:teeth res)
+        ;; the twin claims the same position as true point 2
+        pos-of (into {10 2} (map-indexed (fn [i p] [i p]) pos))]
+    (println (str "  11 punti (8 corona + 2 intrusi sull'ellisse + 1 gemello) → "
+                  (if res (str (count teeth) " denti, intrusi " (pr-str (:riders res)))
+                      "NIENTE pettine")))
+    (is (some? res) "il pettine si costruisce")
+    (when res
+      (is (= 8 (count teeth)) "otto denti occupati, uno per posizione")
+      (is (every? #(contains? teeth %) (range 2)) "i punti veri stanno sui denti")
+      (is (every? #(contains? teeth %) (range 3 8)) "tutti loro")
+      (is (= 1 (count (filter #(contains? teeth %) [2 10])))
+          "il dente conteso fra vero e gemello prende UN claimant")
+      (is (every? (set (:riders res)) [8 9])
+          "gli intrusi a mezzo passo sono in panchina")
+      (is (some (fn [[dir rot]]
+                  (every? (fn [[i t]] (= t (mod (+ rot (* dir (pos-of i))) 12)))
+                          teeth))
+                (for [dir [1 -1] rot (range 12)] [dir rot]))
+          "e i denti rispettano le posizioni di costruzione (a meno di rotazione e verso)"))))
+
+(deftest sisters-about-is-exhaustive-where-sampling-is-lucky
+  ;; The pinned search from the TRUE centre: eight ring points drowned in
+  ;; twenty junk points. Exhaustive over triples, so finding the ring is not
+  ;; luck — the same scene where independent 5-point sampling has (8/28)⁵ ≈
+  ;; 0.2% per-draw odds of a clean sample. From a centre ~6px off the ring is
+  ;; NOT yet recovered on this scene (measured — the pin's tolerance is the
+  ;; frontier), so the off-centre outcome is printed, not asserted.
+  (println "\n=== ellisse: le sorelle dal centro, esaustive ===")
+  (let [r (synth/rng 11)
+        on (mapv (fn [i] (ellipse-pt 800.0 600.0 300.0 190.0 0.7
+                                     (* i (/ (* 2 Math/PI) 8)))) (range 8))
+        junk (mapv (fn [_] [(+ 200.0 (* 1200.0 (r)))
+                            (+ 100.0 (* 1000.0 (r)))]) (range 20))
+        pts (vec (concat on junk))
+        on-set (set (range 8))
+        found? (fn [hyps] (some (fn [h] (>= (count (filter on-set h)) 8)) hyps))
+        exact (ellipse/sisters-about pts [800.0 600.0] {:min-inliers 8 :top-k 4})
+        off (ellipse/sisters-about pts [805.0 596.0] {:min-inliers 8 :top-k 4})]
+    (println (str "  dal centro vero: " (if (found? exact) "TROVATO" "perso")
+                  " · da 6px fuori: " (if (found? off)
+                                        "TROVATO — il limite è caduto, promuovi ad asserzione"
+                                        "perso (limite misurato di oggi)")))
+    (is (found? exact)
+        "gli otto punti dell'anello emergono dal centro vero, deterministicamente")))

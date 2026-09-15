@@ -228,3 +228,155 @@
         (is (< (Math/abs (- 1.0 (m/magnitude (:face-normal det)))) 1e-9) "unit normal")))
     (testing "a mesh without a :zero anchor (a box, or a plate lacking one) → nil"
       (is (nil? (bridge/plate-detect (update mesh :anchors dissoc :zero)))))))
+
+;; ── registration-verdict: the stage's ✓/⚠ flag, held to the target kind ──────
+
+(deftest registration-verdict-judges-each-target-by-its-own-rules
+  ;; The plate's rules applied to a cage flagged healthy photos (Vincenzo
+  ;; 2026-08-29: «le foto dalla 2 in avanti sono flaggate col triangolino —
+  ;; sembrano corrette», and they were). The numbers below are the battiscopa
+  ;; hand session's own, read from its acquire-state.
+  (testing "piatto: le regole storiche restano identiche"
+    (is (= :flipped (bridge/registration-verdict
+                     {:kind :plate :rms-px 2.0 :behind? true :elevation-deg 80}))
+        "camera dietro la faccia = impossibile, anche a rms pulito")
+    (is (= :flipped (bridge/registration-verdict
+                     {:kind :plate :rms-px nil :behind? true}))
+        "e anche senza un rms registrato")
+    (is (nil? (bridge/registration-verdict
+               {:kind :plate :rms-px 4.5 :behind? false :elevation-deg 40}))
+        "sotto gli 8px: sana")
+    (is (= :grazing (bridge/registration-verdict
+                     {:kind :plate :rms-px 9.4 :behind? false :elevation-deg 19}))
+        "sopra gli 8px ma radente: è l'angolo, non i click")
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :plate :rms-px 9.4 :behind? false :elevation-deg 40}))
+        "sopra gli 8px senza scusa: i click sono il sospetto")
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :plate :rms-px 9.4 :behind? false :elevation-deg nil}))
+        "un'elevazione ignota non compra la scusa"))
+  (testing "gabbia: giudicata SOLO dalla sua asticella (12px), mai dalla faccia"
+    (is (nil? (bridge/registration-verdict
+               {:kind :cage :rms-px 7.7 :behind? true :elevation-deg -2}))
+        "foto 3 del battiscopa: 7.7px, camera 6mm oltre il piano Z — sana, non 'ribaltata'")
+    (is (nil? (bridge/registration-verdict
+               {:kind :cage :rms-px 10.7 :behind? false :elevation-deg 10}))
+        "10.7px è sopra l'asticella del piatto e sotto quella della gabbia")
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :cage :rms-px 13.8 :behind? true :elevation-deg 10}))
+        "foto 0 del battiscopa: 13.8px è lasca anche per la gabbia — e mai :flipped/:grazing")
+    (is (nil? (bridge/registration-verdict {:kind :cage :rms-px nil :behind? true}))
+        "mai registrata: niente da dire, non un triangolo"))
+  (testing "box: come prima — solo l'asticella del piatto, niente scuse"
+    (is (nil? (bridge/registration-verdict {:kind :box :rms-px 7.0 :behind? false})))
+    (is (= :loose (bridge/registration-verdict
+                   {:kind :box :rms-px 9.0 :behind? false :elevation-deg 10}))
+        "l'elevazione non esiste per un box: niente :grazing")))
+
+;; ---------------------------------------------------------------------------
+;; cage-faces-from-pose — the faces are READ from the eye-aligned pose, no
+;; longer declared photo by photo (Vincenzo, 2026-08-31: three photos in a row
+;; had a hand-declared face wrong, and every face error poisons everything
+;; downstream). The virtual twin of «prendo in mano la gabbia e la appaio».
+;; ---------------------------------------------------------------------------
+
+(def cage-identity-pose
+  ;; registration-cage's own :creation-pose — box-basis maps cage x/y/z to
+  ;; world x/y/z exactly here
+  {:position [0.0 0.0 0.0] :heading [0.0 0.0 1.0] :up [0.0 1.0 0.0]})
+
+(defn- faces [mesh-pose cam-pos & [opts]]
+  (bridge/cage-faces-from-pose {:creation-pose mesh-pose}
+                               {:position cam-pos}
+                               opts))
+
+(deftest cage-faces-camera-on-axis
+  (testing "camera dead on +X: the X ring reads face p at full margin, the two
+            rings seen edge-on declare NOTHING (nil, not a guess)"
+    (let [f (faces cage-identity-pose [500.0 0.0 0.0])]
+      (is (= 1 (get-in f [:x :sign])))
+      (is (< 89.9 (get-in f [:x :elev-deg])))
+      (is (nil? (get-in f [:y :sign])))
+      (is (nil? (get-in f [:z :sign])))))
+  (testing "camera dead on −X: face m"
+    (is (= -1 (get-in (faces cage-identity-pose [-500.0 0.0 0.0]) [:x :sign])))))
+
+(deftest cage-faces-oblique-reads-all-three
+  (testing "camera on the diagonal: every ring is 35.3° off its plane, all
+            three faces read"
+    (let [f (faces cage-identity-pose [300.0 300.0 300.0])]
+      (is (= {:x 1 :y 1 :z 1}
+             (into {} (map (fn [[a v]] [a (:sign v)])) f)))
+      (doseq [a [:x :y :z]]
+        (is (< 35.0 (get-in f [a :elev-deg]) 35.5))))))
+
+(deftest cage-faces-profile-guard
+  (testing "15° over the X ring's plane is BELOW the 20° guard: X declares
+            nothing but still reports its degrees, so the caller can say why
+            (grab-05's Y was decided by 13–17° and that verdict held half a
+            day of wrong diagnoses)"
+    (let [d15 (* 15.0 (/ js/Math.PI 180.0))
+          cam [(* 1000.0 (js/Math.sin d15)) (* 1000.0 (js/Math.cos d15)) 0.0]
+          f (faces cage-identity-pose cam)]
+      (is (nil? (get-in f [:x :sign])))
+      (is (< 14.9 (get-in f [:x :elev-deg]) 15.1))
+      (is (= 1 (get-in f [:y :sign])))
+      (is (< 74.9 (get-in f [:y :elev-deg]) 75.1))))
+  (testing "the same vantage with the guard lowered to 10° reads Xp — the
+            threshold is the only thing between the two answers"
+    (let [d15 (* 15.0 (/ js/Math.PI 180.0))
+          cam [(* 1000.0 (js/Math.sin d15)) (* 1000.0 (js/Math.cos d15)) 0.0]]
+      (is (= 1 (get-in (faces cage-identity-pose cam {:margin-deg 10.0})
+                       [:x :sign]))))))
+
+(deftest cage-faces-follow-the-pose
+  (testing "the ring axes are the CAGE's frame at :creation-pose, not the
+            world's: with the cage turned so its z axis lies along world +X
+            (heading [1 0 0]), a camera on world +X now reads the Z ring"
+    (let [pose {:position [10.0 0.0 0.0] :heading [1.0 0.0 0.0] :up [0.0 1.0 0.0]}
+          f (faces pose [510.0 0.0 0.0])]
+      (is (= 1 (get-in f [:z :sign])))
+      (is (nil? (get-in f [:x :sign])))
+      (is (nil? (get-in f [:y :sign])))))
+  (testing "and the centre is the cage's position, not the origin: a camera on
+            the far side of that same cage reads face m"
+    (let [pose {:position [10.0 0.0 0.0] :heading [1.0 0.0 0.0] :up [0.0 1.0 0.0]}]
+      (is (= -1 (get-in (faces pose [-490.0 0.0 0.0]) [:z :sign]))))))
+
+(deftest cage-faces-flip-aware
+  (testing "anello dichiarato ribaltato (:cage-flips sulla mesh): il segno si
+            inverte — la camera sul lato +y di una gabbia con :flips #{:y}
+            sta guardando la faccia m della STAMPA, perché id e passetto
+            nominano la stampa, non il lato geometrico"
+    (let [f (bridge/cage-faces-from-pose {:creation-pose cage-identity-pose
+                                          :cage-flips #{:y}}
+                                         {:position [300.0 300.0 300.0]})]
+      (is (= {:x 1 :y -1 :z 1}
+             (into {} (map (fn [[a v]] [a (:sign v)])) f))))
+    (testing "e la guardia del profilo vince comunque sul flip"
+      (is (nil? (get-in (bridge/cage-faces-from-pose
+                         {:creation-pose cage-identity-pose :cage-flips #{:y}}
+                         {:position [500.0 0.0 0.0]})
+                        [:y :sign]))))))
+
+(deftest cage-faces-geo-sign-survives-the-guard
+  (testing "sotto la guardia :sign tace ma :geo-sign resta: è la differenza tra
+            ciò che si può DICHIARARE (muove i pick) e ciò che si può
+            SUGGERIRE — a Vincenzo la guardia lasciava due bottoni spenti e
+            nessun indizio (foto 4 di battiscopa3, anello Y a ~15°)"
+    (let [d15 (* 15.0 (/ js/Math.PI 180.0))
+          cam [(* 1000.0 (js/Math.sin d15)) (* 1000.0 (js/Math.cos d15)) 0.0]
+          f (faces cage-identity-pose cam)]
+      (is (nil? (get-in f [:x :sign])) "niente dichiarazione a 15°")
+      (is (= 1 (get-in f [:x :geo-sign])) "ma la lettura geometrica c'è, ed è Xp")
+      (is (= 1 (get-in f [:y :sign])) "Y è ben visibile e si dichiara")
+      (is (= 1 (get-in f [:y :geo-sign])) "dove si dichiara, i due coincidono")))
+  (testing "e su un anello RIBALTATO il suggerimento è ribaltato come la
+            dichiarazione: sono la stessa lettura, una sotto guardia"
+    (let [d15 (* 15.0 (/ js/Math.PI 180.0))
+          cam [(* 1000.0 (js/Math.sin d15)) (* 1000.0 (js/Math.cos d15)) 0.0]
+          f (bridge/cage-faces-from-pose {:creation-pose cage-identity-pose
+                                          :cage-flips #{:x}}
+                                         {:position cam})]
+      (is (nil? (get-in f [:x :sign])))
+      (is (= -1 (get-in f [:x :geo-sign])) "gabbia con X ribaltato: direbbe Xm"))))

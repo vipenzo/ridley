@@ -583,17 +583,17 @@ The chain reads from top to bottom: circle, then flutes, then taper, then twist.
 
 ### The shell constraint
 
-`shell` and `woven-shell` must be **last** in the composition chain. The reason is technical: `shell` annotates the shape with metadata (`:shell-mode`) that the loft reads to generate the double rings (outer + inner). The other shape-fns do not know about this metadata and would lose it.
+`shell` and `woven-shell` belong **at the end** of the composition chain. The reason: `shell` annotates the shape with metadata (`:shell-mode` and the thickness values, one per point) that the loft reads to generate the double rings (outer + inner), and computes them on the profile it receives; a shape-fn that deforms it afterwards (`fluted`, `noisy`) leaves the values where they were, on displaced points.
 
 ```clojure
-;; tapered is the exception: it can come after shell
+;; tapered can also come after shell
 (-> (circle 20 64)
     (fluted :flutes 12 :depth 1)
     (shell :thickness 2 :style :voronoi :cells 8 :rows 6)
     (tapered :to 0.6))
 ```
 
-The exception is `tapered`: `tapered` *after* `shell` works because `tapered` preserves shell's metadata. In practice, the rule reduces to: put `shell` or `woven-shell` after the shape-fns that modify the profile's geometry (`fluted`, `twisted`, `noisy`, etc.), but `tapered` can come either before or after.
+Every built-in shape-fn preserves shell's metadata (they transform the points and leave the rest), so `tapered`, `twisted` and the like *after* `shell` work; what changes is the meaning. In practice: put `shell` or `woven-shell` after the shape-fns that modify the profile's geometry (`fluted`, `noisy`, etc.), while `tapered` and `twisted`, which scale and rotate the whole profile, can come either before or after. One true exception is `morphed`: it takes two static shapes, and with a shape-fn as first argument it throws.
 
 ### The embroid case
 
@@ -625,11 +625,13 @@ Here the two shape-fns on their own would not need resolution: but `twisted` mak
 
 ## Thickness-fns: controlling wall thickness
 
+This section teaches how to draw a pattern; the exact contract of the function (the angle's domain, what happens to the returned value, the `woven-shell` case) is in chapter 19.2.
+
 In the section on `shell` we used the built-in styles (`:voronoi`, `:lattice`, `:checkerboard`, `:pattern`). Each of those styles is a prepackaged thickness-fn: a function that tells the loft how thick the wall must be at each point.
 
 The thickness-fn has the signature `(fn [angle t] -> 0..1)`. The two arguments are the coordinates of a point on the surface of the shell:
 
-- `angle`: angular position on the profile, in radians (from 0 to 2π for a closed profile). It says *where* you are around the cross-section.
+- `angle`: angular position on the profile, in radians, from -π to π (it is `atan2` around the shape's centroid). It says *where* you are around the cross-section.
 - `t`: position along the path (from 0 to 1). It says *where* you are along the extrusion.
 
 The returned value is a thickness coefficient: 1 means full wall (thickness = `:thickness`), 0 means no wall (an opening). Intermediate values produce thinner walls. Values below the `:threshold` (default 0.05) are rounded to 0 to avoid degenerate triangles.
@@ -730,6 +732,8 @@ For patterns that are variants of a built-in style (a grid with wider openings i
 
 
 ## Writing your own shape-fn
+
+Here is the gesture; the contract a shape-fn must honour, and where it breaks, is in chapter 19.1.
 
 The built-in shape-fns cover the most common cases. When you need variations that no built-in expresses, you can write a custom shape-fn with the `shape-fn` function.
 

@@ -1346,6 +1346,26 @@
    ;; The default file name is derived from the first registered name when
    ;; available, or from the first map key — never a generic 'export.<ext>'.
    (defn- export-format? [x] (#{:stl :3mf} x))
+   ;; Un nome dato a `register` insieme a un VETTORE di mesh non diventa una voce
+   ;; del registro: `(register Gabbia [a b])` archivia `Gabbia/0` e `Gabbia/1`.
+   ;; Quindi esportare col nome che l'utente ha SCRITTO deve rimettere insieme le
+   ;; parti — e quando non ne trova deve dirlo, perché il `when-let` di prima
+   ;; tornava nil e non faceva niente: è così che `(export :Grande :3mf)` è
+   ;; diventata una riga che stampa `nil` e non lascia nessun file
+   ;; (Vincenzo, 2026-08-18).
+   (defn- export-group [kw]
+     (if-let [one (get-mesh kw)]
+       [(with-export-name one kw)]
+       (let [want (name kw)
+             parts (sort (filter (fn [k] (= want (namespace k))) (registered-names)))]
+         (vec (map (fn [k] (with-export-name (get-mesh k) k)) parts)))))
+   (defn- export-name->kw [x] (if (keyword? x) x (keyword (str x))))
+   (defn- export-nothing! [what]
+     (throw (js/Error. (str \"export: nothing to export for \" what
+                            \". In the scene there are: \"
+                            (pr-str (vec (registered-names)))
+                            \". If you registered a vector of meshes, the name is \"
+                            \"the one you wrote in the register.\"))))
    (defn- export-default-name [arg]
      (cond
        (keyword? arg) (name arg)
@@ -1364,10 +1384,11 @@
             (or (keyword? (first args))
                 (string? (first args))
                 (symbol? (first args))))
-       (let [arg (first args)
-             kw (if (keyword? arg) arg (keyword (str arg)))]
-         (when-let [m (get-mesh kw)]
-           (save-mesh [(with-export-name m kw)] (str (name kw) \".\" (name fmt)) fmt)))
+       (let [kw (export-name->kw (first args))
+             ms (export-group kw)]
+         (if (seq ms)
+           (save-mesh ms (str (name kw) \".\" (name fmt)) fmt)
+           (export-nothing! kw)))
 
        ;; Single sequential of names
        (and (= 1 (count args))
@@ -1377,12 +1398,13 @@
                 (string? (ffirst args))
                 (symbol? (ffirst args))))
        (let [names (first args)
-             meshes (keep #(resolve-mesh-for-export %) names)]
-         (when (seq meshes)
-           (save-mesh (vec meshes)
-                      (str (clojure.string/join \"-\" (map #(name (if (keyword? %) % (keyword (str %)))) names))
+             meshes (vec (mapcat #(export-group (export-name->kw %)) names))]
+         (if (seq meshes)
+           (save-mesh meshes
+                      (str (clojure.string/join \"-\" (map #(name (export-name->kw %)) names))
                            \".\" (name fmt))
-                      fmt)))
+                      fmt)
+           (export-nothing! (pr-str (vec names)))))
 
        ;; Single vector of meshes
        (and (= 1 (count args)) (mesh-vector? (first args)))
@@ -1418,13 +1440,19 @@
 
        ;; Otherwise: treat all args as a heterogeneous list of meshes/names
        :else
-       (let [meshes (keep resolve-mesh-for-export args)
+       (let [meshes (vec (mapcat (fn [a]
+                                   (if (or (keyword? a) (string? a) (symbol? a))
+                                     (export-group (export-name->kw a))
+                                     (let [m (resolve-mesh-for-export a)]
+                                       (if m [m] []))))
+                                 args))
              default-name (or (some #(when (or (keyword? %) (string? %) (symbol? %))
-                                       (name (if (keyword? %) % (keyword (str %)))))
+                                       (name (export-name->kw %)))
                                     args)
                               \"model\")]
-         (when (seq meshes)
-           (save-mesh (vec meshes) (str default-name \".\" (name fmt)) fmt)))))
+         (if (seq meshes)
+           (save-mesh meshes (str default-name \".\" (name fmt)) fmt)
+           (export-nothing! (pr-str (vec args)))))))
 
    (defn export
      \"Export mesh(es) to disk in STL or 3MF format.

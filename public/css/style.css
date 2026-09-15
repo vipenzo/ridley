@@ -457,8 +457,19 @@ html, body {
   color: #d4d4d4;
 }
 
+/* registered but NOT voting on the lens (twin-suspect quarantine, or a
+   rim-dash registration with no disc picks for the joint refinement):
+   green body — the photo is USABLE — amber dashed border for the lens flag.
+   The why lives in the tooltip (direttiva 5/9: il lavorio nel log). */
+.modal-panel .eaq-badge-nolens {
+  background: #264f2e;
+  border: 1px dashed #a67c3d;
+  color: #d4d4d4;
+}
+
 .modal-panel .eaq-badge-none.current,
 .modal-panel .eaq-badge-predicted.current,
+.modal-panel .eaq-badge-nolens.current,
 .modal-panel .eaq-badge-ok.current {
   outline: 2px solid #6f9ce0;
   outline-offset: -1px;
@@ -499,11 +510,11 @@ html, body {
   gap: 6px;
 }
 
-/* P3 plane-retrace ('d'): same visual family as the PnP box (reuses
-   .eaq-pnp-info / .eaq-pnp-corners / .eaq-pnp-actions), set off with a rule so
-   the two mode boxes read as distinct. Face buttons carry wider labels than the
-   PnP corner numbers, so they get horizontal padding. */
-.modal-panel .eaq-retrace-box {
+/* Mode-entry actions box (proxy toggle + the marking gestures' entry buttons;
+   it was the plane-retrace 'd' box until 2026-09-11): same visual family as the
+   PnP box (reuses .eaq-pnp-info / .eaq-pnp-corners / .eaq-pnp-actions), set off
+   with a rule so the mode boxes read as distinct. */
+.modal-panel .eaq-actions-box {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -511,11 +522,11 @@ html, body {
   border-top: 1px solid #3a3b42;
 }
 
-.modal-panel .eaq-retrace-box .eaq-pnp-corners button {
+.modal-panel .eaq-actions-box .eaq-pnp-corners button {
   padding: 3px 8px;
 }
 
-/* P4a-3 named marks ('k'): same visual family as the retrace box. Face buttons
+/* P4a-3 named marks ('k'): same visual family as the actions box. Face buttons
    pick the plane for the next mark; the list is one row per placed mark, with an
    editable id and a delete. */
 .modal-panel .eaq-mark-box {
@@ -528,6 +539,54 @@ html, body {
 
 .modal-panel .eaq-mark-box .eaq-pnp-corners button {
   padding: 3px 8px;
+}
+
+/* Live capture ('g'): the Camera/Grab controls, same visual family as the mode
+   boxes above. The device picker only appears when there is more than one camera,
+   so the row is usually two buttons. */
+.modal-panel .eaq-live-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 4px;
+  border-top: 1px solid #3a3b42;
+}
+
+/* the armed state of a destructive button — it says "Sure?" and it should look
+   like it means it, so the second click is a decision and not a reflex */
+.modal-panel .eaq-live-box button.eaq-danger {
+  background: #6e2b2b;
+  border-color: #a34a4a;
+  color: #ffdede;
+}
+
+.modal-panel .eaq-live-box select {
+  background: #2a2b31;
+  color: #ccc;
+  border: 1px solid #4a4b52;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+/* The live preview, bottom-right of the viewport: you frame by looking at the
+   OBJECT, so this is the thing you glance at, not the thing you stare at — small,
+   out of the way, and never a click target (the canvas underneath owns the
+   pointer). Deliberately NOT mirrored: a webcam preview is usually flipped because
+   it is pointed at you, but this one is pointed at the plate, and a mirrored
+   preview of a non-mirrored capture sends the hand the wrong way. */
+#eaq-cam-preview {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 260px;
+  max-width: 32vw;
+  border: 1px solid #3c3c3c;
+  border-left: 3px solid #ff5f56;
+  border-radius: 4px;
+  background: #000;
+  z-index: 115;
+  pointer-events: none;
 }
 
 .modal-panel .eaq-mark-list {
@@ -2456,6 +2515,32 @@ body.resizing-h * {
 
 #library-panel.collapsed .library-collapse-icon {
   transform: rotate(-90deg);
+}
+
+/* Workspaces + Libraries share ONE row (Vincenzo 5/9: lo spazio a sinistra
+   è conteso fra più feature — stessa altezza, divisione orizzontale) */
+#side-lists {
+  display: flex;
+  align-items: flex-start;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+
+#side-lists > #workspace-panel,
+#side-lists > #library-panel {
+  flex: 1 1 50%;
+  min-width: 0;
+  border-bottom: none;
+}
+
+#side-lists > #workspace-panel {
+  border-right: 1px solid #3c3c3c;
+}
+
+#side-lists .library-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Workspaces panel — reuses library-* item styles, own header scoping */

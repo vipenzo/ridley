@@ -664,7 +664,7 @@
    its concavity-mass salience so the cycle order (descending salience) is legible."
   [cand idx n]
   (set-status-message!
-   (str "taglio da concavità " (inc idx) "/" n " · salienza " (js/Math.round (:salience cand)))))
+   (str "cut from concavity " (inc idx) "/" n " · salience " (js/Math.round (:salience cand)))))
 
 (defn- propose-reflex-cut!
   "Teleport the plane onto the current piece's most salient reflex-edge cut candidate;
@@ -772,60 +772,60 @@
     {:symmetry
      (cond
        (:symmetry-pending? s)
-       {:enabled? false :reason "calcolo dei piani di simmetria in corso…"}
+       {:enabled? false :reason "computing symmetry planes…"}
        (and sym-cache (empty? (:planes sym-cache)))
-       {:enabled? false :reason "nessun piano di simmetria verificato su questo pezzo"}
+       {:enabled? false :reason "no verified symmetry plane on this piece"}
        sym-cache
-       {:enabled? true  :reason (str (count (:planes sym-cache)) " piani di simmetria — premi per ciclarli")}
+       {:enabled? true  :reason (str (count (:planes sym-cache)) " symmetry planes — press to cycle them")}
        :else
-       {:enabled? true  :reason "proponi un piano di simmetria (lo calcola sul pezzo corrente)"})
+       {:enabled? true  :reason "propose a symmetry plane (computed on the current piece)"})
      :reflex
      (let [rc (get-in s [:reflex-cache cur])]
        (cond
          (:reflex-pending? s)
-         {:enabled? false :reason "calcolo dei candidati di concavità in corso…"}
+         {:enabled? false :reason "computing concavity candidates…"}
          (and rc (empty? (:cands rc)))
-         {:enabled? false :reason "nessuna concavità: il pezzo è convesso"}
+         {:enabled? false :reason "no concavity: the piece is convex"}
          rc
-         {:enabled? true  :reason (str (count (:cands rc)) " tagli dalla concavità — premi per ciclarli")}
+         {:enabled? true  :reason (str (count (:cands rc)) " cuts from the concavity — press to cycle them")}
          :else
-         {:enabled? true  :reason "proponi un taglio dalla concavità (lo calcola sul pezzo corrente)"}))
+         {:enabled? true  :reason "propose a cut from the concavity (computed on the current piece)"}))
      :mirror
      (if twin
-       {:enabled? true  :reason "decomponi a specchio: replica la decomposizione del gemello, riflessa"}
-       {:enabled? false :reason "il gemello a specchio non è ancora decomposto (taglia sul piano di simmetria e decomponi una metà)"})
+       {:enabled? true  :reason "decompose by mirror: replicate the twin's decomposition, reflected"}
+       {:enabled? false :reason "the mirror twin is not decomposed yet (cut on the symmetry plane and decompose one half)"})
      :accept
      (if (:finished? (get-in tree [:pieces cur]))
-       {:enabled? true :reason "il pezzo è già finito — passa al prossimo aperto"}
-       {:enabled? true :reason (str "accetta il pezzo corrente così com'è ("
+       {:enabled? true :reason "the piece is already finished — move to the next open one"}
+       {:enabled? true :reason (str "accept the current piece as it is ("
                                     (if (and cur-count (> cur-count 1))
-                                      (str cur-count " componenti concave")
-                                      "concavo")
-                                    ") — chiede conferma, mai un gate geometrico")})
+                                      (str cur-count " concave components")
+                                      "concave")
+                                    ") — asks for confirmation, never a geometric gate")})
      :undo
      (if (seq (:log tree))
-       {:enabled? true  :reason "annulla l'ultimo gesto (taglio o accettazione)"}
-       {:enabled? false :reason "nessun gesto da annullare"})
+       {:enabled? true  :reason "undo the last gesture (cut or acceptance)"}
+       {:enabled? false :reason "no gesture to undo"})
      :nav
      (if (> (count open) 1)
-       {:enabled? true  :reason "vai al prossimo / precedente pezzo aperto"}
+       {:enabled? true  :reason "go to the next / previous open piece"}
        {:enabled? false :reason (if (zero? (count open))
-                                  "tutti i pezzi sono finiti — niente da navigare"
-                                  "nessun altro pezzo aperto")})
+                                  "every piece is finished — nothing to navigate"
+                                  "no other open piece")})
      :reveal
      {:enabled? true :reason (if (:reveal-all? s)
-                               "torna al focus sul solo pezzo corrente"
-                               "mostra tutti i pezzi + etichette")}
+                               "back to focusing on the current piece only"
+                               "show every piece + labels")}
      :cut-nav
      (let [f (cut-frame-ready s)]
        (cond
-         (:cut-pending? s) {:enabled? false :reason "calcolo dei candidati di rotazione…"}
+         (:cut-pending? s) {:enabled? false :reason "computing rotation candidates…"}
          (and f (empty? (:cands f)))
-         {:enabled? false :reason (str "nessun candidato di taglio in modo "
-                                       (if (= :angle (:digit-target s)) "rotazione" "traslazione"))}
+         {:enabled? false :reason (str "no cut candidate in "
+                                       (if (= :angle (:digit-target s)) "rotation" "translation"))}
          :else
-         {:enabled? true :reason (str "salta al prossimo/precedente evento del profilo di sezione ("
-                                      (if (= :angle (:digit-target s)) "rotazione" "traslazione") ")")}))}))
+         {:enabled? true :reason (str "jump to the next/previous event of the section profile ("
+                                      (if (= :angle (:digit-target s)) "rotation" "translation") ")")}))}))
 
 (defn- free-up
   "A unit vector perpendicular to heading — the free up for a reflected cut pose
@@ -965,20 +965,20 @@
   [dir]
   (let [frame (ensure-cut-frame!)]
     (cond
-      (:computing? frame) (set-status-message! "calcolo dei candidati di rotazione…")
+      (:computing? frame) (set-status-message! "computing rotation candidates…")
       (empty? (:cands frame))
-      (set-status-message! (str "nessun candidato di taglio ("
-                                (if (= :rotation (:mode frame)) "rotazione" "traslazione") ")"))
+      (set-status-message! (str "no cut candidate ("
+                                (if (= :rotation (:mode frame)) "rotation" "translation") ")"))
       :else
       (let [cur (current-dof frame) eps 1e-4]
         (if-let [nxt (if (= dir :next)
                        (->> (:cands frame) (filter #(> (:at %) (+ cur eps))) (sort-by :at) first)
                        (->> (:cands frame) (filter #(< (:at %) (- cur eps))) (sort-by :at >) first))]
           (do (teleport-plane-to! (:pose nxt)) (recompute!)
-              (set-status-message! (str "→ " (name (:kind nxt)) " · salienza "
+              (set-status-message! (str "→ " (name (:kind nxt)) " · salience "
                                         (js/Math.round (:salience nxt)))))
-          (set-status-message! (str "nessun " (if (= dir :next) "prossimo" "precedente")
-                                    " candidato in questa direzione")))))))
+          (set-status-message! (str "no " (if (= dir :next) "next" "previous")
+                                    " candidate in this direction")))))))
 
 ;; ── Part 4: profile strip in the panel ──
 (def ^:private strip-w 280)
@@ -1046,7 +1046,7 @@
             dof (+ xmin (* frac (- xmax xmin)))
             nearest (apply min-key #(js/Math.abs (- (:at %) dof)) (:cands f))]
         (teleport-plane-to! (:pose nearest)) (recompute!)
-        (set-status-message! (str "→ " (name (:kind nearest)) " · salienza "
+        (set-status-message! (str "→ " (name (:kind nearest)) " · salience "
                                   (js/Math.round (:salience nearest))))))))
 
 ;; ── Vista processo: the process tree widget (brief acquisition-views.md
@@ -1230,7 +1230,7 @@
     (if (empty? open)
       (commit-session!)
       (modal-confirm!
-       (str "chiudi con " (count open) " pezzi ancora aperti che diventano foglie così come sono: "
+       (str "close with " (count open) " pieces still open that become leaves as they are: "
             (str/join ", " (map #(open-piece-descr tree %) open))
             "?")
        (fn [ok?] (when ok? (commit-session!)))))))
@@ -1276,9 +1276,9 @@
     (if (:finished? piece)
       (cycle-current-piece! :next)
       (let [n (:count piece)
-            msg (str "il pezzo è "
-                     (if (and n (> n 1)) (str "concavo, ha " n " componenti concave") "concavo")
-                     " — accettarlo così com'è?")]
+            msg (str "the piece is "
+                     (if (and n (> n 1)) (str "concave, it has " n " concave components") "concave")
+                     " — accept it as it is?")]
         (modal-confirm!
          msg
          (fn [ok?]
@@ -1608,6 +1608,7 @@
   [mesh-name]
   (let [panel (.createElement js/document "div")]
     (set! (.-id panel) "edit-mesh-split-panel")
+    (.setAttribute panel "data-manual" "edit-mesh-split")
     (set! (.-innerHTML panel)
           (str "<div class='pilot-header'>edit-mesh-split " mesh-name "</div>"
                "<div class='pilot-controls'>"

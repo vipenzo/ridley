@@ -861,9 +861,11 @@
 (defn- export-mesh [fmt]
   (let [meshes (viewport/get-current-meshes)]
     (if (seq meshes)
-      (let [fname (or (first (registry/registered-names)) "model")
-            ext (name fmt)]
-        (stl/download-mesh meshes (str (name fname) "." ext) fmt))
+      ;; the GROUP name, not the part's: `(register Gabbia […])` registers
+      ;; `Gabbia/0`, whose name is "0" — and "0.3mf" tells nobody anything
+      (let [k (first (registry/registered-names))
+            fname (if k (or (namespace k) (name k)) "model")]
+        (stl/download-mesh meshes (str fname "." (name fmt)) fmt))
       (js/alert "No meshes to export. Run some code first!"))))
 
 (defn- setup-save-load []
@@ -2997,6 +2999,10 @@
     (reset! repl-input-el repl-input)
     (reset! repl-history-el repl-history)
     (reset! error-el error-panel)
+    ;; async save failures (stl.cljs) surface HERE instead of dying in the
+    ;; console: a Promise the SCI caller deliberately drops still owes the user
+    ;; its rejection (2026-08-24: three 3MFs written into nowhere, silently)
+    (stl/set-async-notify! show-error)
     (viewport/init canvas)
     ;; Wire animation callbacks (registry <-> playback, avoids circular dep)
     (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)

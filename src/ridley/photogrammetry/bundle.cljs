@@ -85,7 +85,13 @@
    percent or two, not by a third: a fit that wants to move it further is
    describing something other than the focal — a mislabelled mark, most likely —
    and clamping it there keeps that failure visible as residual instead of
-   disguising it as a strange lens."
+   disguising it as a strange lens. When the clamp fires, the poses are
+   RE-FITTED at the clamped focal (see refine-session): the runaway fit's poses
+   belong to the runaway focal, and returning them under the clamped one is a
+   state nobody fitted — battiscopa4 (3/9) measured it at 28-33px on views
+   whose own solves sat at 2-11px, garbage that poisoned every consumer
+   downstream (leave-one-out shed the GOOD views; the multi-start's restart
+   could never win with its rms reported by a chimera)."
   0.15)
 
 (defn refine-session
@@ -104,10 +110,10 @@
    (let [usable (filterv #(and (:pose %) (>= (count (:picks %)) 4)) views)]
      (cond
        (< (count usable) 2)
-       {:error (str "il raffinamento congiunto ha bisogno di almeno DUE foto "
-                    "registrate con i loro click (ne ho trovate " (count usable)
-                    "): con una sola, la focale e la distanza della camera sono "
-                    "la stessa cosa e non si separano")}
+       {:error (str "the joint refinement needs at least TWO photos "
+                    "registered with their clicks (I found " (count usable)
+                    "): with only one, the focal and the camera distance are "
+                    "the same thing and cannot be separated")}
 
        :else
        (let [poses0 (mapv :pose usable)
@@ -119,6 +125,15 @@
              hi (* focal-mm (+ 1.0 focal-band))
              clamped? (or (< f lo) (> f hi))
              f (max lo (min hi f))
+             ;; a clamped focal must not keep the runaway fit's poses: re-fit
+             ;; them WITH the focal frozen at the band's edge, so what is
+             ;; returned (and measured) is a state that was actually fitted
+             poses (if clamped?
+                     (let [p0 (vec (rest (pack f poses0)))
+                           res2 (lm/solve #(rfn (into [f] %)) p0
+                                          {:max-iterations max-iterations})]
+                       (second (unpack (into [f] (:params res2)) (count usable))))
+                     poses)
              after (rms-of usable f poses)]
          (merge after
                 {:focal-mm f

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the bundle's generated Info.plist by tauri-bundler, which looks for
+  a file of this name next to tauri.conf.json. Only the keys Tauri does not
+  generate itself belong here.
+
+  NSCameraUsageDescription is what makes "scatta e registra" possible in the
+  desktop app at all. macOS does not DENY camera access to an app without it — it
+  terminates the process, so its absence reads as a crash rather than as a refused
+  permission. The string is shown verbatim in the system prompt, so it says what
+  the camera is actually for.
+
+  Deliberately NOT here: NSMicrophoneUsageDescription. The capture asks for
+  `audio: false`, and declaring a permission that is never exercised would make
+  macOS offer the user a choice about something the app does not do.
+
+  Also not here, and needed only if this app is ever SIGNED with the hardened
+  runtime (it is not today — .github/workflows/desktop-build.yml ships an unsigned
+  DMG): the `com.apple.security.device.camera` entitlement, via
+  bundle.macOS.entitlements. Adding it now would invoke codesign with an
+  entitlements file and no identity, which fails instead of preparing anything.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Ridley uses the camera to grab a view of the object on the registration plate and register it into the acquisition session.</string>
+</dict>
+</plist>

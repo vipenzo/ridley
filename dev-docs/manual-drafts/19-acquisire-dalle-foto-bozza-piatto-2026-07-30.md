@@ -44,7 +44,43 @@ Il flusso ha tre momenti: scattare la sessione fotografica, registrare le camere
 
 Servono tre cose: un piatto girevole (va bene anche uno manuale), un telefono, e il piatto di registrazione stampato.
 
-Il piatto di registrazione è un pezzo Ridley: lo trovi in `examples/param-acq-plate.clj`. È un disco con una corona di dischetti a due colori incassati a filo, più un dischetto fuori corona che fa da zero, cioè da riferimento per l'orientamento. Si stampa in due colori e si esporta con `save-3mf`. La sua funzione è essere un bersaglio che il software sa riconoscere da solo in ogni foto: i dischetti sono a posizioni note per costruzione, quindi trovarli nell'immagine basta a calcolare esattamente da dove la foto è stata scattata.
+Il piatto di registrazione è un pezzo Ridley: un disco con una corona di dischetti scuri, più un dischetto più interno che fa da **zero**, cioè da riferimento per l'orientamento. La sua funzione è essere un bersaglio che il software sa riconoscere da solo in ogni foto: i dischetti sono a posizioni note per costruzione, quindi trovarli nell'immagine basta a calcolare esattamente da dove la foto è stata scattata.
+
+### Farsene uno
+
+Attiva una volta la libreria **acquire-plate** dal pannello Librerie, poi:
+
+```clojure
+(acquire-plate/save-sheet 300 "~/Downloads")
+```
+
+Il numero è il **diametro in millimetri**: scegli quello del girevole che userai — 130 va bene per oggetti piccoli, 300 è il piatto di un giradischi da 12 pollici. La funzione decide da sola quanti file servono e te lo dice: un foglio solo se il piatto entra in una pagina A4, due metà da accostare se non ci entra.
+
+**Stampa al 100%**, voce "dimensione effettiva". Mai "adatta alla pagina": adattare riscala in silenzio proprio la cosa che deve essere esatta, e il risultato non sembra un errore — sembra una registrazione riuscita, con le misure sbagliate.
+
+Poi incolla il foglio su un disco rigido e liscio. Se hai stampato due metà, accostale facendo coincidere le due croci sulla cucitura. Se il girevole è un giradischi, buca il centro sul segno tratteggiato e infila il foglio sul perno: così il piatto è centrato e in asse con la rotazione, che è la cosa che il software dà per scontata.
+
+### Dire a Ridley quanto è venuto grande davvero
+
+Una stampante sbaglia la scala dello 0.1-0.5%, spesso in modo diverso sui due assi. Sul foglio ci sono due barre nominalmente da 100 mm: misurale col calibro e passa le due letture, così il modello combacia col foglio che hai davvero incollato.
+
+```clojure
+(acquire-plate/measured 300 100.2 99.8)
+```
+
+Restituisce il proxy da usare nella sessione al posto di `(registration-plate :d 300)`. Se hai stampato due metà, misura le barre di **entrambi** i fogli: sono due stampe diverse e possono essere uscite a scale diverse.
+
+### Oppure stamparlo in 3D
+
+```clojure
+(acquire-plate/save-3mf-plate 300 "~/Downloads")
+```
+
+Un 3MF a due materiali: base chiara, dischetti scuri incassati a filo, e il foro centrale per il perno del giradischi. È più solido della carta e non c'è niente da incollare — ma i bordi dei dischetti sono meno definiti, perché in FDM i confini sui layer alti vengono sfumati, e un centroide sfumato è un residuo più alto. **Stampalo coi dischetti verso il piano di stampa**: quella è la superficie più netta che l'FDM sappia fare.
+
+Le due strade non si escludono: puoi stampare il disco in 3D per la solidità e incollarci sopra la corona di carta per la definizione.
+
+Lo spessore lo sceglie la funzione e ti dice perché: deve essere almeno quanto il perno sporge, se no il perno esce dalla faccia di sopra proprio dove appoggi l'oggetto. Se il tuo girevole non ha un perno, chiedi il piatto senza foro con `(acquire-plate/save-3mf-plate 300 "~/Downloads" 0)`, e viene più sottile.
 
 La sessione si scatta così: l'oggetto sta fermo sul piatto di registrazione, il piatto sta sul girevole, e tu scatti una foto ogni rotazione di circa 30 gradi, per un giro completo. Foto aggiuntive da posizioni libere (un dettaglio dall'alto, un lato difficile) sono benvenute: si registrano anche loro. Le foto finiscono in una cartella, che è la sessione.
 
@@ -55,12 +91,36 @@ Sulla focale non devi fare niente: Ridley la legge dall'EXIF delle foto (la foca
 La registrazione si apre dichiarando la cartella e il proxy, cioè l'ancora geometrica che il software cerca nelle foto:
 
 ```clojure
-(edit-acquire "scans/reader/" {:proxy (registration-plate)})
+(edit-acquire "scans/reader/" {:proxy (registration-plate :d 300)})
 ```
 
 Si apre una sessione sul viewport: una pellicola di miniature mostra le foto, con un badge per ciascuna (grigia = non registrata, verde con il residuo in pixel = registrata). Con il piatto di registrazione, il gesto principale è uno solo: il bottone **Auto** (tasto `a`). Per ogni foto il software trova i dischetti della corona su tutto il fotogramma, li identifica usando lo zero come riferimento, e risolve la posa della camera. Il progresso scorre nel pannello REPL. Le foto ben inquadrate si registrano da sole in qualche secondo; gli scatti molto radenti, dove i dischetti diventano ellissi sottili, possono restare fuori, e vengono lasciati indietro apposta: meglio nessuna posa che una posa sbagliata.
 
 Per le foto rimaste indietro ci sono due rifiniture. Il tasto `f` propaga la registrazione lungo l'anello del girevole: conoscendo gli angoli della sessione, predice la posa delle foto non registrate da quelle vicine già registrate. Il tasto `p` è la registrazione manuale per corrispondenze: armi un punto noto del proxy, clicchi dove sta nella foto, e con almeno sei corrispondenze il software risolve la posa in forma chiusa. Se una corrispondenza ha l'identità sbagliata, il fit la individua, la scarta e te la segnala in rosso perché tu la riclicchi.
+
+Quando quattro o cinque foto sono registrate, il tasto `R` rifinisce **insieme** una sola focale e tutte le pose, sui click che hai già fatto. Una foto da sola non sa distinguere una focale sbagliata da una distanza sbagliata: le assorbe l'una nell'altra e riporta un residuo pulito comunque. Tutte insieme sì, perché l'obiettivo è uno e le distanze sono tante.
+
+### Misurare il piatto — il tasto `C`
+
+Tutto quello che misuri in questo capitolo è misurato **rispetto al piatto**, e fino a qui il piatto è un'ipotesi: i dischetti stanno dove li ha calcolati `registration-plate`. Un piatto stampato può non essere d'accordo: un disco da 30 cm si imbarca raffreddandosi, la carta si solleva dove la colla è poca, la stampante posa l'inchiostro un capello più in là.
+
+Quell'errore non si vede come errore. Un piatto storto, scentrato o che balla viene assorbito del tutto: è solo una posa di camera diversa, e ogni foto risolve la sua. Ma un piatto i cui **dischetti non stanno dove dice il modello** è un righello con i numeri sbagliati sopra, e quello che produce è un residuo che *cambia mentre il piatto gira* — perché un dischetto che sporge dal piano si proietta in modo diverso a seconda da che parte lo guardi.
+
+Quindi il piatto si può misurare. Con la sessione registrata e rifinita, il tasto `C` (bottone **Calibra il piatto**) triangola ogni dischetto da tutte le foto che lo hanno visto, ririsolve le pose su quello che ha trovato, e ripete. Nel pannello REPL scrive quanto si è spostato ogni dischetto, diviso in tre: *fuori piano*, *in raggio* e *di lato*. Sono tre difetti diversi — imbarcato, stampato di misura sbagliata, o con un dischetto messo all'angolo sbagliato.
+
+**Poi prova il risultato su foto che non hanno partecipato alla misura, e lo butta via se non sono d'accordo.** Questa è la metà importante. Il residuo che una calibrazione dichiara *su sé stessa* scende sempre — è stato scelto per farlo scendere — quindi non sa distinguere un piatto davvero imbarcato da un calcolo che si è mangiato il rumore delle foto che gli hai dato. Solo una foto tenuta fuori lo sa. E la differenza pesa: adottare un piatto sbagliato peggiora tutte le sessioni future in un modo che nient'altro segnalerà.
+
+**Aspettati dei rifiuti, e prendili sul serio.** Il primo ⌀300 vero sembrava imbarcato in modo convincente — 1.97 mm sul dischetto peggiore, residuo da 2.18 a 1.78 px — e non lo era per niente. Un solo dischetto aveva il click sbagliato in quattro foto su dodici: togliendo quel dischetto, quelle quattro foto scendono da 3.4/2.3/3.0/2.4 px a 1.5/0.4/0.3/0.3 **sul piatto del modello, non toccato**. La calibrazione stava piegando il piatto attorno a un click sbagliato. Quando `C` rifiuta, stampa i numeri delle foto tenute fuori e ti rimanda ai click, che è dove stava l'errore.
+
+Per default un dischetto può spostarsi solo **perpendicolarmente** al piatto. È un'affermazione fisica: una stampante posa l'inchiostro con un decimo di percento di errore (0.13 mm su 133 di raggio), quindi niente, nella fabbricazione, sposta un dischetto di un millimetro *di lato*; quello che si sposta di millimetri è la superficie, e si sposta in perpendicolare.
+
+Altre tre cose da sapere:
+
+- **Fallo dopo `R`**, perché legge le pose: si porta dietro quello che c'è di sbagliato in loro.
+- **Il risultato resta legato al piatto, non alla sessione.** Finisce in `~/.ridley/plates/`, archiviato per diametro e numero di dischetti, e ogni sessione futura che dichiara lo stesso piatto se lo prende e te lo dice all'apertura. Un piatto si calibra **una volta sola**, non una volta per sessione. Se ristampi quel piatto, cancella quel file: l'archivio non sa distinguere due piatti da 300, e ti annuncerebbe quello vecchio.
+- **Misura la forma, mai la dimensione.** Un piatto più grande del 5%, fotografato da una distanza maggiore del 5%, produce esattamente la stessa immagine: nessun numero di foto può separarli. La dimensione resta affare di `:d` e del calibro (vedi 19.2).
+
+Sotto al rifiuto sulle foto tenute fuori ce n'è uno più rozzo: se il risultato vorrebbe spostare un dischetto di più del 3% del raggio della corona, `C` si ferma prima ancora di provare. Uno spostamento così non è un piatto storto: è una registrazione andata male a monte.
 
 Il proxy non deve per forza essere il piatto. Se il piatto non c'è (una sessione vecchia, un oggetto troppo grande), l'ancora può essere una scatola di ingombro misurata col calibro:
 
@@ -74,7 +134,7 @@ Alla conferma, la sessione scrive nel sorgente una forma normale:
 
 ```clojure
 (acquire "scans/reader/"
-  {:proxy (registration-plate)
+  {:proxy (registration-plate :d 300)
    :pose  {:position [0 0 0] :heading [0 1 0] :up [0 0 1]}
    :shapes {}
    :marks  {}})

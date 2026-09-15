@@ -172,6 +172,34 @@ the source cuts exactly where you cut.
 ```
 <!-- /example-source -->
 
+## Mouse & keys
+
+The mouse only ever moves the **cut plane**. It never selects a piece — which
+piece you are working on is what `n` / `p` are for.
+
+| | |
+|---|---|
+| drag arrows / rings | move · rotate the cut plane |
+| `Shift`+drag | free — bypass the grid snap |
+| `Tab` | cycle the active value: step / angle |
+| digits | set the active value |
+| `←` `→` `↑` `↓` | move by step (`f`, `rt`) · rotate by angle (`th`, `tv`) |
+| `Shift`+`↑` `↓` | `u` · `tr` |
+| `a` | **accept** the current piece as finished |
+| `n` · `p` | next · previous open piece |
+| `r` | reveal every piece with its name; again to go back to focus |
+| `y` | propose / cycle the piece's symmetry planes |
+| `c` | propose / cycle cut candidates from the piece's concavity (nothing to offer on a convex piece) |
+| `d` | mirror-decompose — replay a decomposed twin, reflected |
+| `Enter` | confirm · `Esc` cancel |
+
+Every one of those also has a button on the panel, and a disabled button is
+telling you the reason it cannot act right now.
+
+**`a` is a decision, not a measurement.** A piece is accepted as finished
+whatever colour it is; on a red one the session asks you to name it and confirm,
+rather than blocking or closing quietly.
+
 ## Notes
 
 - A tree, not a straight guillotine and not a general BSP: each piece is

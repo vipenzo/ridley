@@ -31,7 +31,7 @@
   "The plate's crown in the object frame — coplanar at z = +h/2, which is what
    makes the pose planar and the ambiguity possible in the first place."
   []
-  (mapv :position (vals (dissoc (:anchors (plate/registration-plate)) :zero))))
+  (mapv :position (vals (dissoc (:anchors (plate/registration-plate :d 130)) :zero))))
 
 (defn- correspondences [pose pts]
   (vec (keep (fn [p] (when-let [px (cam/project (k*) pose p)] {:world p :px px})) pts)))

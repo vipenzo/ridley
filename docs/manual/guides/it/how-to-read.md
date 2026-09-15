@@ -7,8 +7,10 @@ Origine: manual-redesign-plan §3.0 (mappa per fasi di lavoro, mai
 pubblicata prima) + decisione 2026-06-10 sui percorsi di lettura.
 
 - La mappa riproduce §3.0 del piano. Il cap. 18 (Acquisire e sostituire) c'è
-  dal 2026-07-16, come fase "Acquisire" propria. Resta fuori il cap. 19
-  (Estendere Ridley), che non esiste ancora.
+  dal 2026-07-16, come fase "Acquisire" propria; il cap. 20 (Acquisire dalle
+  foto, la gabbia di registrazione) dal 2026-09-06; il cap. 19 (Estendere
+  Ridley: contratti di shape-fn e thickness-fn, registry, path come dato,
+  script parametrici, librerie sotto il cofano) dal 2026-09-10.
 - I cinque percorsi sono la risposta al problema "a chi è rivolto il
   manuale": invece di un lettore unico, cinque itinerari dichiarati.
   Il quinto (il primo nell'ordine della pagina) è il curioso che deve
@@ -60,9 +62,12 @@ Curare         13. Testo
 Concludere     17. Esportare e stampare
 
 Acquisire      18. Acquisire e sostituire
+               20. Acquisire dalle foto
+
+Estendere      19. Estendere Ridley
 ```
 
-La mappa si legge così: i capitoli "Materia prima" descrivono i dati con cui Ridley lavora (forme 2D, percorsi, mesh), quelli "Costruire" le tecniche che trasformano quei dati in solidi, e via via fino all'export. "Acquisire" sta in fondo perché è l'unica fase che non parte da zero: è il flusso per chi ha già l'oggetto davanti e vuole rifarlo in Ridley, e presuppone quasi tutte le altre. I numeri non seguono le fasi perché la sequenza didattica è un'altra cosa: per esempio il cap. 2 (primitive) viene prima del 3 (forme 2D) perché è più gratificante costruire subito qualcosa di solido, anche se concettualmente le forme 2D sono materia prima.
+La mappa si legge così: i capitoli "Materia prima" descrivono i dati con cui Ridley lavora (forme 2D, percorsi, mesh), quelli "Costruire" le tecniche che trasformano quei dati in solidi, e via via fino all'export. "Acquisire" sta in fondo perché è l'unica fase che non parte da zero: è il flusso per chi ha già l'oggetto davanti e vuole rifarlo in Ridley, partendo da una mesh (cap. 18) o dalle sole fotografie (cap. 20), e presuppone quasi tutte le altre. I numeri non seguono le fasi perché la sequenza didattica è un'altra cosa: per esempio il cap. 2 (primitive) viene prima del 3 (forme 2D) perché è più gratificante costruire subito qualcosa di solido, anche se concettualmente le forme 2D sono materia prima.
 
 ## Cinque lettori, cinque percorsi
 

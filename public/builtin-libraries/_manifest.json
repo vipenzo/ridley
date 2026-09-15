@@ -1,3 +1,8 @@
 {
-  "libraries": ["puppet", "gears", "weave"]
+  "libraries": [
+    "puppet",
+    "gears",
+    "weave",
+    "acquire-plate"
+  ]
 }

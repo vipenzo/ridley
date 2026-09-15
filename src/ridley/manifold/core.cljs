@@ -1618,7 +1618,7 @@
     :rotation
     (do
       (when (= axis :heading)
-        (throw (js/Error. "cut-candidates: :axis :heading non ruota il piano di taglio — usa :up o :right")))
+        (throw (js/Error. "cut-candidates: :axis :heading does not rotate the cut plane — use :up or :right")))
       (when-not (#{:up :right} axis)
         (throw (js/Error. (str "cut-candidates: :axis sconosciuto " (pr-str axis) " — usa :up o :right"))))
       (let [mesh (sdf/ensure-mesh ridley-mesh)

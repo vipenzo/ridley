@@ -40,8 +40,18 @@
          (s/keys :req-un [:path/from :path/to])))
 (s/def :path/segments (s/coll-of :path/segment :kind vector?))
 
+;; Two path representations coexist: the RECORDED path the `path` macro builds
+;; (:commands, replayed by each consumer — Architecture §6.3) and the older
+;; segment list of path-from-state. Both are :type :path; register-path! sees
+;; the recorded one, so the spec must admit it (it did not until 2026-09-10:
+;; (register skeleton (path …)) threw "Invalid path" in every dev build).
+(s/def :path/cmd keyword?)
+(s/def :path/command (s/keys :req-un [:path/cmd]))
+(s/def :path/commands (s/coll-of :path/command :kind vector?))
+
 (s/def :ridley/path
-  (s/keys :req-un [:path/type :path/segments]))
+  (s/or :recorded (s/keys :req-un [:path/type :path/commands])
+        :segments (s/keys :req-un [:path/type :path/segments])))
 
 ;; --- Helpers ---
 
