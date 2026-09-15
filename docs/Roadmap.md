@@ -827,6 +827,8 @@ OBJ, fatto).
 
 **Intermezzo (2026-09-14): meshing SDF di regioni schiacciate — FATTO.** `(sdf-torus 28 1)` usciva a perline (4-28 componenti) anche alzando la risoluzione: libfive dimensiona l'ottree dall'asse più corto della regione. `materialize` ora cubifica la regione (`cubify-bounds`, test in `auto_bounds_test`); vale per ogni modello con bounds piatti (anelli, piastre, dischi). Resta il χ=1 sporadico del dual contouring su tubi sottili — difetto di libfive, non nostro; per un toro pulito il `revolve` mesh resta la via.
 
+**RILASCIATA v3.8.0 (2026-09-15) — la gabbia di registrazione.** Tutto il pendente da v3.7.0 (183 commit): gabbia stampabile (`examples/print-cage.clj`, giunti gen 2, chiave, portapezzo) e zero-click (`a`, trattini sul bordo, seme dell'occhio, montaggio che arbitra i gemelli), palcoscenico con gabbia virtuale e ancora a occhio, memoria per-camera della focale, scatta-e-registra, UI in inglese, cap. 19-20 del manuale, fix SDF (regioni schiacciate, attach dalla creation-pose), export 3MF. Rilasciata da `main` come le precedenti; chiusura con `scripts/bump-cask.sh v3.8.0`. La v3.7.0 (2026-08-11, «gli spigoli dichiarati») non era stata annotata qui.
+
 ## Parte I — Breve termine
 
 Le voci di questa parte sono lavoro a settimane o mesi, con dipendenze risolte e design già preso. Sono pagamenti di debito conosciuto e completamenti puntuali.
