@@ -26,18 +26,19 @@ tolto; shape-fn con base parziale ora dà errore; tutte le built-in conservano
 le chiavi di shell, morphed non è componibile; esposti smoothstep,
 shape-centroid, current-path-length; embroid ha :fn; :fn di shell ha la sua
 :softness; defonce esportato, ^:private escluso; weave.clj bonificata.
-Cap. 6 e cap. 9 (IT+EN) allineati lo stesso giorno. Resta: versione EN.
+Cap. 6 e cap. 9 (IT+EN) allineati lo stesso giorno. Versione EN:
+en/19-estendere-ridley.md (2026-09-15), da tenere in sync.
 -->
 
 # 19. Estendere Ridley
 
 <!-- level: advanced -->
 
-I capitoli precedenti usano Ridley. Questo lo estende: spiega i contratti che le funzioni del linguaggio rispettano fra loro, così che le tue rispettino gli stessi, e apre il cofano su come il codice che scrivi viene valutato. Non serve per i primi cento oggetti. Serve quando una shape-fn tua fa una cosa strana, quando vuoi generare la scena da codice, o quando una libreria che hai scritto non si comporta come ti aspettavi.
+I capitoli precedenti spiegano come usare Ridley. Questo come estenderlo: spiega i contratti che le funzioni del linguaggio rispettano fra loro, così che le tue rispettino gli stessi, e apre il cofano su come il codice che scrivi viene valutato. Non serve per i primi cento oggetti. Serve quando una shape-fn tua fa una cosa strana, quando vuoi generare la scena da codice, o quando una libreria che hai scritto non si comporta come ti aspettavi.
 
 ## 19.1 Il contratto delle shape-fn
 
-Il capitolo 6 mostra come si scrive una shape-fn con `shape-fn` e come si compone con le built-in. Qui c'è quello che il capitolo 6 non dice: cosa è davvero una shape-fn, cosa il loft si aspetta da lei, e dove si rompe.
+Il capitolo 6 mostra come si scrive una shape-fn con `shape-fn` e come si compone con le built-in. Qui c'è quello che il capitolo 6 non dice: cosa è davvero una shape-fn, cosa il loft si aspetta da lei, e gli errori che possono non farla funzionare.
 
 ### Una funzione con un'etichetta
 
@@ -55,9 +56,9 @@ Questa è la trappola. Una lambda che restituisce una shape non è una shape-fn,
 
 Con `revolve` la shape-fn viene valutata a ogni passo di rivoluzione, con `t` uguale alla frazione dell'angolo percorso. Su un giro intero l'ultimo anello coincide col primo, quindi il profilo a `t = 1` non viene mai costruito: con 64 passi l'ultimo valore è 63/64. Su una rivoluzione parziale `t` arriva a 1, e quell'anello è la faccia di chiusura. Prima degli anelli il profilo viene valutato una volta a `t = 0` come sonda, per contare i punti.
 
-### La lunghezza del percorso: `current-path-length`
+### Ragionare in millimetri: `current-path-length`
 
-Una shape-fn riceve `t`, una frazione, e lavora nel piano della sezione. Se la tua trasformazione deve ragionare in millimetri lungo il percorso, la lunghezza totale la chiedi a `(current-path-length)`: dentro un loft restituisce la lunghezza del path in unità mondo, dentro un `revolve` la lunghezza dell'arco percorso dal centroide del profilo (angolo per raggio), fuori da entrambi `nil`. È lo stesso numero che `capped` usa per calcolare da sola la frazione del raccordo e che `heightmap` in modalità `:physical` usa per mappare l'immagine. Tienici sempre un valore di riserva, perché la prima valutazione di un `revolve` (la sonda a `t = 0`) e qualunque valutazione fuori da un loft lo vedono `nil`:
+`t` è una frazione, e per molte trasformazioni basta: "a metà percorso il profilo è il doppio" non ha bisogno di sapere quanto è lungo il percorso. Quando invece la forma dipende da una misura, per esempio un rigonfiamento lungo dieci millimetri qualunque sia la lunghezza del path, ti serve convertire `t` in millimetri, e la lunghezza totale la chiedi a `(current-path-length)`: dentro un loft è la lunghezza del path, dentro un `revolve` la lunghezza dell'arco percorso dal centroide del profilo (angolo per raggio).
 
 ```clojure
 ;; a bulge 10 mm long at the start, whatever the path length
@@ -69,11 +70,13 @@ Una shape-fn riceve `t`, una frazione, e lavora nel piano della sezione. Se la t
         (path (f 40) (arc-h 20 90) (f 30))))
 ```
 
+L'`or` c'è perché fuori da un loft o da un revolve la funzione restituisce `nil` (e `revolve` valuta il profilo una volta a `t = 0` prima di iniziare, come sonda per contare i punti, quando la lunghezza non è ancora nota): una shape-fn deve poter essere valutata anche lì senza rompersi.
+
 ### Composizione, e cosa passa attraverso
 
 `(-> shape (A ...) (B ...))` costruisce una shape-fn B la cui `:base` è la shape-fn A: quando il loft chiede B a un certo `t`, B chiede prima A allo stesso `t` e trasforma il risultato. L'esecuzione va dall'interno verso l'esterno, e ogni anello rivaluta l'intera catena (non c'è memoizzazione: una catena lunga su un `loft-n 256` costa in proporzione).
 
-Due dettagli del contratto che il capitolo 6 enuncia solo come regole. Primo: `shell` e `woven-shell` non trasformano i punti, **annotano** la shape con chiavi extra (`:shell-mode`, `:shell-thickness`, `:shell-values`, e `:shell-offsets` per il woven) che il loft legge per costruire il doppio anello, esterno e interno. Tutte le built-in conservano quelle chiavi, perché trasformano i punti con `update` e lasciano il resto: `tapered`, `twisted`, `fluted`, `capped` dopo uno `shell` producono la stessa mesh a doppio anello. Il motivo per cui `shell` sta comunque bene in fondo è di senso, non di meccanismo: i valori di spessore sono calcolati sul profilo che `shell` riceve, uno per punto, e una deformazione fatta dopo (`fluted`, `noisy`) sposta i punti lasciando i valori dov'erano. Se scrivi una shape-fn tua, fai lo stesso: aggiorna `:points` (e `:holes`) con `update` sulla shape ricevuta invece di costruirne una nuova, e le chiavi che non conosci passano. L'unica built-in che non entra in una catena è `morphed`: prende due shape statiche, e con una shape-fn come primo argomento dà errore. Secondo: alcune built-in (`heightmap` fra queste) leggono `:base` dal metadata per ragionare sulla shape di partenza, e lo leggono a un livello solo. In una catena a due livelli quella base è la shape-fn intermedia, non il profilo originale: se una built-in si comporta in modo inatteso in fondo a una catena lunga, prova a metterla prima.
+Un dettaglio del contratto che il capitolo 6 enuncia solo come regola: `shell` e `woven-shell` non trasformano i punti, **annotano** la shape con chiavi extra (`:shell-mode`, `:shell-thickness`, `:shell-values`, e `:shell-offsets` per il woven) che il loft legge per costruire il doppio anello, esterno e interno. Tutte le built-in conservano quelle chiavi, perché trasformano i punti con `update` e lasciano il resto: `tapered`, `twisted`, `fluted`, `capped` dopo uno `shell` producono la stessa mesh a doppio anello. Il motivo per cui `shell` sta comunque bene in fondo è di senso, non di meccanismo: i valori di spessore sono calcolati sul profilo che `shell` riceve, uno per punto, e una deformazione fatta dopo (`fluted`, `noisy`) sposta i punti lasciando i valori dov'erano. Se scrivi una shape-fn tua, fai lo stesso: aggiorna `:points` (e `:holes`) con `update` sulla shape ricevuta invece di costruirne una nuova, e le chiavi che non conosci passano. L'unica built-in che non entra in una catena è `morphed`: prende due shape statiche, e con una shape-fn come primo argomento dà errore.
 
 ### La forma parziale
 
@@ -94,7 +97,20 @@ Oltre alle operazioni su shape elencate nel capitolo 6, dentro una trasformazion
 (current-path-length)                ; mm of the sweep, nil outside a loft or revolve
 ```
 
-Due attrezzi che le built-in usano per sé sono esposti anche a te: `(smoothstep e0 e1 x)`, la rampa morbida da 0 a 1 fra due soglie che sta dietro ogni `:softness`, e `(shape-centroid shape)`, il centro da cui `shell` misura gli angoli. Altri (la distanza con segno da un poligono, la frazione di arco-lunghezza di ogni punto) restano privati: se ti servono, li riscrivi in poche righe in una libreria, che è il posto giusto per accumulare questi attrezzi (19.5).
+Messi insieme, fanno una shape-fn che il capitolo 6 non ha: una corteccia, cioè un rumore che segue l'angolo attorno al profilo e scorre lungo il percorso, applicato come spostamento radiale:
+
+<!-- example-source: extend-bark -->
+```clojure
+(register bark
+  (loft-n 48
+    (shape-fn (circle 15 96)
+      (fn [s t]
+        (displace-radial s
+          (fn [p] (* 2 (fbm (* 3 (angle p)) (* 8 t) 3))))))
+    (f 60)))
+```
+
+`angle` dà a `fbm` una coordinata che gira attorno al profilo, `t` moltiplicato una che sale lungo il percorso, e `displace-radial` applica il valore come spostamento verso l'esterno (o l'interno, se negativo) senza cambiare il numero di punti. Le due funzioni in più, `smoothstep` e `shape-centroid`, servono soprattutto alle thickness-fn, e le vediamo nella prossima sezione. Altri attrezzi che le built-in usano per sé (la distanza con segno da un poligono, la frazione di arco-lunghezza di ogni punto) restano privati: se ti servono, li riscrivi in poche righe in una libreria, che è il posto giusto per accumulare questi attrezzi (19.5).
 
 ## 19.2 Il contratto delle thickness-fn
 
@@ -102,11 +118,24 @@ Il capitolo 6 (6.11) mostra come si disegna un pattern in coordinate `(angolo, t
 
 ### Il dominio
 
-Una thickness-fn per `shell` ha la firma `(fn [a t] -> numero)`. `a` è l'angolo del punto del profilo rispetto al **centroide della shape corrente**, calcolato con `atan2`: va quindi da **-π a π** (estremo superiore compreso), con lo zero sull'asse X positivo e il salto da π a -π sul lato opposto. Un pattern periodico in `a` non se ne accorge (`(sin (* a 8))` è continuo attraverso il salto), ma un pattern che usa `a` come coordinata lineare, per esempio `(mod (* a 3) 1)`, lì fa una cucitura: se vuoi un asse che va da 0 a 1 tutto intorno, calcolalo tu con `(/ (+ a PI) (* 2 PI))`. `t` è la frazione lungo il percorso, come per le shape-fn.
+Una thickness-fn per `shell` ha la firma `(fn [a t] -> numero)`. `a` è l'angolo del punto del profilo rispetto al **centroide della shape corrente**, calcolato con `atan2` (il centro è quello che `shape-centroid` restituisce): va quindi da **-π a π** (estremo superiore compreso), con lo zero sull'asse X positivo e il salto da π a -π sul lato opposto. Un pattern periodico in `a` non se ne accorge (`(sin (* a 8))` è continuo attraverso il salto), ma un pattern che usa `a` come coordinata lineare, per esempio `(mod (* a 3) 1)`, lì fa una cucitura: se vuoi un asse che va da 0 a 1 tutto intorno, calcolalo tu con `(/ (+ a PI) (* 2 PI))`. `t` è la frazione lungo il percorso, come per le shape-fn.
 
 Il centroide è quello della shape **a quel `t`**: se la thickness-fn segue una `tapered` o una `noisy`, il centro da cui si misura l'angolo si sposta con la shape, non con il profilo originale. Per un profilo simmetrico non cambia nulla; per uno asimmetrico è la differenza fra un pattern che "gira" con la forma e uno fisso nello spazio.
 
-C'è un modo per avere come prima coordinata la **lunghezza d'arco** invece dell'angolo: passare `:style :pattern` insieme alla tua `:fn`. Con quello stile la parametrizzazione del perimetro è la frazione di arco-lunghezza, da 0 a 1, e la tua funzione la riceve al posto dell'angolo. È la coordinata giusta per un pattern che deve avere passo costante in millimetri lungo un profilo non circolare, dove l'angolo si stringe e si allarga.
+Prima di tutto, una cosa che sui cerchi degli esempi non si vede: la thickness-fn viene valutata **una volta per punto del profilo**, e fra un punto e l'altro lo spessore viene interpolato. Un `(circle 20 64)` ha 64 punti e va bene; un `(rect 40 12)` ne ha quattro, gli angoli, quindi `shell` deciderebbe lo spessore in quattro posti soli e il pattern non esisterebbe. Un profilo poligonale va ricampionato prima, con `resample-shape`, a un numero di punti almeno doppio della frequenza del pattern.
+
+Poi la coordinata. L'angolo è buono su un cerchio e cattivo su tutto il resto: su un rettangolo 40 per 12, un grado attorno al centroide copre pochi millimetri sui lati corti e molti sui lati lunghi, e dodici fessure "ogni 30 gradi" escono strette e fitte sui lati corti, larghe e rade sui lunghi. Se vuoi un passo costante in millimetri, la coordinata giusta è la **lunghezza d'arco** lungo il perimetro, e la ottieni passando `:style :pattern` insieme alla tua `:fn`: con quello stile la prima coordinata che la funzione riceve non è più l'angolo ma la frazione di perimetro percorso, da 0 a 1.
+
+<!-- example-source: extend-thickness-arclength -->
+```clojure
+;; twelve slots of equal width all around a rectangle
+(register slotted
+  (loft (shell (resample-shape (rect 40 12) 208) :thickness 2 :style :pattern
+          :fn (fn [u t] (if (< (mod (* u 12) 1) 0.6) 1 0)))
+        (f 30)))
+```
+
+Prova a togliere `:style :pattern` e a leggere `a` al posto di `u` (con `(/ (+ a PI) (* 2 PI))` per riportarlo fra 0 e 1): le fessure restano dodici, ma non più uguali. E prova a togliere `resample-shape`: torna la cornice a quattro punti.
 
 ### Il valore
 
@@ -163,7 +192,7 @@ Nota il calcolo di `u` in `helix`: è la riga che rende il pattern indifferente 
 (add-mesh! mesh)               ; an anonymous mesh: in the scene, without a name
 ```
 
-`name` è una keyword. La differenza fra `register` e `register-mesh!` non è solo sintattica: la macro cattura anche la form che ha prodotto la mesh (è quello che permette a `tweak :nome` di rivalutarla con parametri diversi), la funzione no. Se registri da codice, quel collegamento non c'è.
+`name` è una keyword. `register-mesh!` e `add-mesh!` mettono entrambe una mesh in scena; la differenza è se vuoi ritrovarla dopo. Con un nome la mesh si può cercare (`get-mesh`), mostrare e nascondere, rivalutare con `tweak`, esportare per nome; senza nome è solo in scena, e va bene per geometria di contorno che nessuno interrogherà più, per esempio cento chiodini decorativi che non meritano cento nomi. La differenza fra `register` e `register-mesh!`, invece, non è solo sintattica: la macro cattura anche la form che ha prodotto la mesh (è quello che permette a `tweak :nome` di rivalutarla con parametri diversi), la funzione no. Se registri da codice, quel collegamento non c'è.
 
 <!-- example-source: extend-register-loop -->
 ```clojure
@@ -220,7 +249,7 @@ Un'ultima regolarità che vale la pena conoscere quando si scrive codice general
 
 ## 19.4 Il path come dato
 
-Il capitolo 5 usa i path. Qui li apriamo.
+Il capitolo 5 usa i path. Qui vediamo come sono fatti dentro.
 
 ### Comandi, non punti
 

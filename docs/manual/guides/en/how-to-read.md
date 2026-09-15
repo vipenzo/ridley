@@ -12,8 +12,7 @@ pubblicata prima) + decisione 2026-06-10 sui percorsi di lettura.
 - La mappa riproduce §3.0 del piano. Il cap. 18 (Acquiring and replacing) c'è
   dal 2026-07-16, come fase "Acquire" propria; il cap. 20 (Acquiring from
   photographs) dal 2026-09-06, tradotto il 2026-09-09.
-  Il cap. 19 (Extending Ridley) c'è dal 2026-09-10, per ora solo in italiano
-  (fallback automatico).
+  Il cap. 19 (Extending Ridley) c'è dal 2026-09-10, tradotto il 2026-09-15.
 - I cinque percorsi sono la risposta al problema "a chi è rivolto il
   manuale": invece di un lettore unico, cinque itinerari dichiarati.
   Il quinto (il primo nell'ordine della pagina) è il curioso che deve

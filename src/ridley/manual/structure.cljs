@@ -115,9 +115,9 @@
     :langs #{:it :en}
     :title {:it "18. Acquisire e sostituire" :en "18. Acquiring and replacing"}}
    ;; 19 "Estendere Ridley" was reserved from the redesign plan and written
-   ;; on 2026-09-10 (IT only for now: EN falls back to IT); the acquisition
-   ;; guide took 20 before it.
+   ;; on 2026-09-10 (EN 2026-09-15); the acquisition guide took 20 before it.
    {:id :ch-19 :slug "estendere-ridley"             :order 19 :file "19-estendere-ridley.md"
+    :langs #{:it :en}
     :title {:it "19. Estendere Ridley" :en "19. Extending Ridley"}}
    {:id :ch-20 :slug "acquisire-dalle-foto"         :order 20 :file "20-acquisire-dalle-foto.md"
     :langs #{:it :en}

@@ -1,9 +1,8 @@
 <!--
 Translated from it/20-acquisire-dalle-foto.md (2026-09-09). Keep in sync:
 same section structure, same examples, same UI labels (the panel's labels are
-quoted as they appear in the app, some of them in Italian: "Registra per punti
-(p)", "Auto — leggi la gabbia (a)", "faccia che vedi:", "Conferma (OK)",
-"Chiudi"). Code examples identical to the IT source. No em-dash.
+quoted as they appear in the app, now all in English since 2026-09-11).
+Code examples identical to the IT source. No em-dash.
 -->
 
 # 20. Acquiring from photographs
@@ -87,7 +86,7 @@ A modal session opens on the viewport. A filmstrip of thumbnails shows the photo
 
 On the current photo you have three **spring-loaded sliders** at the edges of the image and three **coloured circles** concentric on the cage. The sliders translate: the one on the left moves the cage up and down, the one at the top right and left, the one at the bottom brings it closer or further away (the cage stays centred and changes size). They are spring-loaded: you drag, the knob returns to the centre, the movement stays. The circles rotate: dragging along the red circle turns the cage about its X axis, and likewise the green and the blue, one degree of drag for one degree of rotation, whatever the ring's orientation. There is no 3D gizmo: the cage is its own gizmo.
 
-With these controls you bring the drawn cage **roughly** over the photographed one: rings on the plastic, tabs on the right side, double dots where you see them. Precision is not needed; what is needed is that the pose is the right one and not its mirror twin. Then press **`a`** (button **Auto — leggi la gabbia (a)**). The software detects the dark discs across the whole photo, starts from your pose as a seed, identifies the rings and solves the camera; on a cage with rim segments it reads those too, and they are what registers the photos in which the rings are edge-on and the discs fade out. In a few seconds, up to half a minute, the thumbnail turns green with its residual, and the drawn cage settles onto the plastic to the pixel. Look at it: if it matches, that photo is done. Move to the next with `]` and repeat.
+With these controls you bring the drawn cage **roughly** over the photographed one: rings on the plastic, tabs on the right side, double dots where you see them. Precision is not needed; what is needed is that the pose is the right one and not its mirror twin. Then press **`a`** (button **Auto — read the cage (a)**). The software detects the dark discs across the whole photo, starts from your pose as a seed, identifies the rings and solves the camera; on a cage with rim segments it reads those too, and they are what registers the photos in which the rings are edge-on and the discs fade out. In a few seconds, up to half a minute, the thumbnail turns green with its residual, and the drawn cage settles onto the plastic to the pixel. Look at it: if it matches, that photo is done. Move to the next with `]` and repeat.
 
 If `a` refuses, it says so and says why: usually the photo shows a single ring, or your pose was too far from the true one. Bring the pose closer and press again, or switch to the manual route.
 
@@ -95,7 +94,7 @@ If `a` refuses, it says so and says why: usually the photo shows a single ring, 
 
 To register by hand you need to know what the discs are called. The three rings are called **X**, **Y** and **Z** (the big, the medium, the small one), and each ring has two faces, **p** and **m**, one per side. On each face there are twelve discs numbered **00** to **11**: 00 is the one with the second dot next to it, further in, and the dot sits on the side of disc 01, so it also shows which way to count. A disc's name puts the three things together: `xm00` is disc 0 of face m of ring X, `zp07` disc 7 of face p of ring Z. The double dot has a name of its own, `⊙xm`, `⊙zp` and so on.
 
-The **Registra per punti (p)** button opens click mode. The panel shows a button for every disc, one row per ring: since of each ring you can see only one face at a time, the row is `xm00 ... xm11` or `xp00 ... xp11`, and the session chooses which to offer by reading the pose you put the cage in. Above the rows is the line **faccia che vedi:** with six buttons, `Xp Xm Yp Ym Zp Zm`, to correct it when it gets it wrong or when a ring is nearly edge-on and will not commit: the rule for reading a face off the photo is to look at the double dot, from the big disc toward the small dot, counter-clockwise is `p`, clockwise is `m`; in doubt, the `n` key (see below) shows it on the photo.
+The **Register by points (p)** button opens click mode. The panel shows a button for every disc, one row per ring: since of each ring you can see only one face at a time, the row is `xm00 ... xm11` or `xp00 ... xp11`, and the session chooses which to offer by reading the pose you put the cage in. Above the rows is the line **face you see:** with six buttons, `Xp Xm Yp Ym Zp Zm`, to correct it when it gets it wrong or when a ring is nearly edge-on and will not commit: the rule for reading a face off the photo is to look at the double dot, from the big disc toward the small dot, counter-clockwise is `p`, clockwise is `m`; in doubt, the `n` key (see below) shows it on the photo.
 
 The gesture: press a disc's button, then click where it is in the photo. The click is assisted: the program looks for the dark disc around the clicked point and puts the click exactly at its centre, so there is no need to aim to the pixel. If the snap catches the wrong patch (a shadow, a highlight, a nearby disc) you see it from the dot ending up elsewhere: **Alt+click** places the click literally where you clicked, with no automatism. Alt works this way only with the drawn cage hidden (`v`). With the cage visible, Alt-drag does something else: it rolls the virtual cage, which snaps back on release, to see where a disc is that cannot be made out in the photo, typically the inner dot of disc 00, covered or in shadow. You need not place them all, nor even count them: the double dot of a ring that shows it well and four discs of the same ring are enough, with the names that look right to you. Then press the **`a`** key (in this mode there is no button). A crown of twelve equal discs reads identical when rotated, so the names you gave may be offset without any pose noticing; it is the rest of the cage, compared with the discs found across the whole photo, that decides how that crown reads, and the program tells you whether your names were right or whether it corrected them, without touching your clicks. The **`n`** key writes the discs' names on the photo itself: if they land far from the discs, it is the cage that is out of pose. Right click is the eraser: it removes the click under it. **`v`** hides the drawn cage, useful when the solid tabs cover the very disc you need to click.
 
@@ -105,7 +104,7 @@ Each photo on its own solves its own camera, but a single photo cannot tell a wr
 
 ### Confirming
 
-The **Conferma (OK)** button writes an ordinary form into the source, in place of the one you evaluated:
+The **Confirm (OK)** button writes an ordinary form into the source, in place of the one you evaluated:
 
 ```clojure
 (def A (acquire "/Users/me/scans/valvola"
@@ -115,7 +114,7 @@ The **Conferma (OK)** button writes an ordinary form into the source, in place o
           :edges {}}))
 ```
 
-The form holds what belongs to the program; the camera poses, the clicks, the focal length and the eyeballed photos stay in a session file next to the photos, `acquire-state.json`. **Chiudi** leaves without writing the measurements but still strips the `edit-`: the form stays valid. Putting `edit-` back in front and re-evaluating, the session reopens where it was: it is the same round trip as `edit-mesh-split` (ch. 18.3). Esc never closes the session: it steps out one level from the mode you are in.
+The form holds what belongs to the program; the camera poses, the clicks, the focal length and the eyeballed photos stay in a session file next to the photos, `acquire-state.json`. **Close** leaves without writing the measurements but still strips the `edit-`: the form stays valid. Putting `edit-` back in front and re-evaluating, the session reopens where it was: it is the same round trip as `edit-mesh-split` (ch. 18.3). Esc never closes the session: it steps out one level from the mode you are in.
 
 ## 20.5 Anchors: a plane by eye
 
@@ -139,7 +138,7 @@ To touch it up again put `edit-` in front and Run; Backspace puts it back where 
 
 The session can take photos directly from a connected camera: a webcam, or the phone offered to the Mac as a system camera. The box at the bottom of the panel has the **Camera** button, which opens the preview in a corner of the viewport (the camera light comes on only when you press it), a menu to choose the device if there is more than one, and the **Grab (g)** button. You frame by looking at the object, not at the preview, and press `g`: the frame is saved into the session folder as `grab-01.jpg`, `grab-02.jpg` and so on, and appears in the filmstrip as a photo to register. Then you register it like any other photo: pose by eye and `a`. A bad shot is discarded with **Delete view N**: on the first click the button asks "Sure?", on the second it deletes the view and its file.
 
-A live frame has no EXIF, so the focal length must be measured rather than read. `R` does that, and in an all-live session the measured focal length is filed for that camera at that resolution in `~/.ridley/cameras.json`: the next time you open the same camera, the session starts from the remembered focal length instead of the default, and says so ("Focale ricordata per questa camera"). Before that measurement the focal length is the slider's, and a wrong focal length does not present itself as such: it registers cleanly with the camera at the wrong distance. That is why, in an all-live session, do `R` early. And keep the phone's automatic framing features (Center Stage) off: they re-crop live, and the lens becomes a moving target no memory can absorb.
+A live frame has no EXIF, so the focal length must be measured rather than read. `R` does that, and in an all-live session the measured focal length is filed for that camera at that resolution in `~/.ridley/cameras.json`: the next time you open the same camera, the session starts from the remembered focal length instead of the default, and says so ("Focal remembered for this camera"). Before that measurement the focal length is the slider's, and a wrong focal length does not present itself as such: it registers cleanly with the camera at the wrong distance. That is why, in an all-live session, do `R` early. And keep the phone's automatic framing features (Center Stage) off: they re-crop live, and the lens becomes a moving target no memory can absorb.
 
 In the desktop app the camera asks for macOS's permission the first time. In a browser it works on `localhost`; on an `http://` address of another machine it cannot work, because the camera requires a secure context.
 
