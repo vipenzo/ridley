@@ -194,11 +194,17 @@
    'shape-intersection clipper/shape-intersection
    'shape-xor          clipper/shape-xor
    'shape-offset       clipper/shape-offset
+   'shape-offset-all   clipper/shape-offset-all
+   'shape-area         clipper/shape-area
    'shape-hull         clipper/shape-hull
    'shape-bridge       clipper/shape-bridge
    'pattern-tile       clipper/pattern-tile
    ;; Voronoi
    'voronoi-shell      voronoi/voronoi-shell
+   'spread-points      voronoi/spread-points
+   'deepest-point      voronoi/deepest-point
+   'joint-zone         impl/implicit-joint-zone
+   'layout-anchors     impl/implicit-layout-anchors
    ;; Text shapes
    'text-shape   text/text-shape
    'text-shapes  text/text-shapes

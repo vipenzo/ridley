@@ -567,6 +567,66 @@
 ;; defined further down this file) but is invoked from split-manifold* here.
 (declare heal-slivers)
 
+(defn add-cut-anchor
+  "Stamp the cut-face anchor (dev-docs/brief-split-anchors.md) onto one half of
+   a plane split. `pose` is the CUT pose {:position :heading :up}; the anchor
+   keeps its :position and :up and takes as :heading the plane normal oriented
+   OUTWARD from this half — `flip?` true for the :ahead half (its material lies
+   along the cut heading, so outward is the heading negated), false for
+   :behind. :up is the cut's own up on both halves, so the face's 2D frame is
+   the same from either side up to the sign of right (heading × up flips with
+   heading) — a joint written once applies symmetrically.
+
+   The pose carries `:cut true` — the tag prune-stale-cut-anchors reads to
+   tell a cut face from a user anchor (:foot) when a later cut leaves a piece
+   that no longer touches that face.
+
+   An empty half (the plane missed) is returned untouched: no anchor. An
+   inherited anchor of the same name is overwritten by the cut anchor, with a
+   console warning — the cut is the more specific fact."
+  [mesh anchor-name {:keys [position heading up]} flip?]
+  (if (or (nil? anchor-name) (empty? (:faces mesh)))
+    mesh
+    (do
+      (when (contains? (:anchors mesh) anchor-name)
+        (js/console.warn
+         (str "mesh-split: cut anchor " (pr-str anchor-name)
+              " replaces an inherited anchor of the same name")))
+      (assoc-in mesh [:anchors anchor-name]
+                {:position position
+                 :heading (if flip? (mapv - heading) heading)
+                 :up up
+                 :cut true}))))
+
+(defn prune-stale-cut-anchors
+  "Drop from `mesh` every inherited CUT anchor (pose tagged :cut true by
+   add-cut-anchor) whose plane no vertex of `mesh` touches: after a second cut,
+   the piece on the far side of the first cut face still inherits that face's
+   anchor via carry-meta, but the face is not its own any more. A piece keeps
+   exactly one anchor per cut face that bounds it (brief-split-anchors.md Part
+   2). User anchors (no tag) are never touched — :foot stays on both halves.
+   Tolerance: 1e-3 absolute, or 1e-6 of the bbox diagonal if larger — Manifold's
+   cut faces sit on the plane to fp32 precision. An empty mesh is left as is."
+  [mesh]
+  (let [vs (:vertices mesh)
+        cut-anchors (filter (fn [[_ pose]] (:cut pose)) (:anchors mesh))]
+    (if (or (empty? vs) (empty? cut-anchors))
+      mesh
+      (let [[lo hi] (reduce (fn [[lo hi] v] [(mapv min lo v) (mapv max hi v)])
+                            [(first vs) (first vs)] vs)
+            diag (Math/sqrt (reduce + (map (fn [a b] (let [d (- b a)] (* d d))) lo hi)))
+            eps (max 1e-3 (* 1e-6 diag))
+            touches? (fn [{:keys [position heading]}]
+                       (let [[px py pz] position [hx hy hz] heading
+                             off (+ (* hx px) (* hy py) (* hz pz))]
+                         (some (fn [[x y z]]
+                                 (< (Math/abs (- (+ (* hx x) (* hy y) (* hz z)) off)) eps))
+                               vs)))
+            stale (keep (fn [[nm pose]] (when-not (touches? pose) nm)) cut-anchors)]
+        (if (empty? stale)
+          mesh
+          (update mesh :anchors #(apply dissoc % stale)))))))
+
 (defn- split-manifold*
   "Core of both split-by-plane and split-live: split a LIVE Manifold `m` by the
    plane {p : normal·p = offset} into {:ahead :behind :ahead-volume
@@ -576,7 +636,11 @@
 
    `opts` (brief-step-bias.md Part 2) — {:heal-slivers true|{:thickness t}} runs
    the post-split sliver safety net on the result before returning it; absent/nil
-   (the default for every existing caller) leaves the raw split untouched."
+   (the default for every existing caller) leaves the raw split untouched.
+   {:anchor {:name kw :pose {:position :heading :up}}} (brief-split-anchors.md)
+   stamps a cut-face anchor of that name on BOTH non-empty halves, normal
+   outward from each — see add-cut-anchor. Absent → no anchor (split-live's
+   per-tick recompute in edit-mesh-split never asks for one)."
   [^js m normal offset source-mesh opts]
   (let [[nx ny nz] normal
         ^js pair (.splitByPlane m #js [nx ny nz] offset)
@@ -599,10 +663,22 @@
                   :behind (schema/assert-mesh! behind)
                   :ahead-volume ahead-vol
                   :behind-volume behind-vol}
-          heal-opt (:heal-slivers opts)]
-      (if heal-opt
-        (heal-slivers result normal source-mesh (when (map? heal-opt) (:thickness heal-opt)))
-        result))))
+          heal-opt (:heal-slivers opts)
+          result (if heal-opt
+                   (heal-slivers result normal source-mesh (when (map? heal-opt) (:thickness heal-opt)))
+                   result)]
+      ;; Cut-face anchors (brief-split-anchors.md): stamped AFTER healing so a
+      ;; reassembled half (concat/union rebuilds its meta) still carries them.
+      ;; Inherited cut anchors whose face is now on the other side are pruned
+      ;; first, so a piece bounded by several cuts carries one anchor per face.
+      (let [result (-> result
+                       (update :behind prune-stale-cut-anchors)
+                       (update :ahead  prune-stale-cut-anchors))]
+        (if-let [{anchor-name :name pose :pose} (:anchor opts)]
+          (-> result
+              (update :behind add-cut-anchor anchor-name pose false)
+              (update :ahead  add-cut-anchor anchor-name pose true))
+          result)))))
 
 (defn split-by-plane
   "Split a mesh by the plane {p : normal·p = offset} into two halves:

@@ -829,6 +829,44 @@ OBJ, fatto).
 
 **RILASCIATA v3.8.0 (2026-09-15) — la gabbia di registrazione.** Tutto il pendente da v3.7.0 (183 commit): gabbia stampabile (`examples/print-cage.clj`, giunti gen 2, chiave, portapezzo) e zero-click (`a`, trattini sul bordo, seme dell'occhio, montaggio che arbitra i gemelli), palcoscenico con gabbia virtuale e ancora a occhio, memoria per-camera della focale, scatta-e-registra, UI in inglese, cap. 19-20 del manuale, fix SDF (regioni schiacciate, attach dalla creation-pose), export 3MF. Rilasciata da `main` come le precedenti; chiusura con `scripts/bump-cask.sh v3.8.0`. La v3.7.0 (2026-08-11, «gli spigoli dichiarati») non era stata annotata qui.
 
+**Fronte APERTO (2026-09-15): GIUNZIONI SUI PEZZI TAGLIATI — prima fetta FATTA,
+gli anchor di taglio.** Obiettivo: tagliare una mesh e generare le giunzioni
+(spine, tenoni, battute) per rimontare i pezzi stampati. Decisione di Vincenzo:
+nessuna API per le giunzioni finché non esistono esempi scritti a mano; il
+contratto, se mai, si estrae da quelli. Il dato che mancava è ora sulla mesh:
+ogni taglio di `mesh-split` lascia su ENTRAMBI i pezzi un anchor col nome del
+mark (`:cut` per il taglio singolo), posizione sul piano, heading uscente dal
+pezzo, up del taglio; un pezzo porta un anchor per ogni faccia di taglio che lo
+delimita (gli anchor di taglio ereditati e non più propri sono potati — tag
+`:cut true` nella posa), accanto agli anchor utente ereditati. Valore di ritorno
+e codice emesso da `edit-mesh-split` invariati. Brief
+`dev-docs/brief-split-anchors.md`. Trovato al gate: `slice-mesh` sul piano
+esatto della faccia restituisce nulla (piano coincidente); il contorno si legge
+un pelo dentro, `(turtle piece :at :cut (f -0.01) (slice-mesh piece))` —
+candidato a fallback automatico, non deciso.
+
+*Seconda fetta FATTA (2026-09-21): `layout-anchors`.* Vincenzo ha chiesto un
+automatismo che misuri la faccia di taglio e proponga numero e posizione delle
+giunzioni, e ha spinto verso il generico: non «joint-layout» ma `layout-anchors`,
+che divide una faccia in pose ben distribuite e le restituisce come ANCHOR nel
+mondo (`{:pin-1 pose …}`), un solo `:inset` per il bordo (raggio+parete: contano
+solo come somma), `:spacing` per il numero. Posizione via Voronoi/Lloyd
+(`spread-points`, pubblica, estratta da `voronoi-shell` e corretta: cella
+spezzata su forma concava → segue il pezzo che contiene il seme; un solo punto
+su una C → `deepest-point`). Pose nel mondo = niente specchio sul gemello: lo
+stesso `on-anchors` costruisce i perni a cavallo del taglio e i fori coincidono
+(226 mm³ per lato, misurato). `on-anchors`/`anchors`/`turtle :at` accettano una
+mappa nuda di anchor. Brief `dev-docs/brief-joint-layout.md`. `voronoi-shell`
+byte-identica a prima (impronta confrontata). Prova di Vincenzo del 24/9: sotto
+spacing 9 «cose strane» — il conto dall'area metteva due file a zig-zag a 5 mm
+in una striscia larga 10, perni sovrapposti, `concat-meshes` non manifold. Ora
+`:spacing` è una GARANZIA (il numero scende finché la coppia più vicina non
+sta a ≥0.9·spacing; `:min-distance` nei metadati), avviso sotto 2·inset; e gli
+avvisi passano da `state/capture-println`, senza cui non arrivavano al pannello.
+Prossimo: le giunzioni a mano di
+Vincenzo sui pezzi veri; poi, se la scrittura regge, si vede se serve un
+contratto.
+
 ## Parte I — Breve termine
 
 Le voci di questa parte sono lavoro a settimane o mesi, con dipendenze risolte e design già preso. Sono pagamenti di debito conosciuto e completamenti puntuali.

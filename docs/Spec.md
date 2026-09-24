@@ -1713,6 +1713,27 @@ normal result, not an error. Both halves inherit the source mesh's
 creation-pose, material and anchors, the same single-source policy
 `mesh-hull`/`solidify` already use.
 
+**Cut-face anchors.** Every cut leaves an anchor on both pieces it produces:
+named after the mark (`:cut-1` stays `:cut-1`, a single cut is `:cut`),
+positioned on the plane, heading = the normal pointing *out* of that piece, up =
+the cut's up. A piece carries one anchor per cut face that bounds it (an
+inherited cut anchor whose face is no longer the piece's own is dropped);
+inherited user anchors stay alongside, a same-named one is overwritten with a
+console warning. The return shape is unchanged. To get the cut face's outline
+slice a hair inside the piece — `(turtle piece :at :cut (f -0.01) (slice-mesh
+piece))` — since a slice coincident with a face returns nothing.
+
+**Joints on a cut face — `layout-anchors`.** `(layout-anchors piece anchor
+:inset i :spacing s)` returns a map of anchors `{:pin-1 pose …}` on the plane of
+that cut anchor, spread evenly (Lloyd relaxation, `spread-points`) inside the
+face shrunk by `inset` (pin radius plus wall, declared); each island of the zone
+gets `max(1, round(area / spacing²))` anchors, lowered until no two are closer
+than ~0.9·spacing (spacing is a guarantee), or `:n` in total. Poses are world
+poses, so `(on-anchors L "pin" :align (cyl r h))` builds pins that straddle the
+cut and subtract from both pieces with coinciding holes. `joint-zone` returns the
+zone itself; islands too narrow for the inset are reported in the result's
+`:layout` metadata. Nothing is built automatically.
+
 **Composite form — cutting at every mark of a path.** `mesh-split` also
 accepts a path, guillotine-style: one cut per `(mark …)`, right-nesting each
 result's `:ahead` into the next cut:

@@ -840,6 +840,10 @@ In the simplest form, the cut plane is the turtle's current pose: the position i
 
 `:behind` is the half behind the heading, on the material side, the same convention as `sdf-half-space` and `extrude` (after an extrusion the turtle sits on the far face with the material at its back). `:ahead` is the other half. Either one may be an empty mesh if the plane misses the piece: a legitimate result, not an error.
 
+Each cut also leaves an anchor on both pieces, named `:cut` here and after the mark's name with a path (`:cut-1` stays `:cut-1`): it sits on the cut plane with the heading pointing *out* of the piece and the cut's own up, so a joint written against `:cut-1` applies from either side. A piece bounded by several cuts carries one anchor per cut face, next to the anchors it inherited. To read the cut face's outline, slice a hair inside the piece — `(turtle piece :at :cut (f -0.01) (slice-mesh piece))` — since a slice coincident with a face returns nothing.
+
+When the face is wide, one pin is not enough. `layout-anchors` measures the face and proposes where the joints go: `(layout-anchors (:behind halves) :cut :inset 5 :spacing 15)` returns a map of anchors on the cut plane, spread evenly inside the face shrunk by the inset (pin radius plus wall, which you declare), one every 15 units or so. The anchors are world poses, so `(on-anchors L "pin" :align (cyl 3 10))` builds pins that straddle the cut, and subtracting them from both pieces gives holes that coincide. It proposes; you build.
+
 ### Multiple cuts: a path with marks
 
 To cut several times in one pass you use a path with `mark`s: each mark is a cut plane, in the order it appears along the path.

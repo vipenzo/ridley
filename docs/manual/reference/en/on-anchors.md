@@ -13,6 +13,9 @@ status: stable
 
 ## Description
 
+The target can also be a **bare anchor map** `{name pose …}`, such as the
+one `layout-anchors` returns: it is used as-is.
+
 Iterate over the anchors of a path or mesh and evaluate a body per matching
 anchor, with the turtle positioned at that anchor. Each clause pairs a
 **pattern** with a **body**; for every anchor, clauses are tested in order

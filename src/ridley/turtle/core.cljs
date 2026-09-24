@@ -1816,7 +1816,12 @@
       ;; offering it to `turtle :at` would promise a pose that is not there.
       (merge (:faces target)
              (into {} (filter (fn [[_ e]] (and (:position e) (:heading e))) (:edges target)))
-             (:marks target)))))
+             (:marks target))
+
+      ;; a BARE anchor map {name → pose} — what layout-anchors returns
+      ;; (dev-docs/brief-joint-layout.md Parte 2): it already IS the answer.
+      (and (seq target) (every? (fn [[k v]] (and (keyword? k) (map? v) (:position v))) target))
+      target)))
 
 (defn synthesize-delta
   "Minimal canonical (th tv tr f rt u) delta that turns turtle pose `from`

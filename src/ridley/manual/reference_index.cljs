@@ -435,6 +435,15 @@
     :description "Rebuild a mesh from a packed binary representation: a base64-encoded Float32 vertex array (`x0 y0 z0 x1 y1 z1 …`) and a base64-encoded Uint32 face index array (`a0 b0 c0 a1 b1 c1 …`). Returns a mesh value."
     :path "docs/manual/reference/en/decode-mesh.md"}
 
+   "deepest-point"
+   {:name "deepest-point"
+    :category "2d-shapes"
+    :status "stable"
+    :since ""
+    :signature "(deepest-point shape)"
+    :description "The interior point of a 2D shape farthest from its boundary — an approximate pole of inaccessibility, found on a 48×48 grid over the bounding box, holes respected. The place for one pin on a C or a U, whose centroid falls outside the material. Returns `[x y]`."
+    :path "docs/manual/reference/en/deepest-point.md"}
+
    "dent"
    {:name "dent"
     :category "spatial-deformation"
@@ -984,6 +993,15 @@
     :description "Set the corner geometry mode for `extrude`, `extrude-closed`, and `loft`. **Modifies turtle state**: the chosen mode persists on the turtle until changed again, so it affects every subsequent extrusion that turns through a corner."
     :path "docs/manual/reference/en/joint-mode.md"}
 
+   "joint-zone"
+   {:name "joint-zone"
+    :category "positioning-assembly"
+    :status "stable"
+    :since ""
+    :signature "(joint-zone piece anchor & {:keys [inset]})"
+    :description "The admissible zone for joints on a cut face: the face's outline(s) shrunk by `:inset`, as a vector of 2D shapes in the anchor's frame (X = right, Y = up), one per island. An island too narrow for the inset disappears, so the vector can be empty. This is the region `layout-anchors` spreads its anchors in; use it directly to inspect or to place joints by hand."
+    :path "docs/manual/reference/en/joint-zone.md"}
+
    "largest-face"
    {:name "largest-face"
     :category "faces"
@@ -1001,6 +1019,15 @@
     :signature "(lay-flat mesh)\n(lay-flat mesh target)\n(lay-flat mesh path)\n(lay-flat mesh path mark)"
     :description "Rotate a mesh so that one of its faces ends up flush with the world XY plane, then re-center the result at the origin. Designed for preparing a model for 3D-print export: a slicer expects the model sitting on a flat bed, and `lay-flat` is the explicit step to put it there without re-modelling."
     :path "docs/manual/reference/en/lay-flat.md"}
+
+   "layout-anchors"
+   {:name "layout-anchors"
+    :category "positioning-assembly"
+    :status "stable"
+    :since ""
+    :signature "(layout-anchors piece anchor & {:keys [inset spacing n seed prefix]})"
+    :description "Propose where the joints go on a cut face. Returns a map of **anchors** `{:pin-1 pose :pin-2 pose …}` lying on the plane of `anchor`, with its heading and up, spread evenly inside the admissible zone (see `joint-zone`) by Lloyd relaxation (`spread-points`). It measures and suggests; it builds nothing."
+    :path "docs/manual/reference/en/layout-anchors.md"}
 
    "line-visibility"
    {:name "line-visibility"
@@ -1377,7 +1404,7 @@
     :status "stable"
     :since ""
     :signature "(on-anchors target [combine-mode] pattern [:align] body ...)"
-    :description "Iterate over the anchors of a path or mesh and evaluate a body per matching anchor, with the turtle positioned at that anchor. Each clause pairs a **pattern** with a **body**; for every anchor, clauses are tested in order and the first matching clause's body runs (no fallthrough). The body is evaluated inside an implicit `(turtle :pose <anchor-pose> body)` scope, so turtle primitives (`f`, `th`, `attach`, `cyl`, …) operate relative to the anchor."
+    :description "The target can also be a **bare anchor map** `{name pose …}`, such as the one `layout-anchors` returns: it is used as-is."
     :path "docs/manual/reference/en/on-anchors.md"}
 
    "out"
@@ -2208,6 +2235,15 @@
     :description "Macro. Build a 2D shape from turtle-style movements. Inside the body a local 2D turtle starts at the origin facing `+X`; only `f` (forward) and `th` (turn in plane) are available. The contour is automatically closed back to the starting point."
     :path "docs/manual/reference/en/shape.md"}
 
+   "shape-area"
+   {:name "shape-area"
+    :category "2d-shapes"
+    :status "stable"
+    :since ""
+    :signature "(shape-area shape)"
+    :description "Area of a 2D shape: its outer contour minus its holes. Always ≥ 0. (`area` is the different, mesh-face measure.)"
+    :path "docs/manual/reference/en/shape-area.md"}
+
    "shape-bridge"
    {:name "shape-bridge"
     :category "2d-shapes"
@@ -2279,6 +2315,15 @@
     :signature "(shape-offset shape delta)\n(shape-offset shape delta & {:keys [join-type]})"
     :description "Expand or contract a 2D shape's outline by a fixed distance. Positive `delta` grows the contour outward; negative `delta` shrinks it inward. Implemented with Clipper2; holes are offset in the opposite direction so hollow shapes thicken or thin as expected. Does not modify turtle state."
     :path "docs/manual/reference/en/shape-offset.md"}
+
+   "shape-offset-all"
+   {:name "shape-offset-all"
+    :category "2d-shapes"
+    :status "stable"
+    :since ""
+    :signature "(shape-offset-all shape delta)\n(shape-offset-all shape delta & {:keys [join-type]})"
+    :description "Like `shape-offset`, but returns a **vector** of shapes, one per region. A negative delta can split a shape at a neck or erase an island entirely; `shape-offset` keeps only the largest survivor, this keeps them all — `[]` when nothing survives. Slivers under a thousandth of the input area (round-join artefacts along a coarse contour) are dropped."
+    :path "docs/manual/reference/en/shape-offset-all.md"}
 
    "shape-perimeter"
    {:name "shape-perimeter"
@@ -2450,6 +2495,15 @@
     :signature "(split-tree result)"
     :description "Turn a `mesh-split` composite into a map of **named pieces** — `{:piece-1 … :piece-2 … :piece-3 …}` — numbered in cut order, so `:piece-N` is the Nth piece detached and the last key is the final remaining piece."
     :path "docs/manual/reference/en/split-tree.md"}
+
+   "spread-points"
+   {:name "spread-points"
+    :category "2d-shapes"
+    :status "stable"
+    :since ""
+    :signature "(spread-points shape n)\n(spread-points shape n & {:keys [seed iterations]})"
+    :description "`n` points spread evenly inside a 2D shape, holes respected: deterministic seeds relaxed by Lloyd's algorithm into a centroidal Voronoi layout, so every point is as far as it can be from its neighbours and from the boundary. On an L the points migrate into both arms, on a ring they spread along it, on a long strip they line up. A point that still ends up outside the material (one point on a C: the centroid is in the void) is replaced by the shape's `deepest-point`. Returns a vector of `[x y]`."
+    :path "docs/manual/reference/en/spread-points.md"}
 
    "squash"
    {:name "squash"
