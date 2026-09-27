@@ -1734,6 +1734,17 @@ cut and subtract from both pieces with coinciding holes. `joint-zone` returns th
 zone itself; islands too narrow for the inset are reported in the result's
 `:layout` metadata. Nothing is built automatically.
 
+**Seeing the joint — `mesh-board` assembly views.** `mesh-board` is one directive
+over a set of named meshes plus views; the two-solid comparison is the pair case.
+`(mesh-board {:A A :B B :pins pins} {:solid true :explode 30 :views [[:section :cut
+:offset 8] [:intersection :B :pins]]})`: `:solid` draws the elements as translucent
+solids (hiding a registered original of the same name and geometry for that
+evaluation), `:explode d` moves each element away from its cut faces (elements without
+cut anchors stay), `[:section at :offset d]` opens a window with the set cut by that
+anchor's plane (heading = normal, as everywhere) slid by `d` — under `tweak` a live
+slider — and `[:intersection a b]`/`[:missing a b]`/`[:excess a b]` a boolean window
+between two named elements. View only; the value is returned unchanged.
+
 **Composite form — cutting at every mark of a path.** `mesh-split` also
 accepts a path, guillotine-style: one cut per `(mark …)`, right-nesting each
 result's `:ahead` into the next cut:

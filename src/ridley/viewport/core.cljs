@@ -2517,10 +2517,21 @@
   (when (and @scaffolds-visible (seq scaffolds))
     (let [group (THREE/Group.)]
       (doseq [scaffold-data scaffolds]
-        (when-let [wf (create-wireframe-mesh scaffold-data)]
-          (.add group wf))
-        (when-let [cm (create-scaffold-collision-mesh scaffold-data)]
-          (.add group cm)))
+        (if (:scaffold-solid? scaffold-data)
+          ;; mesh-board :solid (brief-mesh-board-assembly.md Parte 1): a
+          ;; translucent solid in the leaf's own color; depthWrite off so the
+          ;; pins inside the halves stay visible through them. Raycastable as
+          ;; is, so no separate collision mesh.
+          (when-let [^js solid (create-three-mesh scaffold-data)]
+            (let [^js mat (.-material solid)]
+              (set! (.-transparent mat) true)
+              (set! (.-depthWrite mat) false))
+            (.add group solid))
+          (do
+            (when-let [wf (create-wireframe-mesh scaffold-data)]
+              (.add group wf))
+            (when-let [cm (create-scaffold-collision-mesh scaffold-data)]
+              (.add group cm)))))
       (when (pos? (.-length (.-children group)))
         (set! (.-name group) "mesh-board-scaffolds")
         (reset! scaffolds-object group)

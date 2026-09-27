@@ -844,6 +844,8 @@ Each cut also leaves an anchor on both pieces, named `:cut` here and after the m
 
 When the face is wide, one pin is not enough. `layout-anchors` measures the face and proposes where the joints go: `(layout-anchors (:behind halves) :cut :inset 5 :spacing 15)` returns a map of anchors on the cut plane, spread evenly inside the face shrunk by the inset (pin radius plus wall, which you declare), one every 15 units or so. The anchors are world poses, so `(on-anchors L "pin" :align (cyl 3 10))` builds pins that straddle the cut, and subtracting them from both pieces gives holes that coincide. It proposes; you build.
 
+The joint is hidden inside the material, so `mesh-board` has views for it: `(mesh-board {:A A :B B :pins pins} {:solid true :explode 30 :views [[:section :cut] [:intersection :B :pins]]})` shows the pieces as translucent solids pulled apart along their cut faces, the pins staying put, plus a window with the cut face and every pin's cross-section on it, and one with the pin/piece interference. `[:section :cut :offset 8]` slides the plane into the piece; under `tweak` the offset becomes a slider.
+
 ### Multiple cuts: a path with marks
 
 To cut several times in one pass you use a path with `mark`s: each mark is a cut plane, in the order it appears along the path.

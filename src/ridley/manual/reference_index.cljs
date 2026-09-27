@@ -1178,8 +1178,8 @@
     :category "mesh-operations"
     :status "stable"
     :since ""
-    :signature "(mesh-board t)\n(mesh-board t {:only [:piece-2 :piece-3]})\n(mesh-board reference candidate)\n(mesh-board reference candidate {:views [:intersection :missing :excess] :ghost false :label \"…\"})"
-    :description "Display or compare mesh scaffold(s) — never part of the scene registry, never named, never pickable, never included in export. `mesh-board` is a display DIRECTIVE, not a transformation: it always returns its **first argument unchanged**, so it composes cleanly in a threading pipeline (`(-> t (attach (f 10)) (mesh-board))`) without altering what the rest of the program computes with."
+    :signature "(mesh-board t)\n(mesh-board t {:only [:piece-2 :piece-3]})\n(mesh-board t {:solid true :opacity 0.35 :explode 30 :views [view …] :section at :anchors L :label \"…\"})\n(mesh-board reference candidate)\n(mesh-board reference candidate {:views [view …] :ghost false :label \"…\"})"
+    :description "Display a set of named meshes and views on them — never part of the scene registry, never named, never pickable, never included in export. `mesh-board` is a display DIRECTIVE, not a transformation: it always returns its **first argument unchanged**, so it composes cleanly in a threading pipeline (`(-> t (attach (f 10)) (mesh-board))`) without altering what the rest of the program computes with."
     :path "docs/manual/reference/en/mesh-board.md"}
 
    "mesh-components"

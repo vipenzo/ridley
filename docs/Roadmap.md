@@ -863,9 +863,39 @@ in una striscia larga 10, perni sovrapposti, `concat-meshes` non manifold. Ora
 `:spacing` è una GARANZIA (il numero scende finché la coppia più vicina non
 sta a ≥0.9·spacing; `:min-distance` nei metadati), avviso sotto 2·inset; e gli
 avvisi passano da `state/capture-println`, senza cui non arrivavano al pannello.
-Prossimo: le giunzioni a mano di
-Vincenzo sui pezzi veri; poi, se la scrittura regge, si vede se serve un
-contratto.
+*Terza fetta FATTA (2026-09-25): vedere la cucitura.* Vincenzo ha proposto una
+modale che registri i pezzi e li mostri nascosti/trasparenti/esplosi; discussione:
+non scrive nel sorgente (non è `edit-*`) e non deve registrare — è un visore, e
+Ridley ne ha uno: `mesh-board` guadagna `:solid`/`:opacity` (scaffali solidi
+traslucidi, l'originale registrato omonimo viene nascosto per quell'eval),
+`:explode d` (via dalle facce di taglio, lungo gli anchor `:cut`; i perni fermi;
+segno misurato al primo giro: le metà si scambiavano), `:section` (finestra PiP
+con l'assieme tagliato dal piano che contiene l'asse dell'anchor, un colore per
+pezzo; primo giro «indecifrabile» per Vincenzo: camera che seguiva il viewport,
+metà VICINE mostrate — cioè la faccia esterna, non quella tagliata — e il
+fantasma dell'intero sopra; ora metà lontane e niente fantasma: perno, foro e
+gioco in una figura sola. La camera fissa lungo la normale, provata, è stata
+rifiutata da Vincenzo il 27/9 — «non so come ruotarla, quando seguiva la camera
+non era un difetto» — e la finestra torna a seguire il viewport; il supporto
+`:view` in inset.cljs resta disponibile. Secondo rilievo dello stesso giorno: il
+piano «che contiene l'asse» era un'invenzione contro la convenzione heading =
+normale; ora `:section :cut` è la faccia di taglio con la sezione di tutti i
+perni). Addendum del 27/9, rilievo di Vincenzo: `mesh-board` era diventata due
+funzioni sotto un nome (confronto a due, assieme a N); UNIFICATA — un insieme di
+mesh nominate più viste, il confronto è il caso a due: `:views` prende
+`[:intersection a b]` tra elementi nominati (interferenza perno-pezzo
+sull'assieme) e `[:section at :offset d]` anche sul confronto; `:offset` fa
+scorrere il piano, con `tweak` diventa slider (per la baionetta; verificato: la
+sezione scorre a ogni valore; è servito rendere ricorsivo il `data-value?` di
+tweak, che inlinava la mappa dei pezzi con 38.482 «letterali»). Le tre forme
+di ieri invariate (etichette, chiavi, fedeltà). Brief
+`dev-docs/brief-mesh-board-assembly.md`. Collaudato su tenone e
+spina di `examples/joints.clj` (file di Vincenzo, non committato): interferenza
+del tenone = vuoto. Trovato lì: `(apply mesh-union …)` nella baionetta non può
+funzionare, `mesh-union` è una macro. Resta il gate 7 del brief: se rivalutare per
+cambiare vista è scomodo, una sessione a tasti sopra queste viste. Prossimo: le
+giunzioni a mano di Vincenzo sui pezzi veri; poi, se la scrittura regge, si vede
+se serve un contratto.
 
 ## Parte I — Breve termine
 
