@@ -20,10 +20,12 @@
 ;; solo dall'altro lato. Cosi' nessun helper deve ragionare sul verso
 ;; dell'heading, e le stesse primitive servono per :a e per :b.
 ;;
-;; Stato (2026-09-27): tenon, dowel, bayonet e thread verificati allo
-;; schermo da Vincenzo con le sezioni di mesh-board (thread: sense 1 e'
-;; destrorso). Nessuno e' ancora stato STAMPATO: giochi e tenuta della
-;; baionetta si giudicano solo sul pezzo.
+;; Stato (2026-09-28): tenon, dowel, bayonet e thread verificati allo
+;; schermo con le sezioni di mesh-board; bayonet STAMPATA (t 0.3, cubo da
+;; 30: innesto facile, cubo ricostruito); thread STAMPATO: t 0.25 non si
+;; avvita, t 0.5 si avvita — da cui il gioco radiale separato (:radial).
+;; Uso: attiva la libreria nel pannello e chiama joints/tenon, joints/dowel,
+;; joints/bayonet, joints/thread. Ogni helper ritorna {:a :b :extras}.
 
 (defn deg->rad [d] (* d (/ PI 180.0)))
 
@@ -116,16 +118,21 @@
 (defn thread
   "Filetto a sezione quadra. Maschio su :a: nucleo di raggio r con dente
    di altezza h; femmina su :b: foro filettato. l = lunghezza totale del
-   maschio (meta' sporge), t gioco per lato.
+   maschio (meta' sporge), t gioco sui FIANCHI del dente (per lato).
    opts: :pitch 2 passo, :h 1 altezza del dente, :sense 1 destrorso
-   (verificato allo schermo 2026-09-27), -1 sinistrorso.
+   (verificato allo schermo 2026-09-27), -1 sinistrorso,
+   :radial 0.25 gioco radiale (foro e cresta del dente), separato da t:
+   stampato 2026-09-28 con t 0.25 il filetto non si avvitava, con t 0.5
+   si avvitava ma i blocchi restavano sfasati di ~0.5 mm — un dente a
+   fianchi dritti non ricentra, quindi il raggio tiene il gioco stretto
+   della baionetta (0.25-0.3) e solo i fianchi prendono quello largo.
    L'elica e' una curva a curvatura e torsione costanti, quindi si scrive
    con i soli comandi che extrude segue: (f ds) (th k*ds) (tr tau*ds) —
    un (u dz) per passo NON avanza (2026-09-27: extrude costruisce il
    binario dai soli tratti f e il dente usciva un anello piatto).
    Costruita a cavallo del piano come tutto il resto: i giri che cadono
    dentro :a sono un no-op per l'unione."
-  [m r l t & {:keys [pitch h sense] :or {pitch 2 h 1 sense 1}}]
+  [m r l t & {:keys [pitch h sense radial] :or {pitch 2 h 1 sense 1 radial 0.25}}]
   (let [{a :ahead b :behind} (mesh-split m)
         n      32                              ; passi per giro
         w      (* 0.5 pitch)                   ; larghezza assiale del dente
@@ -148,56 +155,10 @@
         ;; (tv alpha) inclina l'heading dell'angolo d'elica.
         ridge  (turtle (tv 90) (u (* sense (- (/ l 2)))) (rt r) (tv alpha)
                        (extrude (rect (* 2 h) w) (helix r)))
-        groove (turtle (tv 90) (u (* sense (- (/ l 2)))) (rt (+ r t)) (tv alpha)
-                       (extrude (rect (* 2 h) (+ w t t)) (helix (+ r t))))
+        groove (turtle (tv 90) (u (* sense (- (/ l 2)))) (rt (+ r radial)) (tv alpha)
+                       (extrude (rect (* 2 h) (+ w t t)) (helix (+ r radial))))
         core   (cyl r l)
-        bore   (cyl (+ r t) (+ l t t))]
+        bore   (cyl (+ r radial) (+ l t t))]
     {:a (mesh-union a core ridge)
      :b (mesh-difference b bore groove)
      :extras []}))
-
-;; ---------- esempi d'uso (da incollare nell'editor, non qui) ----------
-(comment
-  (def halves (mesh-split (box 40 60 80)))
-  (def L (layout-anchors (:behind halves) :cut :inset 5 :spacing 10))
-
-
-  ; pins
-  (register pins (on-anchors L "pin" :align (cyl 3 10)))
-  (register B (mesh-difference (:behind halves) pins))
-  (register A (mesh-difference (:ahead halves) pins))
-  (mesh-board {:A A :B B :pins pins} {:solid true :views [[:section :cut :offset 3]]})
-
-
-
-  ; tenon
-  (def thing (box 40 40 40))
-  (def ab (tenon thing 5 20 0.2))
-  (register A (attach (:a ab)))
-  (register B (attach (:b ab)))
-  (mesh-board {:A A,:B B} {:solid true,:views [[:section :cut :offset 3]]})
-
-
-  ; dowel
-  (def ab (dowel (box 40 40 40) 5 20 0.2))
-  (register A (attach (:a ab)))
-  (register B (attach (:b ab)))
-  (register C (first (:extras ab)))
-  (mesh-board {:A A,:B B :pin C} {:solid true,:views [[:section :cut :offset 3]]})
-
-  ;bayonet
-  (def ab (bayonet (box 40 40 40) 8 12 0.3))
-  (register A (attach (:a ab)))
-  (register B (attach (:b ab)))
-  (mesh-board {:A A,:B B} {:solid true,:views [[:section :cut :offset 3]]})
-
-  (u 100)
-  ;thread
-  (def ab (thread (box 40 40 40) 8 24 0.25 :pitch 2.5))
-  (register A4 (attach (:a ab) (rt -40)))
-  (register B4 (attach (:b ab) (rt 40)))
-
-
-  (tweak (mesh-board {:A A :B B :pins pins} {:solid true :views [[:section :cut :offset 3]]}))
-
-  )

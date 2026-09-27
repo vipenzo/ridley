@@ -86,3 +86,21 @@ Without arguments `lay-flat` uses `:bottom`: it takes the largest bottom face an
 When the print face is not aligned to a cardinal direction, you can mark it as an anchor with `attach-path` and pass the anchor's name to `lay-flat` (`(lay-flat :part :print-face)`): the anchor's plane is laid flat, whatever its orientation.
 
 Two things to remember. `lay-flat` recenters the piece on the origin: if you need to keep a precise corner at `[0 0 0]`, follow it with a `translate`. And it operates on the vertices, not on the `:creation-pose`, which stays at the construction origin; if you need to re-anchor it there is `reset-creation-pose`. For meshes without face groups, like the results of a boolean, the face groups are deduced automatically by coplanar adjacency and the largest face is chosen from that grouping.
+
+## 17.4 Printable joints
+
+A piece too big for the bed gets cut with `mesh-split` and printed in parts; the parts need something to hold them together again. The built-in **joints** library (activate it in the libraries panel) has four, all built the same way: cut the mesh at the turtle's pose, build the joint on the cut plane straddling it, return `{:a :b :extras}` — `:a` with the male part, `:b` with the female, `:extras` with anything printed separately.
+
+```clojure
+(def ab (joints/bayonet (box 30 30 30) 8 12 0.3))
+(register A (:a ab))
+(register B (:b ab))
+(tweak (mesh-board {:A A :B B} {:solid true :views [[:section :cut :offset 3]]}))
+```
+
+- `joints/tenon` — integral pin and blind hole.
+- `joints/dowel` — a separate pin, holes on both sides; the parts print flat on the cut face.
+- `joints/bayonet` — plug with lugs, L-slots in the bore: insert turned, twist, and the parts come back aligned.
+- `joints/thread` — square thread; flank clearance `t` and radial clearance `:radial` are separate, because on a printer they need different values.
+
+The last argument of each is the clearance, and it is the one number only a print can settle: the bayonet reassembled a cube true at 0.3, the thread needed 0.5 on the flanks. Check a joint before printing with `mesh-board`'s section, sliding the plane through it with `tweak`; for many pins on a wide face, `layout-anchors` (chapter 7.8) places them and `on-anchors` builds them.

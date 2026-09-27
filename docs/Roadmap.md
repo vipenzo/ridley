@@ -892,8 +892,18 @@ di ieri invariate (etichette, chiavi, fedeltà). Brief
 `dev-docs/brief-mesh-board-assembly.md`. Collaudato su tenone e
 spina di `examples/joints.clj` (file di Vincenzo, non committato): interferenza
 del tenone = vuoto. Trovato lì: `(apply mesh-union …)` nella baionetta non può
-funzionare, `mesh-union` è una macro. Resta il gate 7 del brief: se rivalutare per
-cambiare vista è scomodo, una sessione a tasti sopra queste viste. Prossimo: le
+funzionare, `mesh-union` è una macro. Il gate 7 del brief è chiuso da
+`tweak` sull'`:offset` della sezione. **Libreria built-in `joints` (2026-09-28)**:
+le quattro giunzioni di Vincenzo (tenone, spina, baionetta, filetto) sono la
+quinta libreria built-in, con quattro schede nel reference e la sezione 17.4
+delle guide. Stampate: baionetta a t 0.3 perfetta (cubo ricostruito
+allineato); filetto a t 0.25 non si avvita, a 0.5 si avvita ma i blocchi
+restano sfasati di ~0.5 mm — un dente quadro non ricentra, quindi il gioco
+radiale (`:radial`, default 0.25) è separato da quello sui fianchi (`t`);
+prova di stampa con la coppia 0.5/0.25 in corso. Trovato per strada: `extrude`
+non segue le mosse `u` del path (annotato nella scheda), l'elica si scrive con
+f/th/tr a curvatura e torsione costanti. Contratto comune e posizionamento
+automatico sugli anchor di `layout-anchors`: dopo un quinto esempio vero. Prossimo: le
 giunzioni a mano di Vincenzo sui pezzi veri; poi, se la scrittura regge, si vede
 se serve un contratto.
 

@@ -1002,6 +1002,42 @@
     :description "The admissible zone for joints on a cut face: the face's outline(s) shrunk by `:inset`, as a vector of 2D shapes in the anchor's frame (X = right, Y = up), one per island. An island too narrow for the inset disappears, so the vector can be empty. This is the region `layout-anchors` spreads its anchors in; use it directly to inspect or to place joints by hand."
     :path "docs/manual/reference/en/joint-zone.md"}
 
+   "joints-bayonet"
+   {:name "joints-bayonet"
+    :category "positioning-assembly"
+    :status "stable"
+    :since ""
+    :signature "(joints/bayonet m r depth t & {:keys [n lug lr angle sense]})"
+    :description "Part of the built-in **joints** library (activate it in the libraries panel; functions are called with the `joints/` prefix). Every joint cuts the mesh at the turtle's current pose — plane = position, normal = heading, exactly like `mesh-split` — and builds the joint on the joint axis = heading, centred on the position, straddling the cut plane. It returns `{:a mesh :b mesh :extras [mesh …]}`: `:a` is the `:ahead` side and carries the male part, `:b` the `:behind` side with the female part, `:extras` the pieces to print separately."
+    :path "docs/manual/reference/en/joints-bayonet.md"}
+
+   "joints-dowel"
+   {:name "joints-dowel"
+    :category "positioning-assembly"
+    :status "stable"
+    :since ""
+    :signature "(joints/dowel m r l t)"
+    :description "Part of the built-in **joints** library (activate it in the libraries panel; functions are called with the `joints/` prefix). Every joint cuts the mesh at the turtle's current pose — plane = position, normal = heading, exactly like `mesh-split` — and builds the joint on the joint axis = heading, centred on the position, straddling the cut plane. It returns `{:a mesh :b mesh :extras [mesh …]}`: `:a` is the `:ahead` side and carries the male part, `:b` the `:behind` side with the female part, `:extras` the pieces to print separately."
+    :path "docs/manual/reference/en/joints-dowel.md"}
+
+   "joints-tenon"
+   {:name "joints-tenon"
+    :category "positioning-assembly"
+    :status "stable"
+    :since ""
+    :signature "(joints/tenon m r l t)"
+    :description "Part of the built-in **joints** library (activate it in the libraries panel; functions are called with the `joints/` prefix). Every joint cuts the mesh at the turtle's current pose — plane = position, normal = heading, exactly like `mesh-split` — and builds the joint on the joint axis = heading, centred on the position, straddling the cut plane. It returns `{:a mesh :b mesh :extras [mesh …]}`: `:a` is the `:ahead` side and carries the male part, `:b` the `:behind` side with the female part, `:extras` the pieces to print separately."
+    :path "docs/manual/reference/en/joints-tenon.md"}
+
+   "joints-thread"
+   {:name "joints-thread"
+    :category "positioning-assembly"
+    :status "stable"
+    :since ""
+    :signature "(joints/thread m r l t & {:keys [pitch h sense radial]})"
+    :description "Part of the built-in **joints** library (activate it in the libraries panel; functions are called with the `joints/` prefix). Every joint cuts the mesh at the turtle's current pose — plane = position, normal = heading, exactly like `mesh-split` — and builds the joint on the joint axis = heading, centred on the position, straddling the cut plane. It returns `{:a mesh :b mesh :extras [mesh …]}`: `:a` is the `:ahead` side and carries the male part, `:b` the `:behind` side with the female part, `:extras` the pieces to print separately."
+    :path "docs/manual/reference/en/joints-thread.md"}
+
    "largest-face"
    {:name "largest-face"
     :category "faces"
