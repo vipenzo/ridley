@@ -7,7 +7,8 @@
       - Used in generated library source code at eval time
    2. Code generation: generate-library-source
       - Used at import time to parse an STL file and produce library source"
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [ridley.env :as env]))
 
 ;; ============================================================
 ;; Base64 helpers
@@ -256,7 +257,7 @@
 ;; Path-based import (desktop only, SCI binding)
 ;; ============================================================
 
-(def ^:private geo-server-url "http://127.0.0.1:12321")
+(def ^:private geo-server-url (env/geo-server-url))
 
 (defn read-file-bytes-sync
   "Synchronously read a file from disk via the desktop geo_server, returning an

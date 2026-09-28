@@ -38,7 +38,8 @@ a square thread does not self-centre).
 - `r` — core radius.
 - `l` — total male length; half protrudes.
 - `t` — flank clearance per side. **Printed 2026-09-28: 0.25 would not
-  screw in, 0.5 did.**
+  screw in; 0.5 with `:radial` 0.25 screws in and reassembles the cube
+  aligned.**
 - `:pitch` — thread pitch (default `2`).
 - `:h` — tooth height (default `1`).
 - `:sense` — `1` right-handed (verified), `-1` left-handed.

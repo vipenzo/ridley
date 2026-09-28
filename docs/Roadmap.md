@@ -827,6 +827,15 @@ OBJ, fatto).
 
 **Intermezzo (2026-09-14): meshing SDF di regioni schiacciate — FATTO.** `(sdf-torus 28 1)` usciva a perline (4-28 componenti) anche alzando la risoluzione: libfive dimensiona l'ottree dall'asse più corto della regione. `materialize` ora cubifica la regione (`cubify-bounds`, test in `auto_bounds_test`); vale per ogni modello con bounds piatti (anelli, piastre, dischi). Resta il χ=1 sporadico del dual contouring su tubi sottili — difetto di libfive, non nostro; per un toro pulito il `revolve` mesh resta la via.
 
+**Intermezzo (2026-09-28): due Ridley desktop, un solo servizio file — FATTO.**
+Vincenzo: con la release e la build di sviluppo aperte insieme, l'export della
+seconda apriva il pannello file sulla PRIMA. Causa: il geo-server (porta fissa
+12321) della seconda istanza non partiva e la sua WebView parlava in silenzio
+col server dell'altra (era anche la «cartella vuota» del 23/8). Ora ogni
+istanza prende la prima porta libera 12321..12330 e la inietta nella propria
+WebView (`RIDLEY_GEO_PORT`, letta da `env/geo-server-url`, unica fonte per i
+cinque chiamanti). `cargo check` pulito; da provare con due istanze vere.
+
 **RILASCIATA v3.8.0 (2026-09-15) — la gabbia di registrazione.** Tutto il pendente da v3.7.0 (183 commit): gabbia stampabile (`examples/print-cage.clj`, giunti gen 2, chiave, portapezzo) e zero-click (`a`, trattini sul bordo, seme dell'occhio, montaggio che arbitra i gemelli), palcoscenico con gabbia virtuale e ancora a occhio, memoria per-camera della focale, scatta-e-registra, UI in inglese, cap. 19-20 del manuale, fix SDF (regioni schiacciate, attach dalla creation-pose), export 3MF. Rilasciata da `main` come le precedenti; chiusura con `scripts/bump-cask.sh v3.8.0`. La v3.7.0 (2026-08-11, «gli spigoli dichiarati») non era stata annotata qui.
 
 **Fronte APERTO (2026-09-15): GIUNZIONI SUI PEZZI TAGLIATI — prima fetta FATTA,
@@ -900,7 +909,7 @@ delle guide. Stampate: baionetta a t 0.3 perfetta (cubo ricostruito
 allineato); filetto a t 0.25 non si avvita, a 0.5 si avvita ma i blocchi
 restano sfasati di ~0.5 mm — un dente quadro non ricentra, quindi il gioco
 radiale (`:radial`, default 0.25) è separato da quello sui fianchi (`t`);
-prova di stampa con la coppia 0.5/0.25 in corso. Trovato per strada: `extrude`
+la coppia 0.5/0.25 STAMPATA e confermata (si avvita, blocchi allineati). Trovato per strada: `extrude`
 non segue le mosse `u` del path (annotato nella scheda), l'elica si scrive con
 f/th/tr a curvatura e torsione costanti. Contratto comune e posizionamento
 automatico sugli anchor di `layout-anchors`: dopo un quinto esempio vero. Prossimo: le

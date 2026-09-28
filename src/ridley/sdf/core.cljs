@@ -6,7 +6,7 @@
   (:require [ridley.math :as math]
             [ridley.env :as env]))
 
-(def ^:private server-url "http://127.0.0.1:12321")
+(def ^:private server-url (env/geo-server-url))
 
 (def ^:private unavailable-msg
   "SDF functions (sdf-sphere, sdf-box, sdf-blend, …) need the geometry server,
@@ -15,7 +15,7 @@ version. Try the desktop app, or build this shape with the mesh primitives
 (box, cyl, sphere, loft, extrude, …) instead.")
 
 (def ^:private server-down-msg
-  "Couldn't reach the geometry server at http://127.0.0.1:12321. SDF functions
+  "Couldn't reach the geometry server. SDF functions
 need the Rust backend — make sure the desktop app's geometry server is running.")
 
 ;; ── HTTP transport (same pattern as manifold/native) ────────────

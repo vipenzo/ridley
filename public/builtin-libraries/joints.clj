@@ -23,7 +23,8 @@
 ;; Stato (2026-09-28): tenon, dowel, bayonet e thread verificati allo
 ;; schermo con le sezioni di mesh-board; bayonet STAMPATA (t 0.3, cubo da
 ;; 30: innesto facile, cubo ricostruito); thread STAMPATO: t 0.25 non si
-;; avvita, t 0.5 si avvita — da cui il gioco radiale separato (:radial).
+;; avvita, t 0.5 si avvita ma sfasa di 0.5 mm — da cui il gioco radiale
+;; separato (:radial 0.25): con t 0.5 / radial 0.25 STAMPATO e allineato.
 ;; Uso: attiva la libreria nel pannello e chiama joints/tenon, joints/dowel,
 ;; joints/bayonet, joints/thread. Ogni helper ritorna {:a :b :extras}.
 

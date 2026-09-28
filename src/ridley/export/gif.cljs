@@ -8,7 +8,7 @@
   (:require [ridley.env :as env]
             [ridley.export.animation :as capture]))
 
-(def ^:private geo-server-url "http://127.0.0.1:12321")
+(def ^:private geo-server-url (env/geo-server-url))
 
 ;; ============================================================
 ;; Lazy gif.js loader

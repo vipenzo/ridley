@@ -10,7 +10,7 @@
    this module only deals with user-added customs."
   (:require [ridley.env :as env]))
 
-(def ^:private geo-server-url "http://127.0.0.1:12321")
+(def ^:private geo-server-url (env/geo-server-url))
 
 (defonce ^:private fonts-dir-cache (atom nil))
 

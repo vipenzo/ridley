@@ -1157,7 +1157,7 @@ Va detto subito che ridley-desktop non è una versione desktop di Ridley, ma Rid
 
 Quando l'utente apre l'app desktop in produzione, vivono due processi: il binario Tauri Rust (che ospita la WebView, e al suo interno un thread per il geo-server HTTP), e la WebView stessa come sotto-processo gestito dal sistema operativo. In sviluppo si aggiunge un terzo processo, `npm run dev`, child del processo Tauri, che fa da watcher shadow-cljs con http server su 9000.
 
-Il geo-server è un loop `tiny_http` su `127.0.0.1:12321`, avviato in un thread dedicato dentro lo stesso processo Tauri. La WebView gli parla via XMLHttpRequest sincrono. Non passa per l'IPC nativo di Tauri (`invoke`/`emit`), non passa per WebSocket, non passa per custom URI scheme. Il canale è uno solo: HTTP localhost.
+Il geo-server è un loop `tiny_http` su `127.0.0.1:12321` — o sulla prima porta libera fino a 12330, quando un'altra Ridley tiene la 12321: la porta scelta viene iniettata nella WebView come `window.RIDLEY_GEO_PORT` dallo script di inizializzazione, e il CLJS la legge da `env/geo-server-url` (prima, con la porta fissa, una seconda istanza parlava in silenzio con il server della prima e il pannello di salvataggio si apriva sull'altra finestra, 2026-09-28) — avviato in un thread dedicato dentro lo stesso processo Tauri. La WebView gli parla via XMLHttpRequest sincrono. Non passa per l'IPC nativo di Tauri (`invoke`/`emit`), non passa per WebSocket, non passa per custom URI scheme. Il canale è uno solo: HTTP localhost.
 
 ### 9.2 Il bundle unico e `RIDLEY_ENV`
 
