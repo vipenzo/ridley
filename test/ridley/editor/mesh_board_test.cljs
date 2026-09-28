@@ -308,3 +308,28 @@
       (let [printed (state/get-print-output)]
         (is (re-find #"gancio-sx" printed))
         (is (re-find #"fedeltà" printed))))))
+
+;; ── addendum 2026-09-27: vector view ids (named pairs, sections) ──────────
+;; The bug this pins: reset-compare-views! built its inset keys with `name`,
+;; which throws on a vector id — every full eval after a [:section …] view
+;; failed with "Doesn't support name: [:section :cut :offset -4.87]".
+
+(deftest mesh-board-named-pair-view-tracks-vector-id-and-resets
+  (reset-accum!)
+  (let [t {:a (prim/box-mesh 4 4 4) :b (prim/box-mesh 4 4 4)}]
+    (is (= t (mb/mesh-board t {:views [[:missing :a :b]] :label "np"})))
+    (is (= #{[:missing :a :b]} (get @@#'mb/active-views "np")))
+    (mb/reset-compare-views!)
+    (is (empty? @@#'mb/active-views))))
+
+(deftest mesh-board-bare-boolean-view-on-assembly-is-an-error
+  (reset-accum!)
+  (let [t {:a (prim/box-mesh 4 4 4) :b (prim/box-mesh 4 4 4)}]
+    (is (thrown-with-msg? js/Error #"needs two names"
+                          (mb/mesh-board t {:views [:missing]})))))
+
+(deftest mesh-board-view-key-shapes
+  (is (= "mesh-board:x:missing" (#'mb/view-key "x" :missing)))
+  (is (= "mesh-board:x:missing:a:b" (#'mb/view-key "x" [:missing :a :b])))
+  (is (= "mesh-board:x:section:cut:8" (#'mb/view-key "x" [:section :cut :offset 8])))
+  (is (= "mesh-board:x:section:plane" (#'mb/view-key "x" [:section {:position [0 0 0] :heading [1 0 0] :up [0 0 1]}]))))

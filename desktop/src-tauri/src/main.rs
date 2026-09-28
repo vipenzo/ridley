@@ -10,7 +10,15 @@ use std::sync::Mutex;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
-const INIT_SCRIPT: &str = r#"window.RIDLEY_ENV = "desktop";"#;
+/// Injected before any app JS: the environment, and the port of THIS
+/// process's geo-server (0 when none could be bound, so requests fail
+/// loudly instead of reaching another Ridley's server).
+fn init_script(geo_port: Option<u16>) -> String {
+    format!(
+        r#"window.RIDLEY_ENV = "desktop"; window.RIDLEY_GEO_PORT = {};"#,
+        geo_port.unwrap_or(0)
+    )
+}
 
 /// Project root, computed at compile time from CARGO_MANIFEST_DIR.
 fn project_root() -> std::path::PathBuf {
@@ -59,8 +67,10 @@ fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
 fn main() {
     let root = project_root();
 
-    // Start local HTTP server for synchronous geometry ops
-    geo_server::start();
+    // Start local HTTP server for synchronous geometry ops; the port it got
+    // is handed to the webview, see init_script.
+    let geo_port = geo_server::start();
+    let init = init_script(geo_port);
 
     // In dev mode, spawn frontend dev server and wait for it
     #[cfg(debug_assertions)]
@@ -79,13 +89,13 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .setup(|app| {
+        .setup(move |app| {
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Ridley")
                 .inner_size(1280.0, 800.0)
                 .resizable(true)
                 .fullscreen(false)
-                .initialization_script(INIT_SCRIPT)
+                .initialization_script(&init)
                 .build()?;
             // Restore previous window position/size/maximized/fullscreen.
             // First run uses the defaults above; subsequent runs honor

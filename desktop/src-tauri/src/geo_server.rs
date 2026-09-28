@@ -313,26 +313,43 @@ fn handle_write_file(request: &mut tiny_http::Request) -> Result<String, String>
     Ok(format!("{{\"written\":{}}}", bytes.len()))
 }
 
-pub fn start() {
-    thread::spawn(|| {
-        // NOT expect(). This thread is detached: a panic here killed it alone,
-        // the window opened as usual, and every file operation returned nothing
-        // for the rest of the run — a folder of photos read as an empty session
-        // (2026-08-23). Binding fails for one reason in practice, and it is one
-        // the user can act on: another Ridley already holds the port.
-        let server = match Server::http(format!("127.0.0.1:{}", PORT)) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("geo-server: cannot listen on 127.0.0.1:{}: {}", PORT, e);
-                eprintln!(
-                    "geo-server: another Ridley is probably already open. THIS window \
-                     will not be able to read or write files — quit the other one and \
-                     reopen it."
-                );
-                return;
+/// How many ports above PORT to try when PORT is taken (another Ridley).
+const PORT_TRIES: u16 = 10;
+
+/// Bind the server and return the port it listens on, or None if none of
+/// PORT..PORT+PORT_TRIES could be bound. The port goes into the webview's
+/// initialization script (main.rs) so THIS window talks to ITS OWN server:
+/// with a fixed port, a second Ridley silently sent every request — file
+/// panels included — to the first one, and the save dialog opened on the
+/// other window (2026-09-28).
+pub fn start() -> Option<u16> {
+    // NOT expect(). Binding used to happen inside the detached thread: a
+    // panic there killed it alone, the window opened as usual, and every
+    // file operation returned nothing for the rest of the run (2026-08-23).
+    let mut bound = None;
+    for port in PORT..PORT + PORT_TRIES {
+        match Server::http(format!("127.0.0.1:{}", port)) {
+            Ok(s) => {
+                bound = Some((port, s));
+                break;
             }
-        };
-        eprintln!("geo-server: listening on http://127.0.0.1:{}", PORT);
+            Err(e) => eprintln!("geo-server: cannot listen on 127.0.0.1:{}: {}", port, e),
+        }
+    }
+    let (port, server) = match bound {
+        Some(b) => b,
+        None => {
+            eprintln!(
+                "geo-server: no free port in {}..{} — THIS window will not be able \
+                 to read or write files.",
+                PORT,
+                PORT + PORT_TRIES
+            );
+            return None;
+        }
+    };
+    eprintln!("geo-server: listening on http://127.0.0.1:{}", port);
+    thread::spawn(move || {
 
         let cors = Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap();
         let cors_headers =
@@ -537,4 +554,5 @@ pub fn start() {
             let _ = request.respond(resp);
         }
     });
+    Some(port)
 }

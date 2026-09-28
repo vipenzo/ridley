@@ -827,7 +827,102 @@ OBJ, fatto).
 
 **Intermezzo (2026-09-14): meshing SDF di regioni schiacciate — FATTO.** `(sdf-torus 28 1)` usciva a perline (4-28 componenti) anche alzando la risoluzione: libfive dimensiona l'ottree dall'asse più corto della regione. `materialize` ora cubifica la regione (`cubify-bounds`, test in `auto_bounds_test`); vale per ogni modello con bounds piatti (anelli, piastre, dischi). Resta il χ=1 sporadico del dual contouring su tubi sottili — difetto di libfive, non nostro; per un toro pulito il `revolve` mesh resta la via.
 
+**Intermezzo (2026-09-28): due Ridley desktop, un solo servizio file — FATTO.**
+Vincenzo: con la release e la build di sviluppo aperte insieme, l'export della
+seconda apriva il pannello file sulla PRIMA. Causa: il geo-server (porta fissa
+12321) della seconda istanza non partiva e la sua WebView parlava in silenzio
+col server dell'altra (era anche la «cartella vuota» del 23/8). Ora ogni
+istanza prende la prima porta libera 12321..12330 e la inietta nella propria
+WebView (`RIDLEY_GEO_PORT`, letta da `env/geo-server-url`, unica fonte per i
+cinque chiamanti). `cargo check` pulito; da provare con due istanze vere.
+
+**RILASCIATA v3.9.0 (2026-09-28) — le giunzioni.** Tutto il pendente da v3.8.0:
+anchor di taglio su `mesh-split`, `layout-anchors` (Voronoi/Lloyd, spacing come
+garanzia), `mesh-board` unificata con solidi, esploso, sezione a scorrimento e
+interferenza fra elementi nominati, libreria built-in `joints` (tenone, spina,
+baionetta, filetto — baionetta e filetto stampati e funzionanti), il geo-server
+su porta libera per due istanze desktop. Rilasciata da `main`, chiusura con
+`scripts/bump-cask.sh v3.9.0`.
+
 **RILASCIATA v3.8.0 (2026-09-15) — la gabbia di registrazione.** Tutto il pendente da v3.7.0 (183 commit): gabbia stampabile (`examples/print-cage.clj`, giunti gen 2, chiave, portapezzo) e zero-click (`a`, trattini sul bordo, seme dell'occhio, montaggio che arbitra i gemelli), palcoscenico con gabbia virtuale e ancora a occhio, memoria per-camera della focale, scatta-e-registra, UI in inglese, cap. 19-20 del manuale, fix SDF (regioni schiacciate, attach dalla creation-pose), export 3MF. Rilasciata da `main` come le precedenti; chiusura con `scripts/bump-cask.sh v3.8.0`. La v3.7.0 (2026-08-11, «gli spigoli dichiarati») non era stata annotata qui.
+
+**Fronte APERTO (2026-09-15): GIUNZIONI SUI PEZZI TAGLIATI — prima fetta FATTA,
+gli anchor di taglio.** Obiettivo: tagliare una mesh e generare le giunzioni
+(spine, tenoni, battute) per rimontare i pezzi stampati. Decisione di Vincenzo:
+nessuna API per le giunzioni finché non esistono esempi scritti a mano; il
+contratto, se mai, si estrae da quelli. Il dato che mancava è ora sulla mesh:
+ogni taglio di `mesh-split` lascia su ENTRAMBI i pezzi un anchor col nome del
+mark (`:cut` per il taglio singolo), posizione sul piano, heading uscente dal
+pezzo, up del taglio; un pezzo porta un anchor per ogni faccia di taglio che lo
+delimita (gli anchor di taglio ereditati e non più propri sono potati — tag
+`:cut true` nella posa), accanto agli anchor utente ereditati. Valore di ritorno
+e codice emesso da `edit-mesh-split` invariati. Brief
+`dev-docs/brief-split-anchors.md`. Trovato al gate: `slice-mesh` sul piano
+esatto della faccia restituisce nulla (piano coincidente); il contorno si legge
+un pelo dentro, `(turtle piece :at :cut (f -0.01) (slice-mesh piece))` —
+candidato a fallback automatico, non deciso.
+
+*Seconda fetta FATTA (2026-09-21): `layout-anchors`.* Vincenzo ha chiesto un
+automatismo che misuri la faccia di taglio e proponga numero e posizione delle
+giunzioni, e ha spinto verso il generico: non «joint-layout» ma `layout-anchors`,
+che divide una faccia in pose ben distribuite e le restituisce come ANCHOR nel
+mondo (`{:pin-1 pose …}`), un solo `:inset` per il bordo (raggio+parete: contano
+solo come somma), `:spacing` per il numero. Posizione via Voronoi/Lloyd
+(`spread-points`, pubblica, estratta da `voronoi-shell` e corretta: cella
+spezzata su forma concava → segue il pezzo che contiene il seme; un solo punto
+su una C → `deepest-point`). Pose nel mondo = niente specchio sul gemello: lo
+stesso `on-anchors` costruisce i perni a cavallo del taglio e i fori coincidono
+(226 mm³ per lato, misurato). `on-anchors`/`anchors`/`turtle :at` accettano una
+mappa nuda di anchor. Brief `dev-docs/brief-joint-layout.md`. `voronoi-shell`
+byte-identica a prima (impronta confrontata). Prova di Vincenzo del 24/9: sotto
+spacing 9 «cose strane» — il conto dall'area metteva due file a zig-zag a 5 mm
+in una striscia larga 10, perni sovrapposti, `concat-meshes` non manifold. Ora
+`:spacing` è una GARANZIA (il numero scende finché la coppia più vicina non
+sta a ≥0.9·spacing; `:min-distance` nei metadati), avviso sotto 2·inset; e gli
+avvisi passano da `state/capture-println`, senza cui non arrivavano al pannello.
+*Terza fetta FATTA (2026-09-25): vedere la cucitura.* Vincenzo ha proposto una
+modale che registri i pezzi e li mostri nascosti/trasparenti/esplosi; discussione:
+non scrive nel sorgente (non è `edit-*`) e non deve registrare — è un visore, e
+Ridley ne ha uno: `mesh-board` guadagna `:solid`/`:opacity` (scaffali solidi
+traslucidi, l'originale registrato omonimo viene nascosto per quell'eval),
+`:explode d` (via dalle facce di taglio, lungo gli anchor `:cut`; i perni fermi;
+segno misurato al primo giro: le metà si scambiavano), `:section` (finestra PiP
+con l'assieme tagliato dal piano che contiene l'asse dell'anchor, un colore per
+pezzo; primo giro «indecifrabile» per Vincenzo: camera che seguiva il viewport,
+metà VICINE mostrate — cioè la faccia esterna, non quella tagliata — e il
+fantasma dell'intero sopra; ora metà lontane e niente fantasma: perno, foro e
+gioco in una figura sola. La camera fissa lungo la normale, provata, è stata
+rifiutata da Vincenzo il 27/9 — «non so come ruotarla, quando seguiva la camera
+non era un difetto» — e la finestra torna a seguire il viewport; il supporto
+`:view` in inset.cljs resta disponibile. Secondo rilievo dello stesso giorno: il
+piano «che contiene l'asse» era un'invenzione contro la convenzione heading =
+normale; ora `:section :cut` è la faccia di taglio con la sezione di tutti i
+perni). Addendum del 27/9, rilievo di Vincenzo: `mesh-board` era diventata due
+funzioni sotto un nome (confronto a due, assieme a N); UNIFICATA — un insieme di
+mesh nominate più viste, il confronto è il caso a due: `:views` prende
+`[:intersection a b]` tra elementi nominati (interferenza perno-pezzo
+sull'assieme) e `[:section at :offset d]` anche sul confronto; `:offset` fa
+scorrere il piano, con `tweak` diventa slider (per la baionetta; verificato: la
+sezione scorre a ogni valore; è servito rendere ricorsivo il `data-value?` di
+tweak, che inlinava la mappa dei pezzi con 38.482 «letterali»). Le tre forme
+di ieri invariate (etichette, chiavi, fedeltà). Brief
+`dev-docs/brief-mesh-board-assembly.md`. Collaudato su tenone e
+spina di `examples/joints.clj` (file di Vincenzo, non committato): interferenza
+del tenone = vuoto. Trovato lì: `(apply mesh-union …)` nella baionetta non può
+funzionare, `mesh-union` è una macro. Il gate 7 del brief è chiuso da
+`tweak` sull'`:offset` della sezione. **Libreria built-in `joints` (2026-09-28)**:
+le quattro giunzioni di Vincenzo (tenone, spina, baionetta, filetto) sono la
+quinta libreria built-in, con quattro schede nel reference e la sezione 17.4
+delle guide. Stampate: baionetta a t 0.3 perfetta (cubo ricostruito
+allineato); filetto a t 0.25 non si avvita, a 0.5 si avvita ma i blocchi
+restano sfasati di ~0.5 mm — un dente quadro non ricentra, quindi il gioco
+radiale (`:radial`, default 0.25) è separato da quello sui fianchi (`t`);
+la coppia 0.5/0.25 STAMPATA e confermata (si avvita, blocchi allineati). Trovato per strada: `extrude`
+non segue le mosse `u` del path (annotato nella scheda), l'elica si scrive con
+f/th/tr a curvatura e torsione costanti. Contratto comune e posizionamento
+automatico sugli anchor di `layout-anchors`: dopo un quinto esempio vero. Prossimo: le
+giunzioni a mano di Vincenzo sui pezzi veri; poi, se la scrittura regge, si vede
+se serve un contratto.
 
 ## Parte I — Breve termine
 

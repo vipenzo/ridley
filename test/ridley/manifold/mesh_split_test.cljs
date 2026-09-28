@@ -777,3 +777,72 @@
               :sliver-report key at all (existing callers unaffected)"
       (let [result (manifold/split-by-plane cube-2 [1 0 0] 0)]
         (is (not (contains? result :sliver-report)))))))
+
+;; ── Cut-face anchors (dev-docs/brief-split-anchors.md) ──────────────────
+;; add-cut-anchor / prune-stale-cut-anchors are pure (no Manifold) and run in
+;; Node; the split-plan wiring is exercised under the WASM gate.
+
+(def ^:private cut-pose {:position [0 0 0] :heading [1 0 0] :up [0 0 1]})
+
+(deftest add-cut-anchor-outward-normal-and-shared-up
+  (testing ":behind keeps the cut heading, :ahead negates it; :up identical;
+            pose tagged :cut true"
+    (let [behind (manifold/add-cut-anchor cube-2 :cut cut-pose false)
+          ahead  (manifold/add-cut-anchor cube-2 :cut cut-pose true)]
+      (is (= {:position [0 0 0] :heading [1 0 0] :up [0 0 1] :cut true}
+             (get-in behind [:anchors :cut])))
+      (is (= {:position [0 0 0] :heading [-1 0 0] :up [0 0 1] :cut true}
+             (get-in ahead [:anchors :cut]))))))
+
+(deftest add-cut-anchor-keeps-inherited-and-overrides-same-name
+  (testing "inherited :foot survives beside :cut; an inherited :cut is replaced"
+    (let [src (assoc cube-2 :anchors {:foot {:position [1 2 3]}
+                                      :cut  {:position [9 9 9] :heading [0 0 1] :up [0 1 0]}})
+          out (manifold/add-cut-anchor src :cut cut-pose false)]
+      (is (= {:position [1 2 3]} (get-in out [:anchors :foot])))
+      (is (= [0 0 0] (get-in out [:anchors :cut :position]))))))
+
+(deftest add-cut-anchor-empty-mesh-untouched
+  (let [empty-mesh {:type :mesh :vertices [] :faces [] :anchors {:foot {:position [1 2 3]}}}]
+    (is (= empty-mesh (manifold/add-cut-anchor empty-mesh :cut cut-pose false)))))
+
+(deftest prune-stale-cut-anchors-drops-only-untouched-cut-faces
+  (testing "a cut anchor whose plane touches no vertex is dropped; one on a
+            face is kept; user anchors are never pruned"
+    (let [m (assoc cube-2 :anchors {:cut-1 {:position [1 0 0] :heading [1 0 0] :up [0 0 1] :cut true}
+                                    :cut-2 {:position [5 0 0] :heading [1 0 0] :up [0 0 1] :cut true}
+                                    :foot  {:position [50 50 50] :heading [0 0 -1] :up [0 1 0]}})
+          out (manifold/prune-stale-cut-anchors m)]
+      (is (= #{:cut-1 :foot} (set (keys (:anchors out))))))))
+
+(deftest mesh-split-single-cut-stamps-cut-anchor-outward
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "(mesh-split m) at the turtle pose: :cut on both halves, normal
+              pointing out of each half, return shape unchanged"
+      (set-turtle-pose! (t/make-turtle))
+      (let [{:keys [behind ahead] :as r} (impl/implicit-mesh-split cube-2)]
+        (is (= #{:behind :ahead} (set (keys r))))
+        (is (= [1 0 0]  (get-in behind [:anchors :cut :heading])))
+        (is (= [-1 0 0] (get-in ahead  [:anchors :cut :heading])))
+        (is (= [0 0 0]  (get-in ahead  [:anchors :cut :position])))))))
+
+(deftest mesh-split-chain-one-anchor-per-bounding-cut-face
+  (if-not (manifold-available?)
+    (is true "Skipped: Manifold WASM not available in node")
+    (testing "two marks: piece-1 has :cut-1, piece-2 has :cut-1 and :cut-2,
+              piece-3 has only :cut-2 (the inherited :cut-1 is pruned) — each
+              named after its mark, no prefix"
+      (set-turtle-pose! (t/make-turtle))
+      (let [block (last (:meshes (-> (t/make-turtle)
+                                     (t/extrude-from-path (shape/rect-shape 20 20)
+                                                          (t/make-path [{:cmd :f :args [30]}])))))
+            p (t/make-path [{:cmd :f :args [10]} {:cmd :mark :args [:cut-1]}
+                            {:cmd :f :args [10]} {:cmd :mark :args [:cut-2]}])
+            {:keys [piece-1 piece-2 piece-3]} (manifold/split-tree (impl/implicit-mesh-split block p))]
+        (is (= #{:cut-1}        (set (keys (:anchors piece-1)))))
+        (is (= #{:cut-1 :cut-2} (set (keys (:anchors piece-2)))))
+        (is (= #{:cut-2}        (set (keys (:anchors piece-3)))))
+        (is (= [1 0 0]  (get-in piece-1 [:anchors :cut-1 :heading])))
+        (is (= [-1 0 0] (get-in piece-2 [:anchors :cut-1 :heading])))
+        (is (= [1 0 0]  (get-in piece-2 [:anchors :cut-2 :heading])))))))

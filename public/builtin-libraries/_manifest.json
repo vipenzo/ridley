@@ -3,6 +3,7 @@
     "puppet",
     "gears",
     "weave",
-    "acquire-plate"
+    "acquire-plate",
+    "joints"
   ]
 }

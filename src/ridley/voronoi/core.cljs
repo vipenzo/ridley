@@ -41,8 +41,11 @@
            js/Number.NEGATIVE_INFINITY js/Number.NEGATIVE_INFINITY]
           points))
 
-(defn- polygon-centroid
-  "Compute centroid of a 2D polygon."
+(def ^:private signed-area-2d clipper/polygon-signed-area)
+
+(defn- vertex-mean
+  "Mean of a polygon's vertices — voronoi-shell's historical 'centroid', kept
+   so a shell with a given seed renders exactly as it always has."
   [points]
   (let [n (count points)]
     (if (zero? n)
@@ -50,20 +53,68 @@
       [(/ (reduce + (map first points)) n)
        (/ (reduce + (map second points)) n)])))
 
-(defn- signed-area-2d
-  "Signed area of 2D polygon. Positive = CCW, Negative = CW."
+(defn- polygon-centroid
+  "Area-weighted centroid of a 2D polygon (the point Lloyd relaxation moves a
+   seed to). Falls back to the vertex mean when the area is degenerate."
   [points]
-  (let [n (count points)]
-    (if (< n 3)
-      0
-      (/ (reduce
-          (fn [sum i]
-            (let [[x1 y1] (nth points i)
-                  [x2 y2] (nth points (mod (inc i) n))]
-              (+ sum (- (* x1 y2) (* x2 y1)))))
-          0
-          (range n))
-         2))))
+  (let [n (count points)
+        a (signed-area-2d points)]
+    (cond
+      (zero? n) [0 0]
+      (< (Math/abs a) 1e-9) (vertex-mean points)
+      :else
+      (let [[cx cy] (reduce (fn [[cx cy] i]
+                              (let [[x1 y1] (nth points i)
+                                    [x2 y2] (nth points (mod (inc i) n))
+                                    w (- (* x1 y2) (* x2 y1))]
+                                [(+ cx (* (+ x1 x2) w)) (+ cy (* (+ y1 y2) w))]))
+                            [0 0] (range n))]
+        [(/ cx (* 6 a)) (/ cy (* 6 a))]))))
+
+(defn- inside-shape?
+  "Point strictly inside a shape: in its outer contour and in none of its holes."
+  [pt shape]
+  (and (clipper/point-in-polygon? pt (:points shape))
+       (not-any? #(clipper/point-in-polygon? pt %) (:holes shape))))
+
+(defn- point-segment-distance [[px py] [[x1 y1] [x2 y2]]]
+  (let [dx (- x2 x1) dy (- y2 y1)
+        l2 (+ (* dx dx) (* dy dy))
+        t (if (< l2 1e-12) 0 (max 0 (min 1 (/ (+ (* (- px x1) dx) (* (- py y1) dy)) l2))))
+        cx (+ x1 (* t dx)) cy (+ y1 (* t dy))]
+    (Math/sqrt (+ (* (- px cx) (- px cx)) (* (- py cy) (- py cy))))))
+
+(defn- contour-segments [pts]
+  (map vector pts (concat (rest pts) [(first pts)])))
+
+(defn- distance-to-boundary
+  "Distance from a point to the nearest edge of the shape (outer or hole)."
+  [pt shape]
+  (reduce min js/Number.POSITIVE_INFINITY
+          (map #(point-segment-distance pt %)
+               (mapcat contour-segments (cons (:points shape) (:holes shape))))))
+
+(defn ^:export deepest-point
+  "The interior point of a shape farthest from its boundary (an approximate
+   pole of inaccessibility, on a 48×48 grid over the bbox). The place for ONE
+   pin on a C or a U, whose centroid falls outside the material."
+  [shape]
+  (let [pts (:points shape)
+        [xmin ymin xmax ymax] (bounding-box pts)
+        steps 48
+        candidates (for [i (range 1 steps) j (range 1 steps)
+                         :let [p [(+ xmin (* (- xmax xmin) (/ i steps)))
+                                  (+ ymin (* (- ymax ymin) (/ j steps)))]]
+                         :when (inside-shape? p shape)]
+                     p)]
+    (if (seq candidates)
+      ;; ties (a rectangle's whole mid-line) break toward the centroid
+      (let [c (polygon-centroid pts)
+            scored (map (fn [p] [p (distance-to-boundary p shape)]) candidates)
+            best (reduce max (map second scored))
+            d2 (fn [[x y]] (+ (* (- x (c 0)) (- x (c 0))) (* (- y (c 1)) (- y (c 1)))))]
+        (apply min-key d2 (map first (filter #(>= (second %) (- best 1e-9)) scored))))
+      (polygon-centroid pts))))
 
 (defn- ensure-cw
   "Ensure points are CW (negative signed area) for hole winding."
@@ -128,9 +179,12 @@
 ;; ============================================================
 
 (defn- generate-seeds
-  "Generate n deterministic seed points inside a shape via rejection sampling."
-  [shape-points n seed]
-  (let [rng (mulberry32 seed)
+  "Generate n deterministic seed points inside a shape via rejection sampling.
+   Accepts a shape map (holes respected) or bare outer points."
+  [shape-or-points n seed]
+  (let [shape (if (map? shape-or-points) shape-or-points {:points shape-or-points})
+        shape-points (:points shape)
+        rng (mulberry32 seed)
         [xmin ymin xmax ymax] (bounding-box shape-points)
         xspan (- xmax xmin)
         yspan (- ymax ymin)]
@@ -142,7 +196,7 @@
         :else
         (let [x (+ xmin (* (rng) xspan))
               y (+ ymin (* (rng) yspan))]
-          (if (clipper/point-in-polygon? [x y] shape-points)
+          (if (inside-shape? [x y] shape)
             (recur (conj seeds [x y]) (inc attempts))
             (recur seeds (inc attempts))))))))
 
@@ -174,9 +228,16 @@
 ;; ============================================================
 
 (defn- lloyd-relax
-  "Relax seed points via Lloyd's algorithm for more uniform cells.
-   Each iteration moves seeds to centroids of their clipped Voronoi cells."
-  [seeds shape-points bounds iterations]
+  "Relax seed points via Lloyd's algorithm for more uniform cells: each
+   iteration moves every seed to the area centroid of its Voronoi cell clipped
+   to the boundary shape. On a concave boundary a clipped cell can fall into
+   several disconnected pieces: the seed follows the piece that CONTAINS it
+   (dev-docs/brief-joint-layout.md Parte 0) — never the largest piece, never
+   the merged centroid, either of which can land outside the material. A seed
+   whose cell vanishes stays put. `boundary` is a shape map (holes respected).
+   `centroid-fn` (default polygon-centroid, area-weighted) is the point a seed
+   moves to; voronoi-shell passes vertex-mean to keep its output unchanged."
+  [seeds boundary bounds iterations & [centroid-fn]]
   (if (<= iterations 0)
     seeds
     (loop [current-seeds seeds
@@ -184,20 +245,50 @@
       (if (>= i iterations)
         current-seeds
         (let [cells (compute-voronoi-cells current-seeds bounds)
-              ;; For each cell: clip to shape, compute centroid
-              boundary-shape (shape/make-shape shape-points {:centered? true})
               new-seeds
               (vec (map-indexed
                     (fn [idx cell]
-                      (if (nil? cell)
-                        (nth current-seeds idx) ;; Keep original if no cell
-                        (let [cell-shape (shape/make-shape cell {:centered? true})
-                              clipped (clipper/shape-intersection cell-shape boundary-shape)]
-                          (if clipped
-                            (polygon-centroid (:points clipped))
-                            (nth current-seeds idx)))))
+                      (let [seed (nth current-seeds idx)]
+                        (if (nil? cell)
+                          seed
+                          (let [cell-shape (shape/make-shape cell {:centered? true})
+                                pieces (clipper/shape-intersection-all cell-shape boundary)
+                                mine (or (some #(when (inside-shape? seed %) %) pieces)
+                                         (when (= 1 (count pieces)) (first pieces)))]
+                            (if mine
+                              ((or centroid-fn polygon-centroid) (:points mine))
+                              seed)))))
                     cells))]
           (recur new-seeds (inc i)))))))
+
+(defn- voronoi-bounds
+  "Bounding box of a shape's outer contour, padded 5% — the box d3 clips the
+   unbounded Voronoi cells to."
+  [shape-points]
+  (let [[xmin ymin xmax ymax] (bounding-box shape-points)
+        margin (* 0.05 (max (- xmax xmin) (- ymax ymin)))]
+    [(- xmin margin) (- ymin margin) (+ xmax margin) (+ ymax margin)]))
+
+(defn ^:export spread-points
+  "N points spread evenly inside a 2D shape (holes respected): deterministic
+   seeds (`:seed`, default 0) relaxed by Lloyd's algorithm (`:iterations`,
+   default 10) into a centroidal Voronoi layout — every point as far as it can
+   be from its neighbours and from the boundary. A point that still ends up
+   outside the material (N = 1 on a C: the centroid is in the void) is replaced
+   by the shape's deepest interior point. Same seed → same points, so a script
+   re-run leaves its pins where they were.
+
+   (spread-points (rect 60 20) 3)
+   (spread-points zone 5 :seed 7 :iterations 20)"
+  [shape n & {:keys [seed iterations] :or {seed 0 iterations 10}}]
+  (if (or (nil? shape) (< n 1) (< (count (:points shape)) 3))
+    []
+    (let [boundary (shape/make-shape (:points shape) (cond-> {:centered? true}
+                                                       (:holes shape) (assoc :holes (:holes shape))))
+          bounds (voronoi-bounds (:points shape))
+          seeds (generate-seeds boundary n seed)
+          relaxed (lloyd-relax seeds boundary bounds iterations)]
+      (mapv #(if (inside-shape? % boundary) % (deepest-point boundary)) relaxed))))
 
 ;; ============================================================
 ;; Cell → hole conversion
@@ -237,14 +328,12 @@
   [input-shape & {:keys [cells wall seed relax resolution]
                   :or {cells 20 wall 1.5 seed 0 relax 2 resolution 16}}]
   (let [shape-points (:points input-shape)
-        ;; Bounding box with margin for Voronoi computation
-        [xmin ymin xmax ymax] (bounding-box shape-points)
-        margin (* 0.05 (max (- xmax xmin) (- ymax ymin)))
-        bounds [(- xmin margin) (- ymin margin)
-                (+ xmax margin) (+ ymax margin)]
-        ;; Generate and relax seeds
-        seeds (generate-seeds shape-points cells seed)
-        seeds (lloyd-relax seeds shape-points bounds relax)
+        bounds (voronoi-bounds shape-points)
+        ;; Generate and relax seeds on the OUTER contour only, as before this
+        ;; module grew spread-points: the shell's holes are its own output.
+        outer-only (shape/make-shape shape-points {:centered? true})
+        seeds (generate-seeds outer-only cells seed)
+        seeds (lloyd-relax seeds outer-only bounds relax vertex-mean)
         ;; Compute final Voronoi cells
         voronoi-cells (compute-voronoi-cells seeds bounds)
         ;; Convert cells to holes

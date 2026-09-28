@@ -37,6 +37,34 @@ Both halves inherit the source mesh's `:creation-pose`, `:material`
 and `:anchors` — the same single-source policy `mesh-hull`/`solidify`
 already use for a single-input operation.
 
+**Cut-face anchors.** Every cut also leaves an anchor on *both* pieces
+it produces, so a joint (a pin, a tenon, a rabbet) can be written once
+and applied from either side:
+
+- name: the mark's own name (`:cut-1` stays `:cut-1`); a single cut at
+  the turtle pose is `:cut`;
+- position: the cut plane's;
+- heading: the plane normal pointing **out** of that piece — so
+  `(on-anchors piece :cut-1 :align (f 10) …)` builds outside the piece,
+  never inside;
+- up: the cut's own up on both pieces, so the face's 2D frame is the
+  same from either side up to the sign of right.
+
+A piece bounded by several cut faces carries one anchor per face (the
+middle piece of a two-mark chain has `:cut-1` and `:cut-2`; the last
+piece only `:cut-2`). Inherited anchors stay alongside; a same-named one
+is overwritten with a console warning. An empty piece gets none. The
+return value is unchanged — the anchors live on the meshes, so code that
+ignores them notices nothing.
+
+To read the cut face's outline, slice a hair *inside* the piece: the
+plane itself coincides with the face, and `slice-mesh` on a coincident
+face returns nothing:
+
+```clojure
+(turtle piece :at :cut-1 (f -0.01) (slice-mesh piece))
+```
+
 `mesh-split` accepts a mesh map, a keyword (registered mesh name), or
 an SDF node (auto-materialized).
 
@@ -215,6 +243,6 @@ reference cards.
 ## See also
 
 - **Related:** `sdf-half-space`, `slice-mesh`, `mesh-diagnose`, `convex?`,
-  `split-parts`, `split-tree`
+  `split-parts`, `split-tree`, `layout-anchors` (joints on a cut face)
 - **Interactive:** `edit-mesh-split` — a modal session for decomposing
   a mesh into pieces by eye instead of computing cut poses by hand

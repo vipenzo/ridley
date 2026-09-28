@@ -840,6 +840,12 @@ Nella forma più semplice, il piano di taglio è la posa corrente della tartarug
 
 `:behind` è la metà che sta dietro l'heading, dal lato del materiale, la stessa convenzione di `sdf-half-space` e di `extrude` (dopo un'estrusione la tartaruga è sulla faccia lontana, col materiale alle spalle). `:ahead` è l'altra metà. Una delle due può essere una mesh vuota se il piano manca il pezzo: è un risultato legittimo, non un errore.
 
+Ogni taglio lascia anche un anchor su entrambi i pezzi, chiamato `:cut` qui e col nome del mark quando c'è un path (`:cut-1` resta `:cut-1`): sta sul piano di taglio, con l'heading che punta *fuori* dal pezzo e l'up del taglio, così una giunzione scritta contro `:cut-1` si applica da entrambi i lati. Un pezzo delimitato da più tagli porta un anchor per ogni faccia di taglio, accanto agli anchor che eredita. Per leggere il contorno della faccia di taglio si affetta un pelo dentro il pezzo — `(turtle piece :at :cut (f -0.01) (slice-mesh piece))` — perché un'affettatura coincidente con una faccia non restituisce nulla.
+
+Quando la faccia è ampia, un perno non basta. `layout-anchors` misura la faccia e propone dove vanno le giunzioni: `(layout-anchors (:behind halves) :cut :inset 5 :spacing 15)` restituisce una mappa di anchor sul piano di taglio, distribuiti uniformemente dentro la faccia ritirata dell'inset (raggio del perno più parete, che dichiari tu), uno ogni 15 unità circa. Gli anchor sono pose nel mondo, quindi `(on-anchors L "pin" :align (cyl 3 10))` costruisce perni a cavallo del taglio, e sottraendoli da entrambi i pezzi i fori coincidono. Propone; costruisci tu.
+
+La giunzione sta dentro il materiale, e `mesh-board` ha le viste per vederla: `(mesh-board {:A A :B B :pins pins} {:solid true :explode 30 :views [[:section :cut] [:intersection :B :pins]]})` mostra i pezzi come solidi traslucidi allontanati lungo le facce di taglio, coi perni fermi, più una finestra con la faccia di taglio e la sezione di tutti i perni sopra, e una con l'interferenza perno-pezzo. `[:section :cut :offset 8]` fa scorrere il piano dentro il pezzo; sotto `tweak` l'offset diventa uno slider.
+
 ### Più tagli: un path con i mark
 
 Per tagliare più volte in una passata si usa un path con dei `mark`: ogni mark è un piano di taglio, nell'ordine in cui compare nel percorso.

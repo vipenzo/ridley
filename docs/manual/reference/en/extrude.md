@@ -76,6 +76,12 @@ trajectory is reused across multiple operations.
 
 ## Notes
 
+- The rail is built from the path's `f` segments and rotations (`th`,
+  `tv`, `tr`, arcs, beziers). Side-steps (`u`, `d`, `rt`, `lt`) recorded in
+  the path do not move the rail — a helix is written with constant
+  curvature and torsion, `(f ds) (th k·ds) (tr τ·ds)`, not with `(u dz)`
+  per step (see `examples/joints.clj`, `thread`).
+
 - The current `joint-mode` setting (`:flat`, `:round`, `:tapered`)
   determines corner geometry on path turns.
 - For shapes with holes (e.g. from `shape-difference` or `voronoi-shell`),

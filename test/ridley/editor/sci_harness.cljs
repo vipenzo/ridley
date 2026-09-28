@@ -324,6 +324,8 @@
        (turtle/resolve-marks @@state/turtle-state-var target)
        (and (map? target) (:vertices target))
        (:anchors target)
+       (map? target)
+       (turtle/named-poses target)
        :else nil))
    'concat-meshes       manifold/concat-meshes
    ;; mesh-union stub: behaves like concat-meshes for testing composite bodies.

@@ -81,10 +81,11 @@
     obj))
 
 (defn- highlight-object
-  [mesh]
-  (THREE/Mesh. (mesh->geometry mesh)
-               (THREE/MeshStandardMaterial. #js {:color highlight-color :metalness 0.2
-                                                 :roughness 0.6 :flatShading true})))
+  ([mesh] (highlight-object mesh highlight-color))
+  ([mesh color]
+   (THREE/Mesh. (mesh->geometry mesh)
+                (THREE/MeshStandardMaterial. #js {:color color :metalness 0.2
+                                                  :roughness 0.6 :flatShading true}))))
 
 (defn- framing-distance
   "Camera distance putting a sphere of `radius` fully in the vertical FOV,
@@ -113,8 +114,8 @@
 ;; ============================================================
 
 (defn- clear-scene-objects!
-  [^js scene {:keys [ghost-obj highlight-obj]}]
-  (doseq [^js obj [ghost-obj highlight-obj]
+  [^js scene {:keys [ghost-obj highlight-obj highlight-objs]}]
+  (doseq [^js obj (concat [ghost-obj highlight-obj] highlight-objs)
           :when obj]
     (.remove scene obj)
     (when-let [g (.-geometry obj)] (.dispose g))
@@ -126,16 +127,25 @@
    instance's camera on the framing sphere around `:center` at `:dist` ×
    `:zoom` (the wheel-adjustable multiplier, 4.4), renders. No-op (cheap)
    when hidden or nothing to frame yet."
-  [^js main-camera {:keys [^js renderer ^js scene ^js camera visible? center dist zoom]}]
+  [^js main-camera {:keys [^js renderer ^js scene ^js camera visible? center dist zoom view]}]
   (when (and visible? center dist)
-    (.copy (.-quaternion camera) (.-quaternion main-camera))
-    ;; the camera looks down its local -Z; "backward" (away from view dir)
-    ;; is local +Z — rotate that into world space to place it.
     (let [d (* dist (or zoom 1.0))
-          back (doto (THREE/Vector3. 0 0 1) (.applyQuaternion (.-quaternion camera)))
           [cx cy cz] center]
-      (.set (.-position camera)
-            (+ cx (* (.-x back) d)) (+ cy (* (.-y back) d)) (+ cz (* (.-z back) d))))
+      (if-let [{:keys [dir up]} view]
+        ;; a FIXED view (mesh-board's section: look along the plane normal at
+        ;; the cut face) — independent of the main camera, so the section
+        ;; stays a section however the viewport is turned.
+        (let [[dx dy dz] dir [ux uy uz] up]
+          (.set (.-up camera) ux uy uz)
+          (.set (.-position camera) (- cx (* dx d)) (- cy (* dy d)) (- cz (* dz d)))
+          (.lookAt camera cx cy cz))
+        (do
+          (.copy (.-quaternion camera) (.-quaternion main-camera))
+          ;; the camera looks down its local -Z; "backward" (away from view dir)
+          ;; is local +Z — rotate that into world space to place it.
+          (let [back (doto (THREE/Vector3. 0 0 1) (.applyQuaternion (.-quaternion camera)))]
+            (.set (.-position camera)
+                  (+ cx (* (.-x back) d)) (+ cy (* (.-y back) d)) (+ cz (* (.-z back) d)))))))
     (.render renderer scene camera)))
 
 (defn- sync-all!
@@ -295,21 +305,32 @@
    same world frame as each other, so no transform is applied. An optional
    `label` overwrites the header text (mesh-board updates it every eval with
    the view name + volume). Recomputes framing from whichever of
-   ghost/highlight is present. A no-op if `key` isn't mounted."
-  [key {:keys [ghost highlight label]}]
+   ghost/highlight is present. `highlights` — a vector of {:mesh :color} —
+   adds several solids each in its own color (mesh-board's section view: one
+   per piece of the assembly). `view` {:dir :up} pins the window's camera to
+   a fixed direction instead of following the main one (nil → follow). A
+   no-op if `key` isn't mounted."
+  [key {:keys [ghost highlight highlights label view]}]
   (when-let [{:keys [^js scene] :as inst} (get @instances key)]
     (clear-scene-objects! scene inst)
     (let [have-ghost? (seq (:vertices ghost))
           have-highlight? (seq (:vertices highlight))
+          all-multi (seq (mapcat #(:vertices (:mesh %)) highlights))
           [center radius] (cond have-ghost? (bounds ghost)
                                 have-highlight? (bounds highlight)
+                                all-multi (bounds {:vertices (vec all-multi)})
                                 :else [nil nil])
           ghost-obj (when (and have-ghost? (seq (:faces ghost))) (ghost-object ghost))
-          highlight-obj (when (and have-highlight? (seq (:faces highlight))) (highlight-object highlight))]
+          highlight-obj (when (and have-highlight? (seq (:faces highlight))) (highlight-object highlight))
+          highlight-objs (vec (keep (fn [{:keys [mesh color]}]
+                                      (when (seq (:faces mesh)) (highlight-object mesh color)))
+                                    highlights))]
       (when ghost-obj (.add scene ghost-obj))
       (when highlight-obj (.add scene highlight-obj))
+      (doseq [^js o highlight-objs] (.add scene o))
       (when label
         (when-let [^js el (:label-el inst)] (set! (.-textContent el) label)))
       (swap! instances update key merge
-             {:ghost-obj ghost-obj :highlight-obj highlight-obj
+             {:ghost-obj ghost-obj :highlight-obj highlight-obj :highlight-objs highlight-objs
+              :view view
               :center center :dist (when radius (framing-distance radius))}))))

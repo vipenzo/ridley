@@ -11,7 +11,7 @@
 ;; Geo-server filesystem backend
 ;; ============================================================
 
-(def ^:private geo-server-url "http://127.0.0.1:12321")
+(def ^:private geo-server-url (env/geo-server-url))
 
 ;; We'll resolve the actual lib dir lazily on first use
 (defonce ^:private lib-dir-cache (atom nil))

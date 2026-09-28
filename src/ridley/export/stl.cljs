@@ -306,7 +306,7 @@
    folder of photos opened as an empty session because of exactly that."
   "FILE-SERVICE-DOWN")
 
-(def ^:private geo-server-url "http://127.0.0.1:12321")
+(def ^:private geo-server-url (env/geo-server-url))
 
 (defn desktop-pick-save-path
   "Open native save dialog via Rust geo_server. Returns Promise<string|nil>

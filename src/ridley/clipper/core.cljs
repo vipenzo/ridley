@@ -100,8 +100,9 @@
 
 ;; --- Winding helpers ---
 
-(defn- signed-area-2d
-  "Signed area of 2D polygon. Positive = CCW, Negative = CW."
+(defn ^:export polygon-signed-area
+  "Signed area of a 2D polygon (shoelace). Positive = CCW, negative = CW.
+   Public: the one implementation voronoi/core and shape-area build on."
   [points]
   (let [n (count points)]
     (if (< n 3)
@@ -114,6 +115,14 @@
           0
           (range n))
          2))))
+
+(def ^:private signed-area-2d polygon-signed-area)
+
+(defn ^:export shape-area
+  "Area of a 2D shape: its outer contour minus its holes. Always ≥ 0."
+  [shape]
+  (- (Math/abs (polygon-signed-area (:points shape)))
+     (reduce + 0 (map #(Math/abs (polygon-signed-area %)) (:holes shape)))))
 
 (defn- ensure-ccw
   "Ensure points are CCW (positive signed area)."
@@ -254,6 +263,17 @@
         result (op-fn subject-paths clip-paths c2/FillRule.NonZero)]
     (paths-result->shape result)))
 
+(defn ^:export shape-intersection-all
+  "Intersection of two shapes as a VECTOR of shapes, one per disconnected
+   region (holes assigned to their outer) — [] when disjoint. shape-intersection
+   keeps only the largest region; Lloyd relaxation on a concave boundary needs
+   all of them to find the piece that contains its seed."
+  [shape-a shape-b]
+  (let [result (c-intersect (shape->clipper-paths shape-a)
+                            (shape->clipper-paths shape-b)
+                            c2/FillRule.NonZero)]
+    (or (paths-result->shapes result) [])))
+
 (defn- union-two [a b] (or (clipper-boolean c-union a b) a))
 (defn- difference-two [a b] (or (clipper-boolean c-difference a b) a))
 (defn- intersection-two [a b] (clipper-boolean c-intersect a b))
@@ -336,6 +356,21 @@
           scaled-delta (* delta SCALE)
           result (c-inflate-paths paths scaled-delta jt c2/EndType.Polygon)]
       (paths-result->shape result))))
+
+(defn ^:export shape-offset-all
+  "Like shape-offset, but returns a VECTOR of shapes, one per region — a
+   negative delta can split a shape at a neck or erase an island entirely, and
+   shape-offset keeps only the largest survivor. [] when nothing survives.
+   Slivers under a thousandth of the input's area are dropped: a round-join
+   inset of a coarse polygon leaves 3-point needles along the contour
+   (measured: 0.004–0.04 mm² on an 800 mm² ring) that are artefacts, not
+   regions."
+  [shape delta & {:keys [join-type] :or {join-type :round}}]
+  (let [paths (shape->clipper-paths shape)
+        jt (get join-type-map join-type c2/JoinType.Round)
+        result (c-inflate-paths paths (* delta SCALE) jt c2/EndType.Polygon)
+        min-area (* 1e-3 (shape-area shape))]
+    (filterv #(>= (shape-area %) min-area) (or (paths-result->shapes result) []))))
 
 ;; --- Convex hull ---
 

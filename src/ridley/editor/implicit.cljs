@@ -10,6 +10,8 @@
             [ridley.turtle.path :as path]
             [ridley.geometry.primitives :as prims]
             [ridley.manifold.core :as manifold]
+            [ridley.clipper.core :as clipper]
+            [ridley.voronoi.core :as voronoi]
             [ridley.sdf.core :as sdf]
             [ridley.scene.registry :as registry]
             [ridley.scene.panel :as panel]
@@ -403,6 +405,9 @@
     (turtle/resolve-marks @(turtle-ref) target)
     (and (map? target) (:vertices target))
     (:anchors target)
+    ;; a bare {name → pose} map (layout-anchors' result) is its own anchor map
+    (map? target)
+    (turtle/named-poses target)
     :else
     (:anchors (registry/get-mesh target))))
 
@@ -787,6 +792,144 @@
       (let [[pos heading up right] (turtle-plane-basis)]
         (mirror-shapes-x (manifold/slice-at-plane mesh heading pos right up))))))
 
+;; ============================================================
+;; Cut-face layout (dev-docs/brief-joint-layout.md)
+;; ============================================================
+
+(defn- anchor-frame
+  "[position heading up right] of a named anchor on a mesh, with right =
+   heading × up — the stamp frame slice-mesh's 2D shapes are expressed in
+   (mirror-shapes-x flips Manifold's up × heading into it). Throws if missing."
+  [mesh anchor-name]
+  (let [{:keys [position heading up] :as a} (get-in mesh [:anchors anchor-name])]
+    (when-not a
+      (throw (js/Error. (str "no anchor " (pr-str anchor-name) " on this mesh — available: "
+                             (pr-str (sort (keys (:anchors mesh))))))))
+    (let [[hx hy hz] heading [ux uy uz] up
+          right [(- (* hy uz) (* hz uy)) (- (* hz ux) (* hx uz)) (- (* hx uy) (* hy ux))]]
+      [position heading up right])))
+
+(defn- cut-face-shapes
+  "The outline(s) of the face a cut anchor sits on, as 2D shapes in the
+   anchor's frame — one per island. Sliced a hair (0.01) INSIDE the piece:
+   a slice coincident with the face itself returns nothing."
+  [mesh anchor-name]
+  (let [[pos heading up right] (anchor-frame mesh anchor-name)
+        inner (mapv (fn [p h] (- p (* 0.01 h))) pos heading)
+        [ux uy uz] up [hx hy hz] heading
+        ;; slice-at-plane wants right = up × heading (det +1); mirror-shapes-x
+        ;; then flips X into the stamp frame we return.
+        m-right [(- (* uy hz) (* uz hy)) (- (* uz hx) (* ux hz)) (- (* ux hy) (* uy hx))]]
+    (mirror-shapes-x (manifold/slice-at-plane mesh heading inner m-right up))))
+
+(defn ^:export implicit-joint-zone
+  "The admissible zone for joints on a cut face: the face's outline(s) shrunk
+   by `:inset` (the minimum distance of a joint's centre from the piece's
+   surface — pin radius plus wall, declared, no default). Returns a vector of
+   2D shapes in the anchor's frame (X = right, Y = up), one per island; an
+   island too narrow for the inset simply disappears, so the vector can be
+   empty. `piece` is a mesh (or registered name), `anchor` the name of a cut
+   anchor on it (:cut, or the mark's name).
+
+   (joint-zone (:behind halves) :cut :inset 5)"
+  [piece anchor & {:keys [inset]}]
+  (when-not (number? inset)
+    (throw (js/Error. "joint-zone: :inset is required (pin radius + wall) — it depends on material and printer")))
+  (let [mesh (resolve-to-mesh piece)]
+    (vec (mapcat #(clipper/shape-offset-all % (- inset)) (cut-face-shapes mesh anchor)))))
+
+(defn- apportion
+  "Split `total` into per-island counts proportional to `areas`, minimum 1
+   each (largest remainder)."
+  [total areas]
+  (let [k (count areas)
+        total (max total k)
+        sum (reduce + areas)
+        raw (mapv #(max 1 (* (- total k) (/ % sum))) areas)
+        base (mapv #(max 1 (Math/floor %)) raw)
+        rest (- total (reduce + base))
+        order (sort-by #(- (nth base %) (nth raw %)) (range k))]
+    (reduce (fn [b i] (update b i inc)) base (take rest order))))
+
+(defn- min-pair-distance
+  "Smallest distance between any two of `pts` ([x y]); Infinity below 2 points."
+  [pts]
+  (reduce min js/Number.POSITIVE_INFINITY
+          (for [[i p] (map-indexed vector pts) q (drop (inc i) pts)]
+            (let [dx (- (p 0) (q 0)) dy (- (p 1) (q 1))]
+              (Math/sqrt (+ (* dx dx) (* dy dy)))))))
+
+(defn ^:export implicit-layout-anchors
+  "Propose where the joints go on a cut face: a map of ANCHORS
+   {:pin-1 pose :pin-2 pose …} on the plane of `anchor`, with its heading and
+   up, spread evenly (Lloyd relaxation) inside the admissible zone
+   (joint-zone). Poses are world poses, so the same map serves the piece and
+   its twin: a cylinder centred on one straddles the cut and is subtracted
+   from both.
+
+   Options — :inset (required; see joint-zone), :spacing (typical distance
+   between joints: each island gets max(1, round(area / spacing²)) anchors),
+   :n (explicit total instead of :spacing, apportioned by area, min 1 per
+   island), :seed (default 0), :prefix (default \"pin\"). :spacing is a
+   guarantee: no two anchors closer than ~0.9·spacing (the count is lowered
+   on a narrow zone until that holds); :n is never lowered, but a closest pair
+   under 2·inset is reported.
+
+   Metadata :layout on the result: {:zones [shape …] :rejected [{:area a} …]}
+   — the islands of the face too narrow for the inset are reported, not
+   silently dropped. Builds nothing.
+
+   (def L (layout-anchors (:behind halves) :cut :inset 5 :spacing 15))
+   (register pins (on-anchors L \"pin\" :align (cyl 3 10)))"
+  [piece anchor & {:keys [inset spacing n seed prefix] :or {seed 0 prefix "pin"}}]
+  (when-not (number? inset)
+    (throw (js/Error. "layout-anchors: :inset is required (pin radius + wall) — it depends on material and printer")))
+  (when-not (or (number? spacing) (number? n))
+    (throw (js/Error. "layout-anchors: give :spacing (distance between joints) or :n (how many)")))
+  (let [mesh (resolve-to-mesh piece)
+        [pos heading up right] (anchor-frame mesh anchor)
+        islands (cut-face-shapes mesh anchor)
+        zoned (mapv (fn [isl] {:island isl :zones (clipper/shape-offset-all isl (- inset))}) islands)
+        rejected (vec (keep #(when (empty? (:zones %)) {:area (clipper/shape-area (:island %))}) zoned))
+        zones (vec (mapcat :zones zoned))
+        areas (mapv clipper/shape-area zones)
+        counts (cond
+                 (empty? zones) []
+                 (number? n) (apportion n areas)
+                 :else (mapv #(max 1 (Math/round (/ % (* spacing spacing)))) areas))
+        ;; :spacing is a GUARANTEE, not just a density: the area count assumes
+        ;; square packing, but a narrow strip packs its points in a zig-zag at
+        ;; well under the declared distance (10-wide zone, spacing 7 → two rows
+        ;; 5 apart → pins overlap, concat-meshes goes non-manifold, the
+        ;; difference breaks). So each zone's count is lowered until the relaxed
+        ;; layout's closest pair is at least 0.9·spacing. An explicit :n is the
+        ;; user's own decision and is never lowered.
+        zone-pts (map-indexed
+                  (fn [i z]
+                    (loop [k (nth counts i)]
+                      (let [pts (voronoi/spread-points z k :seed (+ seed i))]
+                        (if (and (nil? n) (> k 1) (< (min-pair-distance pts) (* 0.9 spacing)))
+                          (recur (dec k))
+                          pts))))
+                  zones)
+        pts (vec (apply concat zone-pts))
+        min-dist (min-pair-distance pts)
+        to-world (fn [[x y]] (mapv (fn [p r u] (+ p (* x r) (* y u))) pos right up))
+        result (into {} (map-indexed (fn [i p] [(keyword (str prefix "-" (inc i)))
+                                                {:position (to-world p) :heading heading :up up}])
+                                     pts))]
+    (when (seq rejected)
+      (state/capture-println (str "layout-anchors: " (count rejected) " island(s) of the face too narrow for inset "
+                    inset " — areas " (pr-str (mapv #(Math/round (:area %)) rejected)))))
+    (when (and (number? spacing) (nil? n) (< spacing (* 2 inset)))
+      (state/capture-println (str "layout-anchors: :spacing " spacing " is under 2·inset (" (* 2 inset)
+                    ") — pins as wide as the inset allows will touch; use :union in on-anchors")))
+    (when (and (number? n) (> (count pts) 1) (< min-dist (* 2 inset)))
+      (state/capture-println (str "layout-anchors: closest pair " (/ (Math/round (* 10 min-dist)) 10)
+                    " apart with :n " n " — pins wider than " (/ (Math/round (* 10 min-dist)) 10)
+                    " will overlap (use :union in on-anchors, or fewer)")))
+    (with-meta result {:layout {:zones zones :rejected rejected :min-distance min-dist}})))
+
 (defn ^:export implicit-slice-at-plane
   "Slice a mesh at an arbitrary plane (point + normal), optionally with explicit
    right/up vectors for the plane's local basis. Accepts a mesh map, a keyword
@@ -901,6 +1044,13 @@
       (let [order (if (nil? marks-spec) path-order marks-spec)]
         (mapv (fn [mk] {:mark mk :pose (mark->pose mk) :sub nil}) order)))))
 
+(defn- cut-anchor-opt
+  "The :anchor opt split-by-plane stamps on both halves (dev-docs/brief-split-
+   anchors.md): the mark's own name and the cut pose — no prefix, no renaming,
+   so a joint written against :cut-1 finds :cut-1 on both pieces."
+  [anchor-name pose]
+  {:name anchor-name :pose (select-keys pose [:position :heading :up])})
+
 (defn- split-plan
   "Actually cut `mesh` following `plan` (resolve-mesh-split-plan's output),
    right-nesting each cut's :ahead into the next — the linear-chain shape
@@ -926,7 +1076,8 @@
            {:keys [ahead behind]}
            (if (empty? (:faces mesh))
              {:ahead mesh :behind mesh}
-             (manifold/split-by-plane mesh heading offset opts))
+             (manifold/split-by-plane mesh heading offset
+                                      (assoc opts :anchor (cut-anchor-opt (:mark (first plan)) pose))))
            behind' (if sub (split-plan behind sub opts) behind)]
        {:behind behind' :ahead (split-plan ahead (rest plan) opts)}))))
 
@@ -967,15 +1118,18 @@
    Either half may be an empty mesh when the plane misses (or only grazes)
    the piece — a legitimate result, not an error.
 
+   Every cut also leaves a CUT-FACE ANCHOR on both pieces it produces (dev-
+   docs/brief-split-anchors.md): named after the mark (:cut-1 stays :cut-1),
+   or :cut for a single cut at the turtle pose; position = the plane's,
+   heading = the normal pointing OUT of that piece, up = the cut's up. A piece
+   bounded by several cut faces carries one anchor per face; inherited anchors
+   stay alongside, a same-named one is overwritten (console warning). Empty
+   pieces get none. The return shape is unchanged — anchors live on the meshes.
+
    Accepts a mesh map, a keyword (registered mesh name), or an SDF node
    (auto-materialized)."
   ([mesh-or-name-or-sdf]
-   (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
-         state @(turtle-ref)
-         [px py pz] (:position state)
-         [hx hy hz :as heading] (:heading state)
-         offset (+ (* hx px) (* hy py) (* hz pz))]
-     (manifold/split-by-plane mesh heading offset)))
+   (implicit-mesh-split mesh-or-name-or-sdf nil nil nil))
   ([mesh-or-name-or-sdf path]
    (when (empty? (path-mark-names-in-order path))
      (throw (js/Error. "mesh-split: path has no marks — nothing to cut")))
@@ -997,7 +1151,9 @@
            [px py pz] (:position state)
            [hx hy hz :as heading] (:heading state)
            offset (+ (* hx px) (* hy py) (* hz pz))]
-       (manifold/split-by-plane mesh heading offset opts))
+       ;; A single cut has no mark to name its anchor after: it is :cut.
+       (manifold/split-by-plane mesh heading offset
+                                (assoc opts :anchor (cut-anchor-opt :cut state))))
      (let [mesh (resolve-to-mesh mesh-or-name-or-sdf)
            plan (resolve-mesh-split-plan @(turtle-ref) path marks-spec)]
        (split-plan mesh plan opts)))))

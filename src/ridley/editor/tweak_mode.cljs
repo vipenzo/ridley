@@ -457,11 +457,17 @@
 ;; ============================================================
 
 (defn- data-value?
-  "True if x is a plain data value suitable for inlining (not a fn, mesh, atom, etc.)."
+  "True if x is a plain data value suitable for inlining (not a fn, mesh, atom,
+   etc.) — RECURSIVELY: a map or vector counts only if everything inside does.
+   A map of meshes ({:A A :B B :pins pins}, what mesh-board takes) is not data:
+   inlining it once dragged 38,482 vertex coordinates in as 'numeric literals'
+   (2026-09-27), so `(tweak (mesh-board t …))` refused to start."
   [x]
   (or (number? x) (string? x) (keyword? x) (boolean? x) (nil? x)
-      (and (map? x) (not (:vertices x)) (not (:type x)))  ;; plain map, not mesh/shape/path
-      (vector? x) (set? x)))
+      (and (map? x) (not (:vertices x)) (not (:type x))  ;; plain map, not mesh/shape/path
+           (every? data-value? (vals x)))
+      (and (vector? x) (every? data-value? x))
+      (and (set? x) (every? data-value? x))))
 
 (defn- inline-data-symbols
   "Walk a quoted form, replacing symbols that resolve to data values.

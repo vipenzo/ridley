@@ -86,3 +86,21 @@ Senza argomenti `lay-flat` usa `:bottom`: prende la faccia inferiore più grande
 Quando la faccia di stampa non è allineata a una direzione cardinale, la si può marcare come anchor con `attach-path` e passare il nome dell'anchor a `lay-flat` (`(lay-flat :part :print-face)`): viene messo a piano il piano dell'anchor, qualunque sia il suo orientamento.
 
 Due cose da ricordare. `lay-flat` ricentra il pezzo sull'origine: se ti serve tenere un angolo preciso a `[0 0 0]`, segui con un `translate`. E opera sui vertici, non sulla `:creation-pose`, che resta all'origine di costruzione; se serve riancorarla c'è `reset-creation-pose`. Per le mesh senza face group, come i risultati di una booleana, i gruppi di facce vengono dedotti automaticamente per adiacenza complanare e la faccia più grande viene scelta da quel raggruppamento.
+
+## 17.4 Giunzioni stampabili
+
+Un pezzo troppo grande per il piatto si taglia con `mesh-split` e si stampa in parti; alle parti serve qualcosa che le tenga insieme. La libreria built-in **joints** (si attiva nel pannello delle librerie) ne ha quattro, tutte costruite allo stesso modo: tagliano la mesh alla posa della tartaruga, costruiscono la giunzione a cavallo del piano di taglio, ritornano `{:a :b :extras}` — `:a` con la parte maschio, `:b` con la femmina, `:extras` con ciò che si stampa a parte.
+
+```clojure
+(def ab (joints/bayonet (box 30 30 30) 8 12 0.3))
+(register A (:a ab))
+(register B (:b ab))
+(tweak (mesh-board {:A A :B B} {:solid true :views [[:section :cut :offset 3]]}))
+```
+
+- `joints/tenon` — perno integrale e foro cieco.
+- `joints/dowel` — spina a parte, fori da entrambi i lati; i pezzi si stampano appoggiati sulla faccia di taglio.
+- `joints/bayonet` — spinotto con nottolini, scanalature a L nel foro: si infila ruotato, si gira, e i pezzi tornano allineati.
+- `joints/thread` — filetto quadro; il gioco sui fianchi `t` e quello radiale `:radial` sono separati, perché in stampa vogliono valori diversi.
+
+L'ultimo argomento di ciascuna è il gioco, ed è il numero che solo una stampa decide: la baionetta ha ricostruito un cubo allineato a 0.3, il filetto ha voluto 0.5 sui fianchi. Prima di stampare si controlla la giunzione con la sezione di `mesh-board`, facendo scorrere il piano con `tweak`; per molti perni su una faccia ampia, `layout-anchors` (capitolo 7.8) li dispone e `on-anchors` li costruisce.

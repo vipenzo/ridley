@@ -11,95 +11,124 @@ status: stable
 
 `(mesh-board t)`
 `(mesh-board t {:only [:piece-2 :piece-3]})`
+`(mesh-board t {:solid true :opacity 0.35 :explode 30 :views [view …] :section at :anchors L :label "…"})`
 `(mesh-board reference candidate)`
-`(mesh-board reference candidate {:views [:intersection :missing :excess] :ghost false :label "…"})`
+`(mesh-board reference candidate {:views [view …] :ghost false :label "…"})`
 
 ## Description
 
-Display or compare mesh scaffold(s) — never part of the scene registry,
-never named, never pickable, never included in export. `mesh-board` is a
-display DIRECTIVE, not a transformation: it always returns its **first
-argument unchanged**, so it composes cleanly in a threading pipeline
-(`(-> t (attach (f 10)) (mesh-board))`) without altering what the rest of
-the program computes with.
+Display a set of named meshes and views on them — never part of the scene
+registry, never named, never pickable, never included in export.
+`mesh-board` is a display DIRECTIVE, not a transformation: it always
+returns its **first argument unchanged**, so it composes cleanly in a
+threading pipeline (`(-> t (attach (f 10)) (mesh-board))`) without
+altering what the rest of the program computes with.
 
-Two forms:
+One model: a **set of named meshes** plus **views**. The two-solid
+comparison is the pair case.
 
-- **Show** — `(mesh-board t)` renders every leaf of `t` as an in-place
-  ghost-wireframe scaffold, never part of the scene registry. `t` may be a
-  map (name → mesh — a `let`-chain emission's body, or `(split-tree …)` over
-  a bare `mesh-split` call), a vector (an older emission, pre-map — shown,
-  but without names), or a single mesh (shown whole). `{:only [...]}`
-  restricts a map input to the named subset; it's an error on a vector or
-  single-mesh input, and an error naming any requested name that doesn't
-  exist.
+- **`t`** — a map (name → mesh — a `let`-chain emission's body, or
+  `(split-tree …)` over a bare `mesh-split` call), a vector (an older
+  emission, pre-map — shown, but without names), or a single mesh.
+  `{:only [...]}` restricts a map input to the named subset. A **raw
+  `mesh-split` composite** is refused with an error naming `split-tree`:
+  its `:behind`/`:ahead` are not piece names.
+- **Show** — with no view options every leaf is drawn in place as a
+  ghost-wireframe scaffold.
+- **Assembly views** — for seeing a joint that is hidden inside the material:
+  - `:solid true` draws the leaves as translucent solids (`:opacity`,
+    default `0.35`), one color per leaf in map order, so the pins show
+    through the halves. A leaf whose name is a registered mesh holding the
+    same geometry (`{:A A …}` after `(register A …)`) has its registered
+    original hidden for this evaluation — otherwise the opaque solid in
+    place would cover the view.
+  - `:explode d` moves each leaf `d` units *away* from its cut faces (the
+    cut anchors `mesh-split` leaves on it); a leaf with no cut anchor (the
+    pins) stays, and so does a middle piece whose cut faces are opposite.
+    View only: the returned value is untouched.
+- **Views** — `:views` is a vector; each view opens one picture-in-picture
+  window over the viewport (drag its header to move it, scroll to zoom;
+  view state, not saved in the source):
+  - `[:intersection a b]`, `[:missing a b]`, `[:excess a b]` — a solid
+    render of a directional boolean between the elements named `a` and
+    `b`: their common volume, `a − b` (what `b` does not cover), `b − a`
+    (where `b` overshoots). The header shows the view, the names and the
+    **volume**, or `vuoto` when the result is empty — never stale content
+    from a previous evaluation. On an assembly `[:intersection :B :pins]`
+    is the pin/piece interference.
+  - `[:section at]`, `[:section at :offset d]` — the whole set cut by the
+    plane of `at`: heading = normal, the same convention as `slice-mesh`
+    and `mesh-split`, so `[:section :cut]` is the cut face itself with
+    every pin's cross-section on it. `at` is an anchor name looked up in
+    `:anchors` (e.g. the map `layout-anchors` returns) and then on the
+    elements in map order, or a pose map (for a lengthwise cut through a
+    pin, a pose whose heading is that normal). `:offset` slides the plane
+    along its normal — wrap the call in `tweak` and the offset becomes a
+    live slider, the section sweeping through the joint. Each element's far
+    half is solid in its own color, its cut face turned toward the viewer,
+    so pins, holes and clearance appear in one figure; the window turns with
+    the main viewport, so rotate the scene to look at the cut face head-on
+    (from the opposite side you see the outer faces). The shown half is the
+    one *ahead* of the found anchor's outward normal: with `{:A A :B B …}`
+    and `[:section :cut]` you see `B`'s cut face, looking from `A`'s side.
+    `:section at` is the short form of one section view.
+- **Compare** — `(mesh-board reference candidate opts)` is the pair
+  `{:reference reference :candidate candidate}`: without `:views` it opens
+  the three boolean windows between them (`:intersection`, `:missing`,
+  `:excess` — bare keywords name the default pair), frames each on
+  `reference` with its ghost wireframe for spatial anchoring, and prints
+  the **fidelity** (a symmetric-difference-based percentage — 100% for
+  identical solids), e.g. `mesh-board: reference vs candidate — fidelity
+  97.3%`, in the app's output panel. `:ghost true` also overlays both in
+  place as ghost-wireframe scaffolds (grey/blue). `[:section pose]` works
+  here too: both solids cut, two colors.
 
-  A **raw `mesh-split` composite** is refused with an error naming
-  `split-tree` — its `:behind`/`:ahead` are not piece names, and taking them
-  for names would display an honest-looking two-piece board for a one-cut
-  composite and break for anything deeper. `(mesh-board (split-tree AA))`.
-- **Compare** — `(mesh-board reference candidate opts)` opens one small
-  picture-in-picture window per requested view, each showing a **solid**
-  render (not wireframe — a solid reads the deviation's shape at a glance)
-  of a directional boolean between `reference` and `candidate`:
-  - `:intersection` — their common volume.
-  - `:missing` — `reference − candidate`: the material the candidate doesn't
-    cover yet (what's still missing).
-  - `:excess` — `candidate − reference`: where the candidate overshoots the
-    reference (what's extra).
-
-  `:missing` and `:excess` are two **directional** diffs, not one merged
-  symmetric difference — for iterating on a candidate against a reference
-  they're complementary, distinct signals, so both stay visible at once by
-  default. Each window shows the view's solid result alongside a
-  ghost-wireframe of `reference` (spatial anchoring — which part of the
-  object the diff is on) and a header with the view name and its **volume**
-  (e.g. `missing: 12.3 mm³`) — more actionable than a bare percentage. When a
-  view's result is empty (the pieces don't overlap yet, for `:intersection`),
-  the window shows just the reference wireframe with an explicit `vuoto`
-  label — never stale content from a previous, non-empty evaluation. Camera
-  framing is fit to `reference`'s bounding box, so it stays stable across
-  re-evaluations while only `candidate` changes; orientation follows the main
-  viewport as you rotate it. Windows are picture-in-picture: they float over
-  the viewport, independent of where `reference`/`candidate` sit in the scene
-  (unlike the show form's in-place scaffolds). Each window can be
-  **repositioned** (drag its header) and **zoomed** (scroll wheel over it) —
-  view state, not saved in the source; a reload restarts from the default
-  stacked-column layout.
-
-  Every compare call also prints the **fidelity** (a symmetric-difference-
-  based percentage — 100% for identical solids), e.g. `mesh-board:
-  riferimento vs candidato — fedeltà 97.3%`, in the app's output panel. An
-  optional `:label` appears in the message and disambiguates the windows of
-  several comparisons coexisting in the same program — without it, two
-  concurrent compare calls share one default group of windows.
-
-Like `stamp`, in-place scaffolds (show form, and the compare form's optional
-`:ghost`) live in a per-evaluation accumulator: a full evaluation replaces
-the whole set, an incremental REPL evaluation appends to it. Every
-`mesh-board` call in a program contributes independently — remove one call
-and re-evaluate, and only its scaffolds disappear. Comparison windows follow
-the same rule at the call level: a full evaluation drops a removed call's
-windows; re-evaluating with fewer `:views` unmounts the ones no longer
-requested.
+Like `stamp`, in-place scaffolds live in a per-evaluation accumulator: a
+full evaluation replaces the whole set, an incremental REPL evaluation
+appends to it. Windows follow the same rule at the call level: a full
+evaluation drops a removed call's windows; re-evaluating with fewer
+`:views` unmounts the ones no longer requested. An optional `:label`
+disambiguates the windows (and the fidelity message) of several calls
+coexisting in one program.
 
 ## Parameters
 
-- `t` — a map of meshes (keys = piece names), a vector of meshes, or a single
-  mesh.
-- `:only` — (show form, map input only) a vector of keys to restrict which
-  pieces are shown.
+- `t` — a map of meshes (keys = element names), a vector of meshes, or a
+  single mesh.
+- `:only` — (map input only) a vector of keys to restrict which elements
+  are shown.
+- `:solid`, `:opacity` — translucent solids instead of ghost wireframes.
+- `:explode` — distance each element moves away from its cut faces.
+- `:views` — a vector of views: `[:intersection a b]`, `[:missing a b]`,
+  `[:excess a b]`, `[:section at & {:keys [offset]}]`; on the pair form a
+  bare `:intersection`/`:missing`/`:excess` names the default pair.
+- `:section` — short form: one anchor name / pose, or a vector of them.
+- `:anchors` — an extra anchor map (`layout-anchors`' result) to look
+  `:section` names up in.
 - `reference`, `candidate` — meshes (or SDF nodes) to compare.
-- `:views` — (compare form) a vector of `:intersection`/`:missing`/`:excess`;
-  default all three. Reduce it to skip the cost of boolean ops you don't
-  need on dense meshes.
-- `:ghost` — (compare form) when `true`, also overlays `reference` and
-  `candidate` in place as ghost-wireframe scaffolds (grey/blue, one color per
-  role) — useful for coarse initial positioning. Default `false`.
-- `:label` — a string that appears in the printed fidelity message and
-  disambiguates a comparison's windows from a concurrent one.
+- `:ghost` — (pair form) overlay both solids in place as ghost wireframes.
+- `:label` — names this call's windows and its fidelity message.
 
 ## Example
+
+Seeing a joint. Two halves pinned together, then the three views:
+
+```clojure
+(def halves (mesh-split (box 40 60 80)))
+(def L (layout-anchors (:behind halves) :cut :inset 5 :spacing 10))
+(register pins (on-anchors L "pin" :align (cyl 3 10)))
+(register B (mesh-difference (:behind halves) pins))
+(register A (mesh-difference (:ahead halves) pins))
+(mesh-board {:A A :B B :pins pins}
+            {:solid true :explode 30
+             :views [[:section :cut :offset 8] [:intersection :B :pins]]})
+```
+
+Translucent halves pulled 30 apart with the pins left on the cut plane, a
+window with the cut face 8 units into `B` and the pins' cross-sections on
+it, and a window with the pin/piece interference — zero here, since the
+pins were subtracted from `B`; a pin biting into a wall would show its
+volume. Wrap the call in `tweak` and the `8` becomes a slider.
 
 {{example: mesh-board-show}}
 
