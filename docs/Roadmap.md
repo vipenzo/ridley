@@ -836,6 +836,14 @@ istanza prende la prima porta libera 12321..12330 e la inietta nella propria
 WebView (`RIDLEY_GEO_PORT`, letta da `env/geo-server-url`, unica fonte per i
 cinque chiamanti). `cargo check` pulito; da provare con due istanze vere.
 
+**RILASCIATA v3.9.0 (2026-09-28) — le giunzioni.** Tutto il pendente da v3.8.0:
+anchor di taglio su `mesh-split`, `layout-anchors` (Voronoi/Lloyd, spacing come
+garanzia), `mesh-board` unificata con solidi, esploso, sezione a scorrimento e
+interferenza fra elementi nominati, libreria built-in `joints` (tenone, spina,
+baionetta, filetto — baionetta e filetto stampati e funzionanti), il geo-server
+su porta libera per due istanze desktop. Rilasciata da `main`, chiusura con
+`scripts/bump-cask.sh v3.9.0`.
+
 **RILASCIATA v3.8.0 (2026-09-15) — la gabbia di registrazione.** Tutto il pendente da v3.7.0 (183 commit): gabbia stampabile (`examples/print-cage.clj`, giunti gen 2, chiave, portapezzo) e zero-click (`a`, trattini sul bordo, seme dell'occhio, montaggio che arbitra i gemelli), palcoscenico con gabbia virtuale e ancora a occhio, memoria per-camera della focale, scatta-e-registra, UI in inglese, cap. 19-20 del manuale, fix SDF (regioni schiacciate, attach dalla creation-pose), export 3MF. Rilasciata da `main` come le precedenti; chiusura con `scripts/bump-cask.sh v3.8.0`. La v3.7.0 (2026-08-11, «gli spigoli dichiarati») non era stata annotata qui.
 
 **Fronte APERTO (2026-09-15): GIUNZIONI SUI PEZZI TAGLIATI — prima fetta FATTA,
