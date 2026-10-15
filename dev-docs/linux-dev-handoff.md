@@ -5,6 +5,40 @@
 > dove i comandi girano davvero. Contiene tutto il contesto: non serve la chat
 > originale.
 
+## Aggiornamento 2026-10-15 (letto dal Mac prima di ripartire)
+
+Il lavoro Linux si è fermato all'11 luglio: il Blocco 1 qui sotto (nessuna
+finestra) **non risulta risolto**. Da allora la desktop è cambiata in punti che
+toccano Linux. Verificali, non assumerli:
+
+- **`cargo tauri dev` lancia `npm run dev` e aspetta fino a 30 s la porta :9000**
+  (`main.rs`, ramo `debug_assertions`). La sezione "Config rilevante" più sotto
+  ("non avvia un dev-server") è quindi superata. Senza Node o senza JDK
+  (shadow-cljs) quei 30 s di attesa possono sembrare il "terminale appeso" del
+  Blocco 1. Guarda se nel log c'è `frontend: waiting for :9000...` prima di
+  dare la colpa a conda o alla GPU.
+- **`beforeBuildCommand` ora è `npm run sync-manual`** (`tauri.conf.json`):
+  `cargo tauri build` richiede Node e `npm ci` fatto.
+- **Porta del geo-server variabile**: `geo_server::start()` prova
+  12321..12330 e passa quella ottenuta alla webview come `window.RIDLEY_GEO_PORT`.
+  Il `connect-src` della CSP in `tauri.conf.json` elenca però solo 12321 e
+  12322: con tre o più finestre Ridley aperte la terza verrebbe bloccata dalla
+  CSP (non verificato; vale anche su macOS).
+- **Camera nell'app** (`3b0683c`): su macOS wry concede già il permesso a
+  `getUserMedia`. **WebKitGTK è un altro codice**: forse servono
+  `enable-media-stream` nelle WebKitSettings e un handler `permission-request`
+  (via `with_webview`). Da collaudare con "scatta e registra".
+- **Pannello file nativo** (`rfd`, imparentato con la finestra principale tramite
+  `geo_server::set_main_window`): su Linux passa da GTK oppure dal portale xdg.
+  Controlla che si apra, che stia davanti all'app e che Annulla restituisca
+  "nessuna scelta".
+- **Codice morto di Manifold-dylib già rimosso** (`23beda1`): quella voce non è
+  più da fare.
+- Già a posto, nessun lavoro: le scorciatoie accettano `metaKey` o `ctrlKey`; la
+  `~` la espande il server con `$HOME`; il controllo `webkit-not-blink?` in
+  `codemirror.cljs` scatta sullo user-agent WebKitGTK, quindi i correttivi
+  WebKit si applicano anche qui.
+
 ## Dove siamo (già provato, verde)
 
 - **Gate di fattibilità chiuso il 2026-07-08** (commit `c430b9f`): su questo
