@@ -64,6 +64,28 @@ fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
     false
 }
 
+/// Wait for shadow-cljs to finish the watch's first build, i.e. for `manifest`
+/// (written at the end of every build) to be newer than `since`. :9000 answers
+/// as soon as the dev HTTP server is up, well before that build is written, and
+/// a window opened in between loads the previous session's JS, which the
+/// watch then flags with the "Stale Output" banner.
+#[cfg(debug_assertions)]
+fn wait_for_fresh_build(manifest: &std::path::Path, since: std::time::SystemTime,
+                        timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        let fresh = std::fs::metadata(manifest)
+            .and_then(|m| m.modified())
+            .map(|t| t > since)
+            .unwrap_or(false);
+        if fresh {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    false
+}
+
 /// WebKitGTK's DMABUF renderer can hang before the window appears (hybrid
 /// Intel+NVIDIA, NVIDIA proprietary driver). Seen fine on 2.52; for anything
 /// older we turn it off, at the cost of a slower compositing path. A value the
@@ -125,6 +147,7 @@ fn main() {
     // In dev mode, spawn frontend dev server and wait for it
     #[cfg(debug_assertions)]
     let frontend_child: Mutex<Option<Child>> = {
+        let spawned_at = std::time::SystemTime::now();
         let child = spawn_child("frontend", "npm", &["run", "dev"], &root);
         if child.is_some() {
             eprintln!("frontend: waiting for :9000...");
@@ -132,6 +155,13 @@ fn main() {
                 eprintln!("frontend: ready on :9000");
             } else {
                 eprintln!("frontend: timeout waiting for :9000");
+            }
+            eprintln!("frontend: waiting for the first build...");
+            let manifest = root.join("public/js/manifest.edn");
+            if wait_for_fresh_build(&manifest, spawned_at, std::time::Duration::from_secs(180)) {
+                eprintln!("frontend: build written");
+            } else {
+                eprintln!("frontend: timeout waiting for the first build (window may show Stale Output)");
             }
         }
         Mutex::new(child)
