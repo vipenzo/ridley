@@ -63,7 +63,44 @@ toccano Linux. Verificali, non assumerli:
 - `bundle.targets: "all"` → produce AppImage **e** `.deb` **e** rpm in
   `desktop/src-tauri/target/release/bundle/`.
 
-## Blocco 1 — `cargo tauri dev` non parte: nessuna finestra + errore `__libc_pthread_init`
+## Blocco 1 — RISOLTO (2026-10-16): la finestra compare
+
+**Come si avvia:** da un terminale Ubuntu normale (non quello integrato in VS Code)
+
+```bash
+bash desktop/dev-linux.sh
+```
+
+Verificato su questo XPS (sessione Wayland, WebKitGTK 4.1): build Rust ok,
+geo-server su :12321, shadow-cljs pronto su :9000, processi
+`WebKitWebProcess`/`WebKitNetworkProcess` vivi, finestra Ridley visibile con
+l'editor.
+
+**Causa vera di `__libc_pthread_init`: non conda, ma VS Code installato come
+snap.** Il terminale integrato eredita `GTK_PATH`, `GTK_EXE_PREFIX`,
+`SNAP_LIBRARY_PATH`, `GIO_MODULE_DIR`, `GDK_PIXBUF_MODULE_FILE`, `LOCPATH`,
+`GSETTINGS_SCHEMA_DIR` che puntano in `/snap/code/<rev>/`. GTK carica da lì
+moduli linkati contro core20 (glibc 2.31) che trascinano una `libpthread`
+vecchia → `symbol lookup error ... /snap/core20/.../libpthread.so.0: undefined
+symbol: __libc_pthread_init` alla creazione della webview. È solo un problema
+dell'ambiente di sviluppo: .deb/AppImage lanciati dal desktop non lo vedono.
+
+`desktop/dev-linux.sh` fa tre cose prima di `cargo tauri dev`:
+1. uccide `shadow-cljs watch app` / istanze vecchie (altrimenti
+   `ExceptionInfo: already started` e app in stato rotto);
+2. toglie le variabili snap (`SNAP*`, `GTK_*`, `GIO_*`, `GDK_PIXBUF*`,
+   `LOCPATH`, `GSETTINGS*`, `VSCODE_*`);
+3. esporta `WEBKIT_DISABLE_DMABUF_RENDERER=1` (GPU ibrida). Non è stato provato
+   se senza questa variabile la finestra compare lo stesso: da verificare prima
+   di decidere se cablarla nel pacchetto (vedi "Cosa manca", punto 3).
+
+**Lancia con `cargo tauri dev`, non il binario `target/debug/ridley-desktop`
+da solo:** una build debug senza `devUrl` cerca `http://localhost:1420` (morto)
+e mostra a tutta pagina `Could not connect to 127.0.0.1: Connection refused`.
+
+La diagnosi originale resta sotto per il record (l'ipotesi conda era sbagliata).
+
+### Diagnosi originale (luglio)
 
 Sintomo osservato: nessuna finestra appare, il terminale resta appeso, e compare
 un errore che cita `__libc_pthread_init`.
