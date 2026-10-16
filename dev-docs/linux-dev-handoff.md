@@ -197,8 +197,11 @@ pacchetti in `target/release/bundle/`.
   - Verificato sul .deb estratto con `dpkg-deb -x`: `ldd` risolve libfive in
     `<estratto>/usr/lib/ridley`. **rpm non ispezionato** (niente `rpm`/`bsdtar`
     su questa macchina): stessa config, stessa crescita di dimensione.
-- Da provare ancora: l'installazione vera (`sudo dpkg -i`) e l'app lanciata dal
-  menu Applicazioni.
+- **Installazione vera verificata (2026-10-16):** `sudo apt install ./…deb`
+  → `/usr/bin/ridley-desktop` risolve libfive in `/usr/lib/ridley/`. Lanciata
+  dal menu Applicazioni: parte, modella e le SDF funzionano. La riga
+  `Download is performed unsandboxed as root … _apt … Permission denied` di apt è
+  innocua: `_apt` non legge la home, apt ripiega su root.
 - **Latente su macOS:** `bundle-dylibs.sh` cerca libfive con
   `ls .../ridley-desktop-*/... | head -1`. In un checkout con più dir di build
   può prendere una libfive vecchia. In CI parte da pulito, quindi lì non succede.
