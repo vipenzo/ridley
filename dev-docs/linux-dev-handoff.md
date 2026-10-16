@@ -37,9 +37,41 @@ toccano Linux. Verificali, non assumerli:
   visibile** (niente `/dev/video*`, niente in `lsusb`, `uvcvideo` non caricato:
   integrata spenta da BIOS o scollegata), quindi
   `getUserMedia` arriva in fondo e WebKit risponde **"invalid constraint"**, un
-  messaggio fuorviante per "nessun dispositivo". Da ricollaudare con una webcam
-  vera. Se il messaggio torna CON una webcam presente, sospetta il vincolo
-  `ideal` 3840×2160 in `camera_capture.cljs`.
+  messaggio fuorviante per "nessun dispositivo".
+  → **Con una webcam USB (Logitech C922), stesso giorno: la webcam su Linux NON
+  funziona, per un difetto di WebKitGTK/PipeWire e non nostro.** Esperimenti
+  fatti nell'app viva via nREPL di shadow (:7888):
+  - Il permesso arriva: compare il dialogo del portale camera di GNOME, che
+    ricorda la scelta (PermissionStore `devices/camera`: "Ridley" yes).
+    `getUserMedia` risolve a ogni risoluzione (640×480 … 2304×1536; con
+    l'ideale 4K la C922 dà 2304×1536) e la traccia è `live`.
+  - **Nessun fotogramma arriva mai al `<video>`**: `videoWidth` resta 0, sia
+    con il video staccato dal DOM sia inserito. Nel log, a ogni apertura:
+    `WebKitWebProcess CRITICAL: handle_format_change: assertion
+    'gst_caps_is_fixed (pwsrc->caps)' failed`. WebKitGTK 2.52 cattura sempre via
+    portale + `pipewiresrc`, e lì la negoziazione dei caps fallisce.
+  - Fuori da WebKit GStreamer cattura senza problemi
+    (`gst-launch-1.0 v4l2src device=/dev/video0 num-buffers=15 ! fakesink` e
+    `pipewiresrc ! videoconvert ! fakesink` escono entrambi 0).
+  - Non aggirabile da env: `GST_PLUGIN_FEATURE_RANK=pipewiredeviceprovider:NONE,pipewiresrc:NONE`
+    e `WEBKIT_USE_PORTAL=0` lasciano lo stesso CRITICAL (e la label diventa vuota).
+  - Stack: Ubuntu 26.04, WebKitGTK 2.52.6, GStreamer 1.28.2,
+    gstreamer1.0-pipewire 1.6.2.
+  - Difetti di WebKitGTK aggirati in `camera_capture.cljs` (validi a
+    prescindere): la C922 compare DUE volte con lo stesso deviceId (ora
+    deduplicata) e `deviceId {:exact id}` con l'id dato da `enumerateDevices`
+    dà `OverconstrainedError`/"Invalid constraint" (ora si ritenta con
+    `:ideal`, che apre quel dispositivo; su macOS `:exact` passa al primo colpo).
+  - Altro da sapere: `start!` aspetta `loadedmetadata` su un `<video>` non ancora
+    nel DOM. Su WebKitGTK quell'evento arriva solo alla chiusura dello stream
+    (forse governato da `WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS`). Quando
+    i fotogrammi arriveranno, `start!` potrebbe ancora restare appesa: inserire
+    il video nel DOM prima di aspettare.
+  - Strade possibili: segnalare il bug a WebKitGTK/PipeWire e aspettare un
+    aggiornamento; oppure cattura nativa nel geo-server (GStreamer `v4l2src`
+    da Rust, un endpoint "grab") che salta del tutto la webview. Il flusso
+    principale, foto prese col telefono e messe nella cartella, non dipende
+    dalla webcam.
 - **Pannello file nativo:** collaudato il 2026-10-16. Open/Save As si aprono
   davanti all'app (portale xdg), Annulla non fa nulla, salva e riapre.
   Collaudati lo stesso giorno anche copia/incolla da e verso altre app, e il
