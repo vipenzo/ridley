@@ -33,8 +33,13 @@ for v in $(env | grep -iE '^(SNAP|GTK_|GIO_|GDK_PIXBUF|LOCPATH|GSETTINGS|MXC_|VS
 done
 
 # 3. WebKitGTK hybrid-GPU workaround + useful logging.
-export WEBKIT_DISABLE_DMABUF_RENDERER=1
+#    RIDLEY_DMABUF=1 skips it, to test whether the workaround is still needed.
+if [ "${RIDLEY_DMABUF:-0}" = 1 ]; then
+  unset WEBKIT_DISABLE_DMABUF_RENDERER
+else
+  export WEBKIT_DISABLE_DMABUF_RENDERER=1
+fi
 export RUST_BACKTRACE=1
 
-echo "env clean: GTK_PATH='${GTK_PATH:-<unset>}' SNAP='${SNAP:-<unset>}' DISPLAY=${DISPLAY:-<none>}"
+echo "env clean: GTK_PATH='${GTK_PATH:-<unset>}' SNAP='${SNAP:-<unset>}' DMABUF_OFF='${WEBKIT_DISABLE_DMABUF_RENDERER:-<unset>}' DISPLAY=${DISPLAY:-<none>}"
 exec cargo tauri dev "$@"

@@ -90,9 +90,17 @@ dell'ambiente di sviluppo: .deb/AppImage lanciati dal desktop non lo vedono.
    `ExceptionInfo: already started` e app in stato rotto);
 2. toglie le variabili snap (`SNAP*`, `GTK_*`, `GIO_*`, `GDK_PIXBUF*`,
    `LOCPATH`, `GSETTINGS*`, `VSCODE_*`);
-3. esporta `WEBKIT_DISABLE_DMABUF_RENDERER=1` (GPU ibrida). Non è stato provato
-   se senza questa variabile la finestra compare lo stesso: da verificare prima
-   di decidere se cablarla nel pacchetto (vedi "Cosa manca", punto 3).
+3. esporta `WEBKIT_DISABLE_DMABUF_RENDERER=1` (GPU ibrida). `RIDLEY_DMABUF=1
+   bash desktop/dev-linux.sh` la omette.
+
+**DMABUF provato il 2026-10-16: qui NON serve.** La macchina è **Ubuntu 26.04
+con WebKitGTK 2.52.6** (non 24.04/2.44 come scritto sopra), Intel HD 530 +
+GTX 960M, Wayland. Senza la variabile la finestra compare, la scena si
+disegna (`register` di box + sphere) e ruota in modo fluido. Il bug documentato
+è della 2.44: su Ubuntu 24.04 potrebbe ancora servire. Per il pacchetto (vedi
+"Cosa manca", punto 3) la scelta resta aperta: metterla sempre costa la via di
+composizione più lenta anche a chi non ne ha bisogno, non metterla rischia
+l'hang su 24.04 + NVIDIA, che non abbiamo modo di provare qui.
 
 **Lancia con `cargo tauri dev`, non il binario `target/debug/ridley-desktop`
 da solo:** una build debug senza `devUrl` cerca `http://localhost:1420` (morto)
