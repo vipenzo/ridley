@@ -3137,6 +3137,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-window-state",
  "tiny_http",
+ "webkit2gtk",
  "webkit2gtk-sys",
 ]
 

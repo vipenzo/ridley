@@ -84,6 +84,33 @@ fn dmabuf_workaround() {
     }
 }
 
+/// WebKitGTK ships getUserMedia switched off, and denies any permission
+/// request nobody handles; wry does neither for us (on macOS WKWebView grants
+/// it). Turn media streams on and grant video-only requests — the camera
+/// capture asks for `:audio false`; anything wanting the microphone falls
+/// through to WebKit's default, deny.
+#[cfg(target_os = "linux")]
+fn enable_camera(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|wv| {
+        use webkit2gtk::glib::prelude::Cast;
+        use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequest,
+                         UserMediaPermissionRequestExt, WebViewExt};
+        let view = wv.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(|_, req| {
+            match req.downcast_ref::<UserMediaPermissionRequest>() {
+                Some(m) if m.is_for_video_device() && !m.is_for_audio_device() => {
+                    req.allow();
+                    true
+                }
+                _ => false,
+            }
+        });
+    });
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     dmabuf_workaround();
@@ -124,6 +151,8 @@ fn main() {
             // First run uses the defaults above; subsequent runs honor
             // whatever the user left when they closed the app.
             let _ = window.restore_state(StateFlags::all());
+            #[cfg(target_os = "linux")]
+            enable_camera(&window);
             // Hand the window to the geo-server so a native file panel can be
             // attached to it. Unparented, the panel is a window of its own and
             // can be left behind the app — with the app then ignoring every

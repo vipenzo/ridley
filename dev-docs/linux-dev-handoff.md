@@ -28,10 +28,23 @@ toccano Linux. Verificali, non assumerli:
   `getUserMedia`. **WebKitGTK è un altro codice**: forse servono
   `enable-media-stream` nelle WebKitSettings e un handler `permission-request`
   (via `with_webview`). Da collaudare con "scatta e registra".
-- **Pannello file nativo** (`rfd`, imparentato con la finestra principale tramite
-  `geo_server::set_main_window`): su Linux passa da GTK oppure dal portale xdg.
-  Controlla che si apra, che stia davanti all'app e che Annulla restituisca
-  "nessuna scelta".
+  → **2026-10-16: confermato e scritto, NON collaudato.** wry 0.54 non fa né
+  l'una né l'altra cosa (abilita solo webgl/webaudio/clipboard).
+  `enable_camera` in `main.rs` attiva `enable-media-stream` e concede le
+  `UserMediaPermissionRequest` solo video (la cattura chiede `:audio false`);
+  il resto ricade sul default di WebKit, cioè negato. `tauri://` è già registrato
+  come schema sicuro da wry. Compila. Su questo XPS **non c'è nessuna webcam
+  visibile** (niente `/dev/video*`, niente in `lsusb`, `uvcvideo` non caricato:
+  integrata spenta da BIOS o scollegata), quindi
+  `getUserMedia` arriva in fondo e WebKit risponde **"invalid constraint"**, un
+  messaggio fuorviante per "nessun dispositivo". Da ricollaudare con una webcam
+  vera. Se il messaggio torna CON una webcam presente, sospetta il vincolo
+  `ideal` 3840×2160 in `camera_capture.cljs`.
+- **Pannello file nativo:** collaudato il 2026-10-16. Open/Save As si aprono
+  davanti all'app (portale xdg), Annulla non fa nulla, salva e riapre.
+  Collaudati lo stesso giorno anche copia/incolla da e verso altre app, e il
+  modale "New library" con la libreria che sopravvive al riavvio
+  (`~/.ridley/libraries`).
 - **Codice morto di Manifold-dylib già rimosso** (`23beda1`): quella voce non è
   più da fare.
 - Già a posto, nessun lavoro: le scorciatoie accettano `metaKey` o `ctrlKey`; la
