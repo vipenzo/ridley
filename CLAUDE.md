@@ -63,7 +63,8 @@ Update the **Current Sprint** section in `Roadmap.md` with progress and any new 
 
 When creating a new release:
 1. Create the GitHub release with `gh release create`
-2. GitHub Actions builds and deploys automatically on release publish (Pages + the macOS DMG)
+2. GitHub Actions builds and deploys automatically on release publish (Pages + the macOS DMG
+   + the Linux AppImage and `.deb`, `.github/workflows/desktop-build-linux.yml`)
 3. **Wait for "Desktop Build (macOS)" to finish, then run `scripts/bump-cask.sh` — it is NOT automatic.**
 
 Step 3 is the one that gets forgotten. Nothing tells Homebrew a new version exists:

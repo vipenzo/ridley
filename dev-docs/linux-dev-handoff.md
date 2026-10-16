@@ -297,7 +297,14 @@ il bundler Tauri (linuxdeploy) ha già raccolto le `.so` via rpath e il fix
    solo** (vedi Blocco 2).
 3. ~~**Env var GPU** cablata nel launcher~~ — FATTO il 2026-10-16: test di
    versione WebKitGTK al lancio, nell'app (vedi Blocco 1).
-4. **CI Linux** — `.github/workflows/desktop-build.yml` è 100% macOS. Aggiungere
+4. **CI Linux** — SCRITTA il 2026-10-16, NON ancora eseguita su GitHub:
+   `.github/workflows/desktop-build-linux.yml` ("Desktop Build (Linux)"), file
+   separato dal macOS così `bump-cask.sh` continua ad aspettare solo il DMG.
+   `ubuntu-22.04` per la glibc più vecchia (un binario costruito su 24.04 non
+   parte su 22.04); `--bundles deb,appimage`; controllo che libfive sia nel .deb;
+   allega `Ridley-<tag>-linux-amd64.deb` e `Ridley-<tag>-linux-x86_64.AppImage`.
+   `workflow_dispatch` funziona solo se il file è sul branch di default.
+   Testo originale: `.github/workflows/desktop-build.yml` è 100% macOS. Aggiungere
    job `build-linux` su `ubuntu-latest`: apt deps, clone libfive, `npm ci`,
    `shadow-cljs release`, `cargo tauri build` → AppImage/deb, allega alla
    release. Da scrivere DOPO che il build locale è verde.
