@@ -34,19 +34,19 @@ Working examples demonstrating Ridley's features.
 
 ```clojure
 ;; Box at origin
-(box 30)
+(register cube (box 30))
 
 ;; Rectangular box
-(box 40 20 10)
+(register slab (box 40 20 10))
 
 ;; Sphere
-(sphere 25)
+(register ball (sphere 25))
 
 ;; Cylinder
-(cyl 15 40)
+(register tube (cyl 15 40))
 
 ;; Cone
-(cone 5 20 30)
+(register spike (cone 5 20 30))
 ```
 
 ### Positioned Primitives
@@ -54,14 +54,14 @@ Working examples demonstrating Ridley's features.
 ```clojure
 ;; Move then place
 (f 50)
-(box 20)
+(register cube (box 20))
 
 ;; Multiple primitives
-(box 20)
+(register cube (box 20))
 (f 40)
-(sphere 15)
+(register ball (sphere 15))
 (f 40)
-(cyl 10 30)
+(register tube (cyl 10 30))
 ```
 
 ---

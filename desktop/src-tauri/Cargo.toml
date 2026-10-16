@@ -16,6 +16,13 @@ serde_json = "1"
 tiny_http = "0.12"
 rfd = "0.15"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already pulled in by tauri/wry; used directly to read the runtime WebKitGTK
+# version (dmabuf_workaround) and to let the webview open the camera
+# (enable_camera), both in main.rs.
+webkit2gtk-sys = "2.0.2"
+webkit2gtk = { version = "2.0.2", features = ["v2_40"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

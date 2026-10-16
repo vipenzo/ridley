@@ -73,6 +73,13 @@
         (.then (fn [^js devices]
                  (->> (array-seq devices)
                       (filter (fn [^js d] (= "videoinput" (.-kind d))))
+                      ;; WebKitGTK lists a V4L2 camera twice under one deviceId;
+                      ;; two picker entries that open the same thing are noise
+                      (reduce (fn [acc ^js d]
+                                (if (some (fn [^js x] (= (.-deviceId x) (.-deviceId d))) acc)
+                                  acc
+                                  (conj acc d)))
+                              [])
                       (map-indexed (fn [i ^js d]
                                      {:id (.-deviceId d)
                                       :label (let [l (.-label d)]
@@ -134,12 +141,24 @@
     (do
       (stop!)
       (let [^js video (make-video)
-            constraints (clj->js
-                         {:audio false
-                          :video (cond-> {:width {:ideal 3840}
-                                          :height {:ideal 2160}}
-                                   device-id (assoc :deviceId {:exact device-id}))})]
-        (-> (.getUserMedia (.-mediaDevices js/navigator) constraints)
+            constraints (fn [id-match]
+                          (clj->js
+                           {:audio false
+                            :video (cond-> {:width {:ideal 3840}
+                                            :height {:ideal 2160}}
+                                     device-id (assoc :deviceId {id-match device-id}))}))
+            ^js md (.-mediaDevices js/navigator)]
+        ;; WebKitGTK refuses `:exact` with the very deviceId its enumerateDevices
+        ;; handed out (OverconstrainedError, constraint "deviceId"), while
+        ;; `:ideal` with the same id opens that camera. Ask exactly first — on
+        ;; macOS that works and keeps "this device or nothing" — and fall back.
+        (-> (.getUserMedia md (constraints :exact))
+            (.catch (fn [^js e]
+                      (if (and device-id
+                               (= "OverconstrainedError" (.-name e))
+                               (= "deviceId" (.-constraint e)))
+                        (.getUserMedia md (constraints :ideal))
+                        (js/Promise.reject e))))
             (.then (fn [^js stream]
                      (set! (.-srcObject video) stream)
                      ;; wait for the first frame's metadata: before it, videoWidth

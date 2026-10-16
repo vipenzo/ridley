@@ -64,7 +64,79 @@ fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
     false
 }
 
+/// Wait for shadow-cljs to finish the watch's first build, i.e. for `manifest`
+/// (written at the end of every build) to be newer than `since`. :9000 answers
+/// as soon as the dev HTTP server is up, well before that build is written, and
+/// a window opened in between loads the previous session's JS, which the
+/// watch then flags with the "Stale Output" banner.
+#[cfg(debug_assertions)]
+fn wait_for_fresh_build(manifest: &std::path::Path, since: std::time::SystemTime,
+                        timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        let fresh = std::fs::metadata(manifest)
+            .and_then(|m| m.modified())
+            .map(|t| t > since)
+            .unwrap_or(false);
+        if fresh {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    false
+}
+
+/// WebKitGTK's DMABUF renderer can hang before the window appears (hybrid
+/// Intel+NVIDIA, NVIDIA proprietary driver). Seen fine on 2.52; for anything
+/// older we turn it off, at the cost of a slower compositing path. A value the
+/// user set themselves always wins. Must run before any thread is spawned.
+#[cfg(target_os = "linux")]
+fn dmabuf_workaround() {
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    const FIRST_OK: (u32, u32) = (2, 52);
+    if std::env::var_os(VAR).is_some() {
+        return;
+    }
+    let version = unsafe {
+        (webkit2gtk_sys::webkit_get_major_version(), webkit2gtk_sys::webkit_get_minor_version())
+    };
+    if version < FIRST_OK {
+        eprintln!("webkit: {}.{} < {}.{}, setting {VAR}=1", version.0, version.1, FIRST_OK.0, FIRST_OK.1);
+        std::env::set_var(VAR, "1");
+    }
+}
+
+/// WebKitGTK ships getUserMedia switched off, and denies any permission
+/// request nobody handles; wry does neither for us (on macOS WKWebView grants
+/// it). Turn media streams on and grant video-only requests — the camera
+/// capture asks for `:audio false`; anything wanting the microphone falls
+/// through to WebKit's default, deny.
+#[cfg(target_os = "linux")]
+fn enable_camera(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|wv| {
+        use webkit2gtk::glib::prelude::Cast;
+        use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequest,
+                         UserMediaPermissionRequestExt, WebViewExt};
+        let view = wv.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(|_, req| {
+            match req.downcast_ref::<UserMediaPermissionRequest>() {
+                Some(m) if m.is_for_video_device() && !m.is_for_audio_device() => {
+                    req.allow();
+                    true
+                }
+                _ => false,
+            }
+        });
+    });
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    dmabuf_workaround();
+
     let root = project_root();
 
     // Start local HTTP server for synchronous geometry ops; the port it got
@@ -75,6 +147,7 @@ fn main() {
     // In dev mode, spawn frontend dev server and wait for it
     #[cfg(debug_assertions)]
     let frontend_child: Mutex<Option<Child>> = {
+        let spawned_at = std::time::SystemTime::now();
         let child = spawn_child("frontend", "npm", &["run", "dev"], &root);
         if child.is_some() {
             eprintln!("frontend: waiting for :9000...");
@@ -82,6 +155,13 @@ fn main() {
                 eprintln!("frontend: ready on :9000");
             } else {
                 eprintln!("frontend: timeout waiting for :9000");
+            }
+            eprintln!("frontend: waiting for the first build...");
+            let manifest = root.join("public/js/manifest.edn");
+            if wait_for_fresh_build(&manifest, spawned_at, std::time::Duration::from_secs(180)) {
+                eprintln!("frontend: build written");
+            } else {
+                eprintln!("frontend: timeout waiting for the first build (window may show Stale Output)");
             }
         }
         Mutex::new(child)
@@ -101,6 +181,8 @@ fn main() {
             // First run uses the defaults above; subsequent runs honor
             // whatever the user left when they closed the app.
             let _ = window.restore_state(StateFlags::all());
+            #[cfg(target_os = "linux")]
+            enable_camera(&window);
             // Hand the window to the geo-server so a native file panel can be
             // attached to it. Unparented, the panel is a window of its own and
             // can be left behind the app — with the app then ignoring every
