@@ -85,22 +85,31 @@ vecchia → `symbol lookup error ... /snap/core20/.../libpthread.so.0: undefined
 symbol: __libc_pthread_init` alla creazione della webview. È solo un problema
 dell'ambiente di sviluppo: .deb/AppImage lanciati dal desktop non lo vedono.
 
-`desktop/dev-linux.sh` fa tre cose prima di `cargo tauri dev`:
+`desktop/dev-linux.sh` fa due cose prima di `cargo tauri dev`:
 1. uccide `shadow-cljs watch app` / istanze vecchie (altrimenti
    `ExceptionInfo: already started` e app in stato rotto);
 2. toglie le variabili snap (`SNAP*`, `GTK_*`, `GIO_*`, `GDK_PIXBUF*`,
-   `LOCPATH`, `GSETTINGS*`, `VSCODE_*`);
-3. esporta `WEBKIT_DISABLE_DMABUF_RENDERER=1` (GPU ibrida). `RIDLEY_DMABUF=1
-   bash desktop/dev-linux.sh` la omette.
+   `LOCPATH`, `GSETTINGS*`, `VSCODE_*`).
 
 **DMABUF provato il 2026-10-16: qui NON serve.** La macchina è **Ubuntu 26.04
 con WebKitGTK 2.52.6** (non 24.04/2.44 come scritto sopra), Intel HD 530 +
 GTX 960M, Wayland. Senza la variabile la finestra compare, la scena si
 disegna (`register` di box + sphere) e ruota in modo fluido. Il bug documentato
-è della 2.44: su Ubuntu 24.04 potrebbe ancora servire. Per il pacchetto (vedi
-"Cosa manca", punto 3) la scelta resta aperta: metterla sempre costa la via di
-composizione più lenta anche a chi non ne ha bisogno, non metterla rischia
-l'hang su 24.04 + NVIDIA, che non abbiamo modo di provare qui.
+è della 2.44: su Ubuntu 24.04 potrebbe ancora servire.
+
+**Deciso: test al lancio, nell'app** (`dmabuf_workaround` in `main.rs`, prima
+istruzione di `main()`, prima di qualunque thread). Legge la versione runtime di
+WebKitGTK (`webkit2gtk-sys`: `webkit_get_major/minor_version`) e, se è < 2.52,
+l'unica che abbiamo visto andare bene, imposta `WEBKIT_DISABLE_DMABUF_RENDERER=1`
+e lo scrive su stderr. Se l'utente ha già impostato la variabile, a qualunque
+valore, non la tocca. Si guarda la versione di WebKit, non quella della distro,
+perché Ubuntu aggiorna WebKitGTK anche sulle LTS e la regola vale così su
+qualunque distro. Collaudato su 2.52: con la soglia
+alzata a 2.53 per prova il ramo scatta e stampa; con 2.52 tace. Non verificato
+direttamente: che WebKit legga la variabile nel processo UI (dove `set_var` la
+mette) e non solo nei sottoprocessi. Nell'environ del `WebKitWebProcess` non
+compare, ma per quanto noto la scelta del renderer è fatta nel processo UI.
+Se un giorno una 2.5x più vecchia si rivela ok, basta abbassare `FIRST_OK`.
 
 **Lancia con `cargo tauri dev`, non il binario `target/debug/ridley-desktop`
 da solo:** una build debug senza `devUrl` cerca `http://localhost:1420` (morto)
@@ -241,8 +250,8 @@ il bundler Tauri (linuxdeploy) ha già raccolto le `.so` via rpath e il fix
    l'equivalente Linux di `desktop/bundle-dylibs.sh` (copia `.so` accanto al
    binario / via `resources` Tauri). **Da verificare se linuxdeploy lo fa già da
    solo** (vedi Blocco 2).
-3. **Env var GPU** cablata nel launcher (vedi nota Blocco 1) se il fix DMABUF
-   serve.
+3. ~~**Env var GPU** cablata nel launcher~~ — FATTO il 2026-10-16: test di
+   versione WebKitGTK al lancio, nell'app (vedi Blocco 1).
 4. **CI Linux** — `.github/workflows/desktop-build.yml` è 100% macOS. Aggiungere
    job `build-linux` su `ubuntu-latest`: apt deps, clone libfive, `npm ci`,
    `shadow-cljs release`, `cargo tauri build` → AppImage/deb, allega alla

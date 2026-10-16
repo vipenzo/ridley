@@ -6,8 +6,7 @@
 #   1. VS Code snap env pollution (GTK_PATH/SNAP_LIBRARY_PATH/... point into
 #      /snap/code) drags in core20's old libpthread -> the webview dies with
 #      `__libc_pthread_init`. We strip those vars.
-#   2. WebKitGTK DMABUF renderer bug on hybrid Intel+NVIDIA GPUs -> we disable it.
-#   3. A stale `shadow-cljs watch app` left running collides with the one the app
+#   2. A stale `shadow-cljs watch app` left running collides with the one the app
 #      spawns (`ExceptionInfo: already started`) and leaves the app in a broken
 #      state. We kill any stale watch first so the app owns the single watch.
 #
@@ -32,13 +31,9 @@ for v in $(env | grep -iE '^(SNAP|GTK_|GIO_|GDK_PIXBUF|LOCPATH|GSETTINGS|MXC_|VS
   unset "$v"
 done
 
-# 3. WebKitGTK hybrid-GPU workaround + useful logging.
-#    RIDLEY_DMABUF=1 skips it, to test whether the workaround is still needed.
-if [ "${RIDLEY_DMABUF:-0}" = 1 ]; then
-  unset WEBKIT_DISABLE_DMABUF_RENDERER
-else
-  export WEBKIT_DISABLE_DMABUF_RENDERER=1
-fi
+# 3. The DMABUF workaround now lives in the app (main.rs, dmabuf_workaround:
+#    on below WebKitGTK 2.52). Export WEBKIT_DISABLE_DMABUF_RENDERER yourself
+#    to force it either way.
 export RUST_BACKTRACE=1
 
 echo "env clean: GTK_PATH='${GTK_PATH:-<unset>}' SNAP='${SNAP:-<unset>}' DMABUF_OFF='${WEBKIT_DISABLE_DMABUF_RENDERER:-<unset>}' DISPLAY=${DISPLAY:-<none>}"

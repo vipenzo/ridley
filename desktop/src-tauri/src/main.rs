@@ -64,7 +64,30 @@ fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
     false
 }
 
+/// WebKitGTK's DMABUF renderer can hang before the window appears (hybrid
+/// Intel+NVIDIA, NVIDIA proprietary driver). Seen fine on 2.52; for anything
+/// older we turn it off, at the cost of a slower compositing path. A value the
+/// user set themselves always wins. Must run before any thread is spawned.
+#[cfg(target_os = "linux")]
+fn dmabuf_workaround() {
+    const VAR: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+    const FIRST_OK: (u32, u32) = (2, 52);
+    if std::env::var_os(VAR).is_some() {
+        return;
+    }
+    let version = unsafe {
+        (webkit2gtk_sys::webkit_get_major_version(), webkit2gtk_sys::webkit_get_minor_version())
+    };
+    if version < FIRST_OK {
+        eprintln!("webkit: {}.{} < {}.{}, setting {VAR}=1", version.0, version.1, FIRST_OK.0, FIRST_OK.1);
+        std::env::set_var(VAR, "1");
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    dmabuf_workaround();
+
     let root = project_root();
 
     // Start local HTTP server for synchronous geometry ops; the port it got
