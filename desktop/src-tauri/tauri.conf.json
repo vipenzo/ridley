@@ -23,6 +23,22 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["libpng16-16t64 | libpng16-16"],
+        "files": {
+          "/usr/lib/ridley/libfive.so": "target/release/libfive/libfive.so",
+          "/usr/lib/ridley/libfive-stdlib.so": "target/release/libfive/libfive-stdlib.so"
+        }
+      },
+      "rpm": {
+        "depends": ["libpng"],
+        "files": {
+          "/usr/lib/ridley/libfive.so": "target/release/libfive/libfive.so",
+          "/usr/lib/ridley/libfive-stdlib.so": "target/release/libfive/libfive-stdlib.so"
+        }
+      }
+    }
   }
 }

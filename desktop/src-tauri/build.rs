@@ -64,15 +64,37 @@ fn build_libfive(libfive_src: &PathBuf) {
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", stdlib_dir.display());
     }
 
-    // Linux: link the GNU C++ runtime (not libc++) and point the loader at the
-    // build dirs via absolute rpath. This is enough to *run* from target/ during
-    // the local spike; the packaged $ORIGIN rpath is a later (bundling) concern.
+    // Linux: link the GNU C++ runtime (not libc++). The loader looks first in
+    // $ORIGIN/../lib/ridley — where the .deb/.rpm install the .so files
+    // (bundle.linux.*.files in tauri.conf.json) — then in the absolute build
+    // dirs, so running straight from target/ keeps working. The AppImage needs
+    // neither: linuxdeploy copies the .so into usr/lib and rewrites the rpath.
     #[cfg(target_os = "linux")]
     {
         println!("cargo:rustc-link-lib=dylib=stdc++");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/ridley");
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", stdlib_dir.display());
+        stage_linux_libs(&out_dir, &[lib_dir.join("libfive.so"), stdlib_dir.join("libfive-stdlib.so")]);
     }
 
     println!("cargo:rerun-if-changed=vendor/libfive");
+}
+
+/// Copy the libfive .so files to a fixed path, target/<profile>/libfive/, so
+/// tauri.conf.json can name them: the build dir carries a hash that changes,
+/// and stale ones linger next to it. Stripped, since the debug info makes
+/// libfive.so ~200 MB.
+#[cfg(target_os = "linux")]
+fn stage_linux_libs(out_dir: &PathBuf, libs: &[PathBuf]) {
+    // OUT_DIR = target/<profile>/build/<pkg>-<hash>/out
+    let profile_dir = out_dir.ancestors().nth(3).expect("unexpected OUT_DIR layout");
+    let stage = profile_dir.join("libfive");
+    std::fs::create_dir_all(&stage).expect("create libfive stage dir");
+    for lib in libs {
+        let dest = stage.join(lib.file_name().unwrap());
+        std::fs::copy(lib, &dest).expect("copy libfive .so to stage dir");
+        // Best effort: an unstripped copy still works, it is only bigger.
+        let _ = Command::new("strip").arg("--strip-unneeded").arg(&dest).status();
+    }
 }

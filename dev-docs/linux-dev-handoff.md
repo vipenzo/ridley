@@ -172,7 +172,38 @@ dice se il processo è vivo (webview appeso) o se cargo è ancora fermo a compil
 > **cablato anche nell'app spedita** (wrapper/`.desktop`), altrimenti ogni utente
 > Linux con GPU ibrida/NVIDIA avrà lo stesso hang. → è un item di packaging.
 
-## Blocco 2 — l'AppImage non parte (FUSE)
+## Blocco 2 — pacchetti (2026-10-16): costruiti e autosufficienti
+
+`npm run release && cd desktop/src-tauri && cargo tauri build` produce i tre
+pacchetti in `target/release/bundle/`.
+
+- **AppImage (~96 MB):** linuxdeploy ci mette `libfive.so`/`libfive-stdlib.so`
+  (già strippate) più ~157 lib di sistema (WebKitGTK compreso, il grosso del
+  peso) e riscrive il RUNPATH in `$ORIGIN/../lib`. Verificato: lanciato con
+  `--appimage-extract-and-run`, `/proc/<pid>/maps` mostra libfive caricata da
+  dentro l'AppImage; `POST /sdf-mesh` di una sfera r=10 dà una mesh chiusa
+  (V−1=8600, F=17196=2(V−1)−4) con tutti i vertici a r=10. Il vertice 0
+  nell'origine non è usato da nessuna faccia: è il segnaposto di libfive.
+- **.deb / .rpm (~16 MB):** al primo giro contenevano SOLO il binario, che
+  funzionava sulla macchina di build solo grazie al RUNPATH assoluto verso
+  `target/.../out/libfive-build`. Ora:
+  - `build.rs` (ramo Linux) copia e strippa le `.so` in
+    `target/<profile>/libfive/` (path fisso: la dir di build ha un hash, e quelle
+    vecchie restano accanto) e mette `$ORIGIN/../lib/ridley` prima dei path
+    assoluti nel RUNPATH;
+  - `tauri.conf.json` → `bundle.linux.{deb,rpm}.files` le installa in
+    `/usr/lib/ridley/` e dichiara libpng (unica dipendenza non-base di libfive):
+    `libpng16-16t64 | libpng16-16` per deb, `libpng` per rpm.
+  - Verificato sul .deb estratto con `dpkg-deb -x`: `ldd` risolve libfive in
+    `<estratto>/usr/lib/ridley`. **rpm non ispezionato** (niente `rpm`/`bsdtar`
+    su questa macchina): stessa config, stessa crescita di dimensione.
+- Da provare ancora: l'installazione vera (`sudo dpkg -i`) e l'app lanciata dal
+  menu Applicazioni.
+- **Latente su macOS:** `bundle-dylibs.sh` cerca libfive con
+  `ls .../ridley-desktop-*/... | head -1`. In un checkout con più dir di build
+  può prendere una libfive vecchia. In CI parte da pulito, quindi lì non succede.
+
+### FUSE (l'AppImage col doppio clic)
 
 Ubuntu 24.04 spedisce FUSE3; l'AppImage è costruito contro **libfuse2**.
 
@@ -199,7 +230,8 @@ il bundler Tauri (linuxdeploy) ha già raccolto le `.so` via rpath e il fix
    da path Linux, save/reload libreria in `~/.ridley/`. **Controlla che la
    detection `safari?` in `src/ridley/editor/codemirror.cljs:396` scatti sullo
    user-agent WebKitGTK** (altrimenti prende il ramo clipboard sbagliato).
-2. **rpath distribuibile + bundling `.so`** — oggi il ramo Linux di `build.rs`
+2. ~~**rpath distribuibile + bundling `.so`**~~ — FATTO il 2026-10-16, vedi
+   Blocco 2. Testo originale: oggi il ramo Linux di `build.rs`
    usa rpath **assoluto alle build dir** (ok da `target/`, KO su una macchina
    senza quelle dir). Manca il gemello `$ORIGIN` per Linux (la riga
    `build.rs:11` mette `@executable_path/../Frameworks` solo su macOS). Serve
