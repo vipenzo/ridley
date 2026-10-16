@@ -20,14 +20,17 @@ scelta: il dettaglio vive nei brief. Si aggiorna a ogni cambio di fase
 (chiusura di una Parte di un brief, apertura di un fronte), come da
 istruzioni in CLAUDE.md.*
 
-**Fronte APERTO (2026-10-16): DESKTOP LINUX — quasi pronta per una release.**
-Su Ubuntu 26.04 (XPS) l'app parte in dev (`desktop/dev-linux.sh`) e da `.deb`
+**Fase CHIUSA (2026-10-16): DESKTOP LINUX — rilasciata con la v3.10.0.**
+Su Ubuntu (XPS) l'app parte in dev (`desktop/dev-linux.sh`) e da `.deb`
 installato: modella, SDF, finestra file, copia/incolla e libreria verificati.
 libfive viaggia dentro `.deb` e AppImage; DMABUF di WebKitGTK spento a runtime
-solo sotto la 2.52. Scritta la CI `desktop-build-linux.yml`, **mai girata**. La
-webcam su Linux resta rotta per un bug di WebKitGTK/PipeWire (nessun
-fotogramma), lasciato aperto. Entry point per riprendere:
-`dev-docs/HANDOVER-linux-to-mac.md`; dettaglio in `dev-docs/linux-dev-handoff.md`.
+solo sotto la 2.52. La CI `desktop-build-linux.yml` (ubuntu-22.04) è verde al
+primo giro, e il `.deb` che produce è collaudato sull'XPS. Nella stessa release
+la CSP elenca tutte le porte 12321..12330 del geo-server. Restano aperti: la
+webcam su Linux (bug di WebKitGTK/PipeWire, nessun fotogramma); un pacchetto
+Linux ARM64 (servirebbe anche per provarlo in una VM sul Mac Apple Silicon);
+Windows. Dettaglio in `dev-docs/HANDOVER-linux-to-mac.md` e
+`dev-docs/linux-dev-handoff.md`.
 
 **Fase CHIUSA (2026-08-11): acquire guidata dalle osservazioni, gradino 3 —
 BORDI DICHIARATI, e la svolta "il gesto si guida dal codice".** 42 commit,
