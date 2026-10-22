@@ -94,6 +94,20 @@ corners.
 
 Voronoi wall: 8 cells around, 6 along the path.
 
+This version is a quick preview: 64 points around the profile and the
+default 16 rings along the path are too few for clean openings. For an
+acceptable result raise both — the points with the profile's resolution,
+the rings with `loft-n`:
+
+```clojure
+(register voro-tube
+  (loft-n 512 (shell (circle 20 512) :thickness 2 :style :voronoi :cells 8 :rows 6)
+        (f 60)))
+```
+
+Expect it to be **much slower** to generate. Work at low resolution while
+you tune the pattern, and raise it only for the final model.
+
 ## Variations
 
 {{example: shell-voronoi-inverted}}
@@ -165,6 +179,11 @@ grid.
 
 ## Notes
 
+- **Resolution decides the quality.** The openings are cut on the mesh:
+  their edges can only be as fine as the profile's points (around) and
+  the loft's rings (along). The examples on this page use low values so
+  they run fast; for a real model raise both, e.g. `(circle 20 512)` and
+  `loft-n 512`, at the cost of a much slower generation.
 - **Around and along.** Counts "around the circumference" are spread over
   the whole perimeter, so any whole number closes seamlessly. Counts
   "along the path" are spread over the path's length.

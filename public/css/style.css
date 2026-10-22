@@ -3322,6 +3322,27 @@ body.resizing-h * {
   margin: 24px 0;
 }
 
+/* Tables had no rules at all, so the browser squeezed the first column and
+   broke option names like `:cap-bottom` across lines. A code name in the first
+   column never wraps (the longest in the manual is ~33 characters); prose in
+   that column still wraps — some first cells are whole sentences (shell's
+   "To… / See" table), and nowrap on those would blow the table up. */
+.manual-draft-content table {
+  border-collapse: collapse;
+  margin: 0 0 16px 0;
+  color: #d4d4d4;
+  line-height: 1.5;
+}
+.manual-draft-content th,
+.manual-draft-content td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #333;
+  text-align: left;
+  vertical-align: top;
+}
+.manual-draft-content th { color: #fff; font-weight: 600; border-bottom-color: #555; }
+.manual-draft-content td:first-child code { white-space: nowrap; }
+
 /* Code blocks inside drafts use the shared .manual-example styling, so we
    only need to ensure they sit nicely inline with the prose. */
 .manual-draft-content .manual-example {

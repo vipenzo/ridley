@@ -84,7 +84,9 @@ A cup: the same tube closed at the start with a 3 mm solid bottom.
 <!-- /example-source -->
 
 A perforated wall. The other patterns and their options are in
-[shell-styles](shell-styles.md).
+[shell-styles](shell-styles.md). This is a quick preview: for clean
+openings raise the resolution of the profile and of the loft (e.g.
+`(circle 20 512)` and `loft-n 512`) — see [shell-styles](shell-styles.md).
 
 ## Notes
 
