@@ -25,5 +25,8 @@
    instead of silently reaching another instance's server — which is where
    the save dialog used to open (2026-09-28)."
   []
-  (let [p (.-RIDLEY_GEO_PORT js/window)]
+  ;; `exists?` guard: sdf/core calls this at load time, and under Node (the
+  ;; test build) there is no `window` — reading it threw and took down the
+  ;; whole suite before a single test ran.
+  (let [p (when (exists? js/window) (.-RIDLEY_GEO_PORT js/window))]
     (str "http://127.0.0.1:" (if (some? p) p 12321))))
