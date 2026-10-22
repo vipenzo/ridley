@@ -32,6 +32,12 @@ Linux ARM64 (servirebbe anche per provarlo in una VM sul Mac Apple Silicon);
 Windows. Dettaglio in `dev-docs/HANDOVER-linux-to-mac.md` e
 `dev-docs/linux-dev-handoff.md`.
 
+**Nuovo (2026-10-22): `tapered :curve` — taper non lineare.** `:linear`
+(default, identico a prima), `:ease-in`, `:ease-out`, `:ease-in-out`, `:bump`
+(andata e ritorno), oppure una `(fn [t] …)`. Nasce dalle shape-fn che Vincenzo
+riscriveva a mano (sintaper = `:ease-out`, singlepulse = `:bump`, verificate
+identiche nei test). Manuale `tapered` con sette esempi nuovi, Spec aggiornata.
+
 **Nota (2026-10-21): loft all'indietro — limite DOCUMENTATO, non corretto.**
 `(loft … (f -50))` non produce nulla, in silenzio, in tutte le forme di loft;
 è così dalla prima `loft-from-path`, non è una regressione delle guardie sulle

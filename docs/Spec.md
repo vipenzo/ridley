@@ -697,7 +697,7 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 
 | Function | Description |
 |----------|-------------|
-| `(tapered shape :to ratio)` | Scale from 1 (or `:from`) to `:to` along path |
+| `(tapered shape :to ratio)` | Scale from 1 (or `:from`) to `:to` along path; `:curve` sets how (see below) |
 | `(twisted shape :angle deg)` | Rotate progressively (default 360) |
 | `(rugged shape :amplitude a :frequency f :octaves n :gain g :seed s)` | Layered sinusoid displacement (fBm, angular ridges, varies along t) |
 | `(fluted shape :flutes n :depth d)` | Longitudinal cos grooves |
@@ -710,6 +710,14 @@ A shape-fn is a function `(fn [t] -> shape)` with metadata `{:type :shape-fn}`. 
 | `(shell shape :thickness n :style s)` | Hollow extrusion with wall pattern (`:solid` `:voronoi` `:lattice` `:checkerboard` `:pattern`) |
 | `(shell shape :thickness n :fn f)` | Hollow extrusion with custom thickness function |
 | `(woven-shell shape :thickness n ...)` | Shell with radial offset for true over/under weave |
+
+**Non-linear taper (`tapered :curve`).** The scale is `from + curve(t)·(to − from)`, `t` from 0 to 1 along the path. Named curves: `:linear` (default — omitting `:curve` is the old taper exactly), `:ease-in` (`1 − cos(πt/2)`, starts slow), `:ease-out` (`sin(πt/2)`, starts fast), `:ease-in-out` (`(1 − cos πt)/2`), `:bump` (`sin(πt)` — there and back: `:to` at mid-path, `:from` at both ends). Or any `(fn [t] …)` returning how far to go from `:from` to `:to`; its value may leave [0, 1] (overshoot is not clamped). An unknown keyword is an error listing the valid ones. Works in partial form too: `(loft+ (tapered :to 0.35 :curve :bump) (f 30))`.
+
+```clojure
+(tapered (circle 20) :from 1 :to 2 :curve :ease-out)            ; == (fn [s t] (scale-shape s (+ 1 (sin (* t PI 0.5)))))
+(tapered (circle 20) :to 0.35 :curve :bump)                     ; waist, back to full size at the end
+(tapered (circle 20) :to 1.3 :curve (fn [t] (abs (sin (* 2 PI t)))))  ; two bumps
+```
 
 **Composition** via `->` threading:
 

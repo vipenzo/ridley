@@ -141,17 +141,43 @@
 ;; Built-in shape-fns
 ;; ============================================================
 
+(def ^:private taper-curves
+  "Named easings for `tapered :curve`. Each maps t ∈ [0,1] to the fraction of
+   the way from :from to :to — 0 at the start; 1 at the end, except :bump,
+   which comes back to 0 (there and back, peak at t = 0.5)."
+  {:linear      identity
+   :ease-in     (fn [t] (- 1 (Math/cos (* t Math/PI 0.5))))
+   :ease-out    (fn [t] (Math/sin (* t Math/PI 0.5)))
+   :ease-in-out (fn [t] (* 0.5 (- 1 (Math/cos (* t Math/PI)))))
+   :bump        (fn [t] (Math/sin (* t Math/PI)))})
+
+(defn- resolve-taper-curve [curve]
+  (cond
+    (nil? curve) identity
+    (fn? curve) curve
+    (contains? taper-curves curve) (get taper-curves curve)
+    :else (throw (js/Error.
+                  (str "tapered: unknown :curve " (pr-str curve)
+                       " — use one of :linear :ease-in :ease-out :ease-in-out :bump,"
+                       " or a function (fn [t] …) returning how far to go from :from to :to")))))
+
 (defn ^:export tapered
   "Scale a shape from :from (default 1) to :to (default 0) along the path.
+   :curve sets HOW it gets there (default :linear): the scale is
+   from + curve(t)·(to − from). Named curves: :linear :ease-in :ease-out
+   :ease-in-out, and :bump (there and back: :to is reached at mid-path, the
+   ends stay at :from). Or any (fn [t] …) — its value may leave [0,1].
    (tapered (circle 20) :to 0)       ;; cone
    (tapered (circle 20) :from 0.5 :to 1)  ;; expand
+   (tapered (circle 20) :to 0.35 :curve :bump)  ;; waist
    Partial form (no profile) returns the bare transform for loft's legacy /
    transform-> use: (loft+ (tapered :to 1.3) (f 30))."
   [shape-or-fn & args]
   (let [partial? (not (profile-arg? shape-or-fn))
-        {:keys [to from] :or {to 0 from 1}} (combinator-kwargs partial? shape-or-fn args)
+        {:keys [to from curve] :or {to 0 from 1}} (combinator-kwargs partial? shape-or-fn args)
+        ease (resolve-taper-curve curve)
         xf (fn [s t]
-             (xform/scale s (+ from (* t (- to from)))))]
+             (xform/scale s (+ from (* (ease t) (- to from)))))]
     (if partial? xf (shape-fn shape-or-fn xf))))
 
 (defn ^:export twisted
@@ -1633,11 +1659,11 @@
                       ;; a custom :fn replaces the whole field (see docstring)
                       field (or (:fn wall)
                                 (panel-field style (assoc wall
-                                                      :aspect aspect
-                                                      :margin margin
-                                                      :softness softness
-                                                      :u-length length
-                                                      :v-length path-len)))
+                                                          :aspect aspect
+                                                          :margin margin
+                                                          :softness softness
+                                                          :u-length length
+                                                          :v-length path-len)))
                       ;; Cap columns are forced solid (1.0) so no perforation
                       ;; lands on the rounded/squared ends.
                       values (vec (map-indexed

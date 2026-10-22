@@ -2645,8 +2645,8 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(tapered shape-or-fn & {:keys [from to]})\n(tapered & {:keys [from to]})"
-    :description "Shape-fn that scales the cross-section uniformly along the path. At `t = 0` the profile is scaled by `:from`; at `t = 1` it is scaled by `:to`; in between the factor is linearly interpolated. Used with `loft` or `revolve`. Does not modify turtle state."
+    :signature "(tapered shape-or-fn & {:keys [from to curve]})\n(tapered & {:keys [from to curve]})"
+    :description "Shape-fn that scales the cross-section uniformly along the path. At `t = 0` the profile is scaled by `:from`; at `t = 1` it is scaled by `:to`; in between the factor follows `:curve` — a straight line unless you choose otherwise. Used with `loft` or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/tapered.md"}
 
    "text-heightmap"
