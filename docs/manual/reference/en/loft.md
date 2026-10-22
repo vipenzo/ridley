@@ -114,6 +114,23 @@ in a single inlined expression.
   `tan(angle/2)`), so it is negligible for gentle turns and conspicuous at sharp
   ones. Smooth curves (`arc-h`/`arc-v`, beziers) are not treated as corners and
   do not trigger this. `extrude` is unaffected — its profile is static anyway.
+- **`loft` cannot travel backwards.** A path that moves with a negative
+  distance — `(loft … (f -50))` — produces **no mesh and no error**: the
+  object is simply missing. This applies to every loft form (`loft-n`,
+  `loft-between`, `loft+`, shape-fn mode). `extrude` *does* support it. To
+  grow a loft out of the far side of the turtle, loft forwards and mirror the
+  result along the heading:
+
+  ```clojure
+  (register BL (attach (loft (circle 20) identity (f 50)) (stretch-f -1)))
+  ```
+
+  This reproduces what a backward loft would be, also for an asymmetric
+  profile and a rotated turtle: the profile is not mirrored, `t = 0` stays at
+  the turtle and `t = 1` lands at the far end. Two look-alikes that are
+  **wrong**: `(turtle (th 180) (loft …))` mirrors an asymmetric profile left
+  to right, and `(scale (loft …) -1 1 1)` mirrors along the *world* X axis, so
+  it is right only while the turtle points along X.
 - For paths with tight bezier curves where rings would self-intersect,
   smooth the path first (`bezier-as`, `arc-h`, `joint-mode :round`); `loft`
   has no built-in escape hatch for genuinely overlapping rings.

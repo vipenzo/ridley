@@ -1346,6 +1346,14 @@ Extrude with shape transformation based on progress. Supports two modes.
     (f 30)))
 ```
 
+**Known limitation — no backward travel.** A loft path with a negative distance (`(f -50)`) silently produces no mesh, in every loft form (`loft-n`, `loft-between`, `loft+`, shape-fn mode): `loft-from-path` sums the signed segment lengths and bails out when the total is ≤ 0, and several further steps (taper accumulation, ring placement, corner shortening) assume positive runs. It has been so since loft-from-path was first written; it is not a regression. Kept deliberately rather than patched inside that function. Workaround — loft forwards and mirror along the heading:
+
+```clojure
+(register BL (attach (loft (circle 20) identity (f 50)) (stretch-f -1)))
+```
+
+Measured (2026-10-21) against `(extrude L (f -4))` with an off-centre L profile, both axis-aligned and with a tilted turtle: same vertices, same bounds, positive volume. `(turtle (th 180) …)` mirrors an asymmetric profile; `(scale … -1 1 1)` is correct only while the heading is world X.
+
 ### Loft-between (two-shape loft)
 
 Taper between two different shapes:

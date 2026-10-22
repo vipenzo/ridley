@@ -32,6 +32,15 @@ Linux ARM64 (servirebbe anche per provarlo in una VM sul Mac Apple Silicon);
 Windows. Dettaglio in `dev-docs/HANDOVER-linux-to-mac.md` e
 `dev-docs/linux-dev-handoff.md`.
 
+**Nota (2026-10-21): loft all'indietro — limite DOCUMENTATO, non corretto.**
+`(loft … (f -50))` non produce nulla, in silenzio, in tutte le forme di loft;
+è così dalla prima `loft-from-path`, non è una regressione delle guardie sulle
+curve strette. Scelta di Vincenzo: non toccare `loft-from-path`, documentare il
+workaround `(attach (loft … (f 50)) (stretch-f -1))`, misurato giusto anche con
+profilo asimmetrico e turtle inclinato (Spec § Loft, manuale `loft`). Nella
+stessa occasione: `npm test` era morto al caricamento dal 2026-09-28
+(`env/geo-server-url` leggeva `window` sotto Node) — riparato, 1031 test verdi.
+
 **Fase CHIUSA (2026-08-11): acquire guidata dalle osservazioni, gradino 3 —
 BORDI DICHIARATI, e la svolta "il gesto si guida dal codice".** 42 commit,
 integrati in main. Documento di governo:
