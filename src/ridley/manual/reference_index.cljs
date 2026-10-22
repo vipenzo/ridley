@@ -2411,9 +2411,36 @@
     :category "generative-operations"
     :status "stable"
     :since ""
-    :signature "(shell shape-or-fn & {:keys [thickness style threshold cap-top cap-bottom fn invert?] :as style-opts})"
-    :description "Shape-fn that produces a hollow extrusion with variable-thickness walls and optional openings. At each ring, the profile is annotated with a per-vertex thickness value (`0` = no wall, `1` = full thickness); the loft uses these to build an inner and outer wall around each point. The wall pattern is chosen via `:style` (one of `:solid`, `:lattice`, `:checkerboard`, `:voronoi`, `:pattern`) or supplied as a custom function via `:fn`. Used with `loft` or `revolve`. Does not modify turtle state."
+    :signature "(shell shape-or-fn & {:keys [thickness style invert? cap-top cap-bottom fn threshold] :as options})"
+    :description "Shape-fn that turns a profile into a hollow tube with walls of a given thickness, optionally perforated with a pattern and closed at the ends. Used with `loft` (caps work only there) or `revolve`. Does not modify turtle state."
     :path "docs/manual/reference/en/shell.md"}
+
+   "shell-caps"
+   {:name "shell-caps"
+    :category "generative-operations"
+    :status "stable"
+    :since ""
+    :signature "(shell shape-or-fn … :cap-top cap :cap-bottom cap)"
+    :description "Closing the ends of a `shell` tube. Part of the [shell](shell.md) documentation. Caps work with `loft`."
+    :path "docs/manual/reference/en/shell-caps.md"}
+
+   "shell-custom-fn"
+   {:name "shell-custom-fn"
+    :category "generative-operations"
+    :status "stable"
+    :since ""
+    :signature "(shell shape-or-fn :fn (fn [a t] -> 0..1) & {:keys [threshold softness]})"
+    :description "Designing your own wall pattern for `shell`. Part of the [shell](shell.md) documentation."
+    :path "docs/manual/reference/en/shell-custom-fn.md"}
+
+   "shell-styles"
+   {:name "shell-styles"
+    :category "generative-operations"
+    :status "stable"
+    :since ""
+    :signature "(shell shape-or-fn :style style & style-options)"
+    :description "The wall patterns of `shell` and their options. Part of the [shell](shell.md) documentation."
+    :path "docs/manual/reference/en/shell-styles.md"}
 
    "show"
    {:name "show"

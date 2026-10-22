@@ -84,9 +84,8 @@ producing a flared horn.
 ```
 <!-- /example-source -->
 
-A sine taper: the profile widens quickly at first and levels off towards
-the top. It is exactly the hand-written shape-fn
-`(fn [s t] (scale-shape s (+ 1 (sin (* t PI 0.5)))))`.
+An eased flare: the profile widens quickly at first and levels off towards
+the top, reaching double size with no kink at the end.
 
 {{example: tapered-bump}}
 

@@ -38,6 +38,11 @@ Windows. Dettaglio in `dev-docs/HANDOVER-linux-to-mac.md` e
 riscriveva a mano (sintaper = `:ease-out`, singlepulse = `:bump`, verificate
 identiche nei test). Manuale `tapered` con sette esempi nuovi, Spec aggiornata.
 
+**Manuale (2026-10-22): `shell` divisa in quattro pagine** — `shell` (tubo
+semplice + mappa delle pagine), `shell-styles`, `shell-caps` (mappa del tappo
+scritta per intero, trappola `:wall`/`:wall-width` documentata, non corretta),
+`shell-custom-fn`. 21 esempi eseguiti con l'interprete di produzione.
+
 **Nota (2026-10-21): loft all'indietro — limite DOCUMENTATO, non corretto.**
 `(loft … (f -50))` non produce nulla, in silenzio, in tutte le forme di loft;
 è così dalla prima `loft-from-path`, non è una regressione delle guardie sulle

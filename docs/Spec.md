@@ -885,6 +885,8 @@ Cap styles automatically match the shape at the cap's position (accounting for s
 | `:grid` | `:spacing` `[sx sy]` ([5 5]), `:hole` (1.5), `:hole-segments` (16), `:inset` (0) |
 | `:solid` | (none; same as passing a number) |
 
+A cap fills the last (first) `:thickness` mm of the sweep — it does not lengthen it. In a cap map `:thickness` and `:style` are both required: no `:style` throws *Unknown cap :style* (with an empty name); no `:thickness` throws nothing and builds a zero-thickness cap. **Naming trap:** the voronoi *cap*'s strip width is `:wall` in mm, the voronoi *wall*'s is `:wall-width` in cell units — `:wall-width` in a cap map is silently ignored (measured: identical mesh). Kept as is and documented (Vincenzo 2026-10-22); the manual now splits `shell` into `shell` / `shell-styles` / `shell-caps` / `shell-custom-fn`.
+
 **Woven shell.** Thickness + radial offset for true 3D over/under. Unlike `shell` (thickness only), `woven-shell` shifts the wall center radially so threads can pass in front of / behind each other. At crossings, both threads are combined into a single thicker wall.
 
 ```clojure
