@@ -32,6 +32,14 @@ Linux ARM64 (servirebbe anche per provarlo in una VM sul Mac Apple Silicon);
 Windows. Dettaglio in `dev-docs/HANDOVER-linux-to-mac.md` e
 `dev-docs/linux-dev-handoff.md`.
 
+**Fronte APERTO (2026-11-01): SpaceMouse in edit-attach, solo desktop.**
+Accertamento chiuso (`dev-docs/accertamento-spacemouse-risultati.md`), brief in
+`dev-docs/brief-spacemouse-edit-attach.md`, tre commit. Commit 1 FATTO: logica
+pura in `ridley.input.spacemouse` (frame del device → comandi della
+tartaruga, macchina a stati del gesto, un gesto = un comando), testata sulle
+misure reali. Restano il lettore Rust con esclusiva (commit 2) e il collegamento
+a edit-attach (commit 3).
+
 **Nuovo (2026-10-22): `tapered :curve` — taper non lineare.** `:linear`
 (default, identico a prima), `:ease-in`, `:ease-out`, `:ease-in-out`, `:bump`
 (andata e ritorno), oppure una `(fn [t] …)`. Nasce dalle shape-fn che Vincenzo
