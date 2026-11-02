@@ -55,6 +55,36 @@ touching anything is the identity on your source.
 | `Backspace` | undo one command |
 | `Enter` | confirm · `Esc` cancel |
 
+## SpaceMouse (desktop app)
+
+In the desktop app on macOS, a 3Dconnexion SpaceMouse drives the session too. The
+cap *is* the object, seen from behind the turtle:
+
+| translation | | rotation | |
+|---|---|---|---|
+| push away / pull back | `f` | tilt the far edge down / up | `tv` |
+| push right / left | `rt` | tilt the right edge down / up | `tr` |
+| lift / press | `u` | twist clockwise / counter-clockwise | `th` |
+
+The harder you push, the faster the values grow. The object glides along live,
+and **the commands are written when you let go**, each rounded to its step (the
+panel shows them as you go). Hold `Shift` for free values instead. `Backspace`
+while still holding drops the gesture; `Enter` includes it. In Origin mode the
+same gestures emit the `cp-` commands.
+
+A panel button chooses which axes count, and is remembered:
+
+- **all axes** — every movement of the cap is honored: you can move and turn in
+  one gesture. Pushing the cap tends to tilt it a little too; small couplings
+  round away to zero, larger ones show up as an extra command you can undo or
+  correct.
+- **Tab axes** — only the active mode's: step mode moves (`f` `rt` `u`), angle
+  mode turns (`th` `tv` `tr`), one axis per gesture, so a push never turns the
+  object. `Tab`, or the SpaceMouse's right button, switches mode.
+
+While the session is open, and the Ridley window is in front, the SpaceMouse
+belongs to Ridley; otherwise macOS uses it as a mouse.
+
 ## Two things move, and it matters which
 
 The **Mode** button switches what a gesture acts on:

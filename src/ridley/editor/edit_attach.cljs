@@ -13,13 +13,15 @@
             [ridley.editor.codemirror :as cm]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.gizmo :as gizmo]
+            [ridley.input.spacemouse :as sm]
+            [ridley.input.spacemouse-device :as puck-device]
             [ridley.scene.registry :as registry]
             [ridley.turtle.attachment :as attachment]
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
 ;; Forward declarations for mutual references
-(declare confirm! cancel! update-panel-display! build-code)
+(declare confirm! cancel! update-panel-display! build-code puck-stop!)
 
 ;; ============================================================
 ;; State
@@ -48,7 +50,11 @@
 ;;  :edit-attach-from  42          — char offset of the marker form start
 ;;  :edit-attach-to    56          — char offset of the marker form end
 ;;  :panel-el      <DOM>
-;;  :key-handler   <fn>}
+;;  :key-handler   <fn>
+;;  :eval-pending? true            — a re-eval is scheduled and hasn't run yet
+;;  :puck          {:phase …}      — SpaceMouse gesture state (ridley.input.spacemouse)
+;;  :puck-t :puck-buttons :puck-latched? :puck-shift? :puck-key-handler
+;;                                 — its frame-loop bookkeeping, see SpaceMouse below}
 
 ;; ============================================================
 ;; Helpers
@@ -302,6 +308,15 @@
     (catch :default e
       (js/console.warn "edit-attach eval error (repl):" (.-message e)))))
 
+(defn- show-replacement-preview!
+  "Turtle, gizmo and wireframe preview from a standalone eval of the replacement
+   for `commands` — the only thing nudge-preview! can move without a re-eval."
+  [commands]
+  (let [replacement (build-code (:source-expr @session) commands)
+        mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
+                         (catch :default _ nil))]
+    (show-preview! mesh-result)))
+
 (defn- eval-with-commands-script!
   "Script mode: re-evaluate full editor script with the marker replaced. The
    shared re-eval boilerplate (clear scene, reset turtle, arm skip flag, eval,
@@ -316,11 +331,7 @@
   ;; opening (the reentry glitch). Every sibling editor (edit-path,
   ;; edit-image-board, edit-bezier) passes false here for the same reason.
   (when (modal/reeval-script! #(build-modified-script commands) "edit-attach eval error:" false)
-    (let [{:keys [source-expr]} @session
-          replacement (build-code source-expr commands)
-          mesh-result (try (sci/eval-string replacement @state/sci-ctx-ref)
-                           (catch :default _ nil))]
-      (show-preview! mesh-result))))
+    (show-replacement-preview! commands)))
 
 (defn- eval-with-commands!
   "Re-evaluate with current commands. Dispatches to REPL or script mode."
@@ -339,11 +350,13 @@
   []
   (when-let [t (:eval-timeout @session)]
     (js/clearTimeout t))
-  (swap! session assoc :eval-timeout
-         (js/setTimeout (fn []
-                          (eval-with-commands!)
-                          (update-panel-display!))
-                        80)))
+  (swap! session assoc
+         :eval-pending? true
+         :eval-timeout (js/setTimeout (fn []
+                                        (eval-with-commands!)
+                                        (when @session (swap! session assoc :eval-pending? false))
+                                        (update-panel-display!))
+                                      80)))
 
 (defn- add-command!
   "Append a gestural command and trigger re-eval."
@@ -370,6 +383,7 @@
   []
   (modal/unmount-panel! (:panel-el @session))
   (modal/remove-keydown! (:key-handler @session))
+  (puck-stop!)
   (gizmo/close!)
   ;; Restore turtle source and clear preview
   (viewport/set-turtle-source! :global)
@@ -483,6 +497,10 @@
                "<button class='pilot-btn pilot-btn-mode'>Mode: Object</button>"
                "</div>"
                "<div class='pilot-commands pilot-cmd-list'>(no commands yet)</div>"
+               (when (puck-device/available?)
+                 (str "<div class='pilot-commands pilot-puck'>"
+                      "<button class='pilot-btn pilot-btn-puck-axes'>" (puck-axes-label) "</button> "
+                      "<span class='pilot-puck-status'>…</span></div>"))
                ;; keyboard help (collapsed behind the header "?" toggle, wired
                ;; generically by modal/mount-panel!)
                "<div class='pilot-commands modal-help'>"
@@ -496,6 +514,11 @@
                "readout shows the next command's value. "
                "Origin mode: click a mesh vertex to snap the pose onto it "
                "(Alt+click: nearest face point to the pose) — up to 3 cp = up to 3 undo."
+               (when (puck-device/available?)
+                 (str " SpaceMouse: push/lift = f/rt/u, tilt/twist = tv/tr/th — "
+                      "written on release, rounded to the step (Shift: free value). "
+                      "'all axes' honors every signal; 'Tab axes' only the active "
+                      "mode's (step or angle). Right button = Tab."))
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-undo'>Undo</button>"
@@ -511,6 +534,8 @@
                        (fn [_] (cancel!)))
     (.addEventListener (.querySelector panel ".pilot-btn-mode") "click"
                        (fn [_] (toggle-gizmo-mode!)))
+    (when-let [btn (.querySelector panel ".pilot-btn-puck-axes")]
+      (.addEventListener btn "click" (fn [_] (toggle-puck-axes!))))
     ;; Insert into repl-terminal before repl-input-line
     (modal/mount-panel! panel)
     panel))
@@ -546,6 +571,151 @@
       (swap! session assoc :digit-buffer "" :digit-target :step)
       (update-panel-display!))))
 
+(defn- cycle-digit-target!
+  "Tab, and the SpaceMouse's right button: step → angle → scale."
+  []
+  (flush-digit-buffer!)
+  (swap! session update :digit-target {:step :angle, :angle :scale, :scale :step})
+  (update-panel-display!))
+
+;; ============================================================
+;; SpaceMouse (desktop only) — dev-docs/brief-spacemouse-edit-attach.md
+;; ============================================================
+;; One gesture = one command, the gizmo's pattern: while the cap is deflected only
+;; the gizmo and the preview move (gizmo/preview-command!, no re-eval); back at
+;; rest, the values rounded to the step are written. Which axes count is the
+;; user's choice, remembered across sessions (panel button): ALL of them, or only
+;; the family the arrows have (:digit-target, cycled by Tab or the right button).
+;; All the decisions are ridley.input.spacemouse's; this is the per-frame plumbing
+;; between the device, the gizmo and the session.
+
+(def ^:private puck-axes-key "ridley:spacemouse-axes")
+
+(defonce ^:private puck-axes
+  ;; :all (every signal honored) or :tab (the arrows' family). Default :all —
+  ;; Vincenzo, 2026-11-02: coupling is easy to correct by hand.
+  (atom (or (try (some-> (.getItem js/localStorage puck-axes-key) keyword)
+                 (catch :default _ nil))
+            :all)))
+
+(defn- puck-axes-label []
+  (if (= :all @puck-axes) "SpaceMouse: all axes" "SpaceMouse: Tab axes"))
+
+(defn- toggle-puck-axes! []
+  (swap! puck-axes #(if (= % :all) :tab :all))
+  (try (.setItem js/localStorage puck-axes-key (name @puck-axes)) (catch :default _ nil))
+  (when-let [btn (some-> (:panel-el @session) (.querySelector ".pilot-btn-puck-axes"))]
+    (set! (.-textContent btn) (puck-axes-label))))
+
+(defn- puck-cmd
+  "Origin mode moves the geometry under the pose, like the gizmo: cp-* twins."
+  [axis]
+  (if (= :origin (:gizmo-mode @session)) (keyword (str "cp-" (name axis))) axis))
+
+(defn- puck-cmds [pairs]
+  (mapv (fn [[axis v]] [(puck-cmd axis) v]) pairs))
+
+(defn- puck-opts []
+  (let [{:keys [digit-target step angle-step puck-shift? eval-pending? puck-latched?]} @session]
+    {:family (if (= :all @puck-axes) :all digit-target)
+     :step step :angle-step angle-step :free? (boolean puck-shift?)
+     ;; no new gesture over a pending re-eval (its preview would restart from the
+     ;; old pose), nor before the cap has been back to rest after Backspace/a button
+     :blocked? (boolean (or eval-pending? puck-latched?))}))
+
+(defn- puck-active? [] (= :active (get-in @session [:puck :phase])))
+
+(defn- puck-commit!
+  "Write a gesture's commands: one add-command! each (one re-eval, the debounce
+   gathers them), or just drop the preview when nothing rounds to non-zero."
+  [pairs]
+  (if (seq pairs)
+    (doseq [[cmd v] (puck-cmds pairs)] (add-command! cmd v))
+    (gizmo/end-preview!)))
+
+(defn- puck-end!
+  "End the gesture in progress, if any: `commit?` true writes its rounded values
+   (Enter), false drops it (Backspace). Either way the cap must come back to rest
+   before the next gesture."
+  [commit?]
+  (when (puck-active?)
+    (let [cmds (sm/gesture-commands (:puck @session) (puck-opts))]
+      (swap! session assoc :puck sm/idle :puck-latched? true)
+      (puck-commit! (when commit? cmds))
+      (update-panel-display!))))
+
+(defn- puck-status-text []
+  (let [{:keys [puck eval-pending?]} @session]
+    (cond
+      (= :active (:phase puck))
+      (let [cmds (puck-cmds (sm/gesture-commands puck (puck-opts)))]
+        (str (if (seq cmds) (commands->code-str cmds) "…") " …"))
+      (not (:connected @puck-device/status)) "not connected"
+      eval-pending? "…"
+      :else "ready")))
+
+(defn- puck-at-rest? [input]
+  (let [th (:release-threshold sm/config)]
+    (every? #(< (Math/abs %) th) (concat (:t input) (:r input)))))
+
+(defn- puck-frame!
+  "Per-frame: advance the gesture from the latest device state, preview it, commit
+   it when it ends, and turn a right-button press into Tab."
+  [_camera]
+  (when (:entered? @session)
+    (let [now (js/performance.now)
+          {:keys [puck puck-t puck-buttons puck-latched? digit-buffer]} @session
+          dt (if puck-t (/ (- now puck-t) 1000) 0)
+          input @puck-device/state
+          buttons (:buttons input 0)
+          pressed (bit-and buttons (bit-not (or puck-buttons 0)))
+          _ (when (and puck-latched? (or (nil? input) (puck-at-rest? input)))
+              (swap! session assoc :puck-latched? false))
+          opts (puck-opts)
+          g (sm/step-gesture puck input dt opts)
+          ;; Pending digits become the step first, as an arrow press does — keeping
+          ;; the family the gesture started in (flushing also resets :digit-target).
+          g (if (and (= :active (:phase g)) (not= :active (:phase puck)) (seq digit-buffer))
+              (do (flush-digit-buffer!)
+                  (sm/step-gesture puck input dt (assoc (puck-opts) :family (:family opts))))
+              g)]
+      (swap! session assoc :puck (dissoc g :ended :commits) :puck-t now :puck-buttons buttons)
+      (cond
+        (= :active (:phase g))
+        (gizmo/preview-commands! (puck-cmds (sm/gesture-preview g)))
+
+        (:ended g)
+        (do (when (pos? buttons) (swap! session assoc :puck-latched? true))
+            (puck-commit! (:commits g))))
+      (when (pos? (bit-and pressed 2))
+        (cycle-digit-target!))
+      (when-let [el (some-> (:panel-el @session) (.querySelector ".pilot-puck-status"))]
+        (let [txt (puck-status-text)]
+          (when (not= txt (.-textContent el))
+            (set! (.-textContent el) txt)))))))
+
+(defn- puck-start!
+  "Take the device (exclusively, while the window is focused — the reader handles
+   focus) and start the frame loop. No-op outside the desktop app."
+  []
+  (when (puck-device/available?)
+    (let [on-key (fn [^js e] (swap! session assoc :puck-shift? (.-shiftKey e)))]
+      (swap! session assoc :puck sm/idle :puck-key-handler on-key)
+      (.addEventListener js/document "keydown" on-key true)
+      (.addEventListener js/document "keyup" on-key true))
+    (puck-device/acquire!)
+    (viewport/register-frame-callback! :spacemouse puck-frame!)))
+
+(defn- puck-stop!
+  "Give the device back to macOS and stop the loop. Safe when never started."
+  []
+  (when (puck-device/available?)
+    (viewport/unregister-frame-callback! :spacemouse)
+    (puck-device/release!)
+    (when-let [on-key (:puck-key-handler @session)]
+      (.removeEventListener js/document "keydown" on-key true)
+      (.removeEventListener js/document "keyup" on-key true))))
+
 (defn- on-edit-attach-keydown [e]
   (when (:entered? @session)
     (let [key (.-key e)
@@ -557,10 +727,7 @@
         ;; Mode controls both what digits edit AND what arrows do
         (= key "Tab")
         (do (.preventDefault e) (.stopPropagation e)
-            (flush-digit-buffer!)
-            (swap! session update :digit-target
-                   {:step :angle, :angle :scale, :scale :step})
-            (update-panel-display!))
+            (cycle-digit-target!))
 
         ;; === Digit input → edits the active parameter ===
         digit
@@ -675,7 +842,11 @@
         ;; === Undo ===
         (= key "Backspace")
         (do (.preventDefault e) (.stopPropagation e)
-            (if (seq (:digit-buffer @session))
+            (cond
+              ;; A SpaceMouse gesture in progress: Backspace drops it (it has no
+              ;; command yet to undo)
+              (puck-active?) (puck-end! false)
+              (seq (:digit-buffer @session))
               ;; Undo digit input first
               (do (swap! session update :digit-buffer
                          #(subs % 0 (max 0 (dec (count %)))))
@@ -683,11 +854,13 @@
                     (swap! session assoc :digit-target :step))
                   (update-panel-display!))
               ;; Undo last command
-              (undo-command!)))
+              :else (undo-command!)))
 
         ;; === Confirm ===
         (= key "Enter")
-        (do (.preventDefault e) (.stopPropagation e) (flush-digit-buffer!) (confirm!))
+        (do (.preventDefault e) (.stopPropagation e)
+            (puck-end! true)            ; a gesture in progress is part of what's confirmed
+            (flush-digit-buffer!) (confirm!))
 
         ;; === Cancel ===
         (= key "Escape")
@@ -830,6 +1003,10 @@
     ;; is readable — and everything below stands on the mesh the user sees
     ;; instead of on the untransformed inner pose.
     (capture-world-xform!)
+    ;; The wireframe preview exists only after a re-eval; without it the FIRST
+    ;; gesture of a session (a gizmo drag or the SpaceMouse) moved the gizmo and
+    ;; left the object still (found 2026-11-02). Put it up now.
+    (show-replacement-preview! (:commands @session))
     (let [world-pose (:scene-pose @session)]
       ;; Show turtle indicator on the mesh's current (attached) creation-pose
       (viewport/set-turtle-source! {:custom world-pose})
@@ -843,6 +1020,7 @@
                      :angle-step (:angle-step @session)
                      :scale-step (:scale-step @session)}
                     {:on-commit add-command!}))
+    (puck-start!)
     ;; Update dropdown to show "Edit-Attach" instead of "Global"
     (when-let [sel (.getElementById js/document "turtle-source-select")]
       (let [opt (.createElement js/document "option")]

@@ -2687,7 +2687,12 @@
               m11 m12 m13 tx
               m21 m22 m23 ty
               m31 m32 m33 tz
-              0 0 0 1)))
+              0 0 0 1))
+
+      ;; Already composed by the caller (the SpaceMouse's several axes at once,
+      ;; gizmo/preview-commands!)
+      (:matrix delta)
+      (.copy mat (:matrix delta)))
     mat))
 
 (defn nudge-preview!
@@ -2698,6 +2703,7 @@
      {:translate [dx dy dz]}
      {:rotate {:pivot [x y z] :axis [x y z] :deg d}}
      {:scale  {:pivot [x y z] :axis [x y z] :factor f}}
+     {:matrix <THREE.Matrix4>}
    All vectors/points are world-group-local. The next real show-preview!/
    show-wireframe-preview! call replaces the object outright, which implicitly
    resets this (fresh objects default to matrixAutoUpdate true, identity transform)."

@@ -40,7 +40,7 @@
 
 (def rest-in {:t [0 0 0] :r [0 0 0] :buttons 0})
 
-(defn- commits [states] (keep :commit states))
+(defn- commits [states] (mapcat :commits states))
 
 ;; ============================================================
 ;; device->turtle + pick-axis on the measured gestures
@@ -130,7 +130,7 @@
   (let [start {:t [0 -150 0] :r [0 0 0] :buttons 0}
         veer {:t [340 -100 0] :r [0 0 0] :buttons 0}
         states (run (concat (hold start 0.5) (hold veer 0.5) [[rest-in (/ 1 60)]]) opts)]
-    (is (every? #(= :f (:axis %)) (filter #(= :active (:phase %)) states)))
+    (is (every? #(= #{:f} (:axes %)) (filter #(= :active (:phase %)) states)))
     (is (= :f (ffirst (commits states))))))
 
 (deftest release-hysteresis
@@ -149,7 +149,7 @@
         (is (= :idle (:phase (last states))))))
     (testing "all-zero ends it at once"
       (let [states (run (concat (hold push 0.5) [[rest-in (/ 1 60)]]) opts)]
-        (is (:commit (last states)))))))
+        (is (:commits (last states)))))))
 
 (deftest buttons-mask-axes-and-close-a-gesture
   (testing "with a button down a deflection starts nothing"
@@ -187,10 +187,53 @@
   (let [push {:t [0 -305 0] :r [0 0 0] :buttons 0}
         before (last (run (hold push 0.8) opts))
         after (sm/step-gesture before rest-in (/ 1 60) opts)]
-    (is (= (sm/gesture-value before opts) (second (:commit after))))))
+    (is (= (sm/gesture-commands before opts) (:commits after)))))
+
+(deftest preview-is-continuous-commit-is-rounded
+  (let [push {:t [0 -250 0] :r [0 0 0] :buttons 0}
+        s (last (run (hold push 0.7) opts))
+        [[_ p]] (sm/gesture-preview s)]
+    (is (not (zero? (mod p 5))) "the preview is not on the step grid")
+    (is (= [[:f (* 5 (Math/round (/ p 5)))]] (sm/gesture-commands s opts)))
+    (is (nil? (sm/gesture-preview sm/idle)))))
 
 (deftest long-frame-is-clamped
   (testing "a stalled frame (tab hidden, heavy eval) doesn't jump the value"
     (let [push {:t [0 -350 0] :r [0 0 0] :buttons 0}
           s (sm/step-gesture (sm/step-gesture sm/idle push (/ 1 60) opts) push 5.0 opts)]
-      (is (< (:acc s) (* 5 (:max-steps-per-s sm/config) 0.2))))))
+      (is (< (get-in s [:acc :f]) (* 5 (:max-steps-per-s sm/config) 0.2))))))
+
+;; ============================================================
+;; :all — every signal honored (Vincenzo, 2026-11-02)
+;; ============================================================
+
+(def all-opts (assoc opts :family :all))
+
+(deftest all-axes-pure-rotation-writes-only-the-rotation
+  (let [tilt {:t [0 0 0] :r [-300 0 0] :buttons 0}
+        cs (commits (run (concat (hold tilt 0.5) [[rest-in (/ 1 60)]]) all-opts))]
+    (is (= [:tv] (map first cs)))
+    (is (neg? (second (first cs))))))
+
+(deftest all-axes-coupling-is-written-not-filtered
+  (testing "the measured push-away tilts the cap too (rx -271): both are written,
+            translations first, as the preview composes them"
+    (let [push (assoc (get-in gestures [:push-away 3]) :buttons 0)
+          cs (commits (run (concat (hold push 0.5) [[rest-in (/ 1 60)]]) all-opts))]
+      ;; tz +117 joins too, but integrates to ~1.5 mm: the 5 mm step rounds it away
+      (is (= [:f :tv] (map first cs)))
+      (is (pos? (second (first cs)))))))
+
+(deftest all-axes-join-late-and-release-together
+  (let [f-only {:t [0 -300 0] :r [0 0 0] :buttons 0}
+        f+th {:t [0 -300 0] :r [0 0 300] :buttons 0}
+        th-only {:t [0 0 0] :r [0 0 300] :buttons 0}
+        states (run (concat (hold f-only 0.3) (hold f+th 0.3) (hold th-only 0.3)) all-opts)]
+    (is (= #{:f :th} (:axes (last states))) "th joined mid-gesture")
+    (is (= :active (:phase (last states))) "f quiet alone doesn't end it while th moves")
+    (let [cs (:commits (sm/step-gesture (last states) rest-in (/ 1 60) all-opts))]
+      (is (= [:f :th] (map first cs))))))
+
+(deftest all-axes-noise-starts-nothing
+  (let [noise {:t [0 -46 23] :r [52 -52 0] :buttons 0}]
+    (is (every? #(= :idle (:phase %)) (run (hold noise 1.0) all-opts)))))

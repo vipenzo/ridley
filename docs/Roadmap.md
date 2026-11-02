@@ -39,8 +39,14 @@ pura in `ridley.input.spacemouse` (frame del device → comandi della
 tartaruga, macchina a stati del gesto, un gesto = un comando), testata sulle
 misure reali. Commit 2 FATTO e collaudato da Vincenzo: lettore Rust
 (`desktop/src-tauri/src/spacemouse.rs`, solo macOS) in esclusiva solo con
-sessione attiva e finestra a fuoco, riaggancio al cavo, eventi a ≤60/s. Resta il
-collegamento a edit-attach (commit 3).
+sessione attiva e finestra a fuoco, riaggancio al cavo, eventi a ≤60/s. Commit 3
+FATTO e collaudato da Vincenzo: collegamento a edit-attach — anteprima continua,
+arrotondamento al passo solo al rilascio (Shift = libero), bottone «all axes»
+(predefinito, ogni asse del cappuccio onorato, comandi in ordine `f rt u th tv
+tr`) / «Tab axes» (una famiglia, un asse per gesto), modo Origin → `cp-*`. Corretto
+anche un difetto vecchio: all'ingresso mancava l'anteprima in fil di ferro e il
+primo gesto muoveva solo il gizmo. Aperti: condensare i comandi della sessione,
+orbita della camera col SpaceMouse.
 
 **Nuovo (2026-10-22): `tapered :curve` — taper non lineare.** `:linear`
 (default, identico a prima), `:ease-in`, `:ease-out`, `:ease-in-out`, `:bump`

@@ -1,15 +1,18 @@
 (ns ridley.input.spacemouse
   "SpaceMouse → edit-attach commands, as pure functions (dev-docs/
-   brief-spacemouse-edit-attach.md, commit 1). No DOM, Tauri or Three.js here: the
-   reader (Rust) hands over raw device values, edit-attach drives `step-gesture`
-   once per frame and turns its :commit into one add-command!.
+   brief-spacemouse-edit-attach.md). No DOM, Tauri or Three.js here: the reader
+   (Rust) hands over raw device values, edit-attach drives `step-gesture` once per
+   frame and turns its :commits into add-command! calls.
 
-   One gesture = one command: while the cap is deflected the value integrates as a
-   velocity and only the preview moves; back at rest, the value rounded to the
-   step is committed once. The axis family is the session's (:step → f/rt/u,
-   :angle → th/tv/tr), never inferred: pushing the cap tilts it about as much as
-   it translates (dev-docs/accertamento-spacemouse-risultati.md, point 1), so the
-   two families must not compete.")
+   One gesture, written once: while the cap is deflected the values integrate as
+   velocities and only the preview moves; back at rest, each value rounded to its
+   step is committed. Two ways to pick the axes:
+   - a family (:step → f/rt/u, :angle → th/tv/tr): one axis, the largest at the
+     start, locked — pushing the cap tilts it about as much as it translates
+     (dev-docs/accertamento-spacemouse-risultati.md, point 1), so the families
+     must not compete;
+   - :all — every signal honored, each axis joining when it crosses the start
+     threshold; the user corrects any coupling by hand (Vincenzo, 2026-11-02).")
 
 (def config
   "Every tunable in one place — to be calibrated on screen. Raw units are the
@@ -82,33 +85,66 @@
 (defn- unit [axis {:keys [step angle-step]}]
   (if (rotation? axis) angle-step step))
 
-(defn gesture-value
-  "The value an :active gesture would commit right now — also what the preview and
-   the panel show. nil when idle."
-  [{:keys [phase axis acc]} {:keys [free?] :as opts}]
-  (when (= phase :active)
-    (round-to acc (unit axis opts) free?)))
+(def ^:private axis-order
+  "The order commands are written in at release: translations, then th tv tr. The
+   preview composes them the same way (gizmo/preview-commands!)."
+  [:f :rt :u :th :tv :tr])
 
-(defn- end [state opts]
-  (let [v (gesture-value state opts)]
-    (cond-> {:phase :idle :ended true}
-      (and v (not (zero? v))) (assoc :commit [(:axis state) v]))))
+(defn- joining
+  "The gesture's axes after this frame. In a family (:step/:angle) only the axis
+   picked at the start, and the set never grows; in :all (every signal honored)
+   each axis joins the first time it reaches the start threshold."
+  [family comps axes cfg]
+  (if (= family :all)
+    (into (or axes #{})
+          (filter #(>= (Math/abs (comps %)) (:start-threshold cfg)))
+          axis-order)
+    (or axes (some-> (pick-axis family comps cfg) hash-set))))
+
+(defn gesture-commands
+  "What an :active gesture would write right now — `[[cmd value] ...]`, each value
+   rounded to its step (or to 0.1 with `free?`), zeros dropped, in axis-order.
+   Also what the panel shows. nil when idle."
+  [{:keys [phase acc]} {:keys [free?] :as opts}]
+  (when (= phase :active)
+    (vec (for [a axis-order
+               :let [x (get acc a)]
+               :when x
+               :let [v (round-to x (unit a opts) free?)]
+               :when (not (zero? v))]
+           [a v]))))
+
+(defn gesture-preview
+  "The unrounded values of an :active gesture, `[[cmd value] ...]` in axis-order —
+   what the preview follows, so the object glides instead of stepping (Vincenzo,
+   2026-11-02). Rounding happens only in what is written. nil when idle."
+  [{:keys [phase acc]}]
+  (when (= phase :active)
+    (vec (for [a axis-order :let [x (get acc a)] :when x] [a x]))))
+
+(defn- integrate [acc axes comps dt opts cfg]
+  (reduce (fn [acc a]
+            (update acc a (fnil + 0)
+                    (* (response (comps a) cfg) (:max-steps-per-s cfg) (unit a opts) dt)))
+          acc axes))
 
 (defn step-gesture
   "Advance the gesture by one frame. `input` is the latest raw device state
    `{:t [..] :r [..] :buttons n}` (nil = nothing received = at rest), `dt` the
-   frame time in seconds, `opts` `{:family :step :angle-step :free? :blocked?}`.
+   frame time in seconds, `opts` `{:family :step :angle-step :free? :blocked?}`,
+   :family being :step, :angle (one axis of that family, locked at the start) or
+   :all (every axis that reaches the start threshold joins).
 
-     :idle   → :active when the family's largest axis reaches the start
-               threshold (not while :blocked? — a re-eval is pending — nor with a
-               button down, since pressing a button moves the cap).
-     :active → the locked axis integrates `response × max-steps-per-s × unit`.
-               It ends when the device is all zero, when the locked axis stays
+     :idle   → :active when an eligible axis reaches the start threshold (not
+               while :blocked? — a re-eval is pending — nor with a button down,
+               since pressing a button moves the cap).
+     :active → each joined axis integrates `response × max-steps-per-s × unit`.
+               It ends when the device is all zero, when every joined axis stays
                under the release threshold for release-hold-ms, or when a button
                is pressed (the button's own effect is the caller's business).
 
-   Ending returns `{:phase :idle :ended true}` plus `:commit [cmd value]` when the
-   rounded value is not zero. Those two keys live on that one returned state only."
+   Ending returns `{:phase :idle :ended true}` plus `:commits [[cmd value] ...]`
+   when anything rounds to non-zero. Those keys live on that one returned state."
   ([state input dt opts] (step-gesture state input dt opts config))
   ([state input dt {:keys [family blocked?] :as opts} cfg]
    (let [input (or input {:t [0 0 0] :r [0 0 0] :buttons 0})
@@ -116,21 +152,21 @@
          button? (pos? (:buttons input 0))
          dt (min dt (:max-dt cfg))]
      (if (= :active (:phase state))
-       (let [{:keys [axis]} state
-             raw (get comps axis)
+       (let [axes (joining family comps (:axes state) cfg)
              all-zero? (every? zero? (concat (:t input) (:r input)))
-             quiet-ms (if (< (Math/abs raw) (:release-threshold cfg))
+             quiet-ms (if (every? #(< (Math/abs (comps %)) (:release-threshold cfg)) axes)
                         (+ (:quiet-ms state) (* dt 1000))
                         0)]
          (if (or button? all-zero? (>= quiet-ms (:release-hold-ms cfg)))
-           (end state opts)
+           (let [cmds (gesture-commands state opts)]
+             (cond-> {:phase :idle :ended true}
+               (seq cmds) (assoc :commits cmds)))
            (assoc state
-                  :acc (+ (:acc state) (* (response raw cfg) (:max-steps-per-s cfg)
-                                          (unit axis opts) dt))
+                  :axes axes
+                  :acc (integrate (:acc state) axes comps dt opts cfg)
                   :quiet-ms quiet-ms)))
-       (let [axis (when-not (or blocked? button?) (pick-axis family comps cfg))]
-         (if axis
-           {:phase :active :axis axis :quiet-ms 0
-            :acc (* (response (get comps axis) cfg) (:max-steps-per-s cfg)
-                    (unit axis opts) dt)}
+       (let [axes (when-not (or blocked? button?) (joining family comps nil cfg))]
+         (if (seq axes)
+           {:phase :active :axes axes :quiet-ms 0
+            :acc (integrate {} axes comps dt opts cfg)}
            idle))))))

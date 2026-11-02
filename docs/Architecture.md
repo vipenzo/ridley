@@ -1377,6 +1377,7 @@ Premessa importante: la cartella `src/ridley/**` è interamente condivisa. La di
 | **Filesystem librerie** | localStorage (`ridley:lib:*`) | Filesystem (`~/.ridley/libraries/*.clj` + metadata) |
 | **STL / 3MF export** | `URL.createObjectURL` + `<a download>` | Dialog nativo + `/write-file` |
 | **Settings, AI history, prompt store** | localStorage | localStorage anche in desktop |
+| **SpaceMouse** (in `edit-attach`) | Assente: niente WebHID, il browser non può prendere il device in esclusiva e macOS lo usa come mouse | Solo macOS: `desktop/src-tauri/src/spacemouse.rs` legge con hidapi in esclusiva (solo a sessione aperta e finestra a fuoco), eventi Tauri `spacemouse`/`spacemouse-status`, comandi `spacemouse_acquire`/`_release` — l'unico canale IPC Tauri del progetto, tutto il resto passa dal geo-server. Logica del gesto in `ridley.input.spacemouse` |
 
 La mappa è sbilanciata. Il "solo desktop" copre due capability, libfive e accesso pieno al filesystem. Il "solo webapp" è quasi vuoto: WebXR e Web Speech sono disponibili nei browser supportati ma non garantiti in WKWebView, e la rottura non è una scelta architettonica ma un dato di compatibilità della WebView.
 

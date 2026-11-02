@@ -553,6 +553,54 @@
   [pivot axis factor]
   (viewport/nudge-preview! {:scale {:pivot pivot :axis axis :factor factor}}))
 
+(defn preview-commands!
+  "Preview not-yet-committed `[[cmd value] ...]` coming from something other than a
+   drag — the SpaceMouse (dev-docs/brief-spacemouse-edit-attach.md), possibly on
+   several axes at once. `cmd` is a plain f/rt/u/th/tv/tr or its cp-* twin; scale
+   commands are ignored. Composed the way the turtle will run them when written in
+   this order, translations then th tv tr: the pose moves by d along its own axes,
+   then turns about its new position — th about up, tv about the right AFTER th,
+   tr about the heading after both, which is the same rotation as the world-axis
+   one q_th·q_tv·q_tr on the starting axes. As for a drag, the gizmo's mode decides
+   whether the mesh moves too (object) or only the pose marker (origin). Does
+   nothing when the gizmo is closed."
+  [cmds]
+  (when-let [{:keys [pose mode group nudge-mesh?] :or {nudge-mesh? true}} @gstate]
+    (let [axis-of (fn [cmd]
+                    (some (fn [[k {c :cmd cp :cp-cmd}]] (when (or (= c cmd) (= cp cmd)) k))
+                          handle-info))
+          parts (keep (fn [[cmd v]] (when-let [h (axis-of cmd)]
+                                      [(:kind (handle-info h)) (handle-axis pose h) v]))
+                      cmds)
+          d (reduce (fn [acc [kind axis v]]
+                      (if (= kind :translate) (m/v+ acc (m/v* axis v)) acc))
+                    [0 0 0] parts)
+          q (reduce (fn [^js q [kind axis v]]
+                      (if (= kind :rotate)
+                        (.multiply q (.setFromAxisAngle (THREE/Quaternion.) (vec3 (m/normalize axis))
+                                                        (* v (/ Math/PI 180))))
+                        q))
+                    (THREE/Quaternion.) parts)
+          [px py pz] (m/v+ (:position pose) d)]
+      (.set (.-position group) px py pz)
+      (.copy (.-quaternion group) (.multiply (.clone q) (pose-quaternion pose)))
+      (when (and (= mode :object) nudge-mesh?)
+        ;; mesh: translate by d, then rotate by q about the moved pivot
+        (let [[dx dy dz] d
+              mat (.makeRotationFromQuaternion (THREE/Matrix4.) q)
+              pv (.applyMatrix4 (THREE/Vector3. px py pz) mat)]
+          (.setPosition mat (- px (.-x pv)) (- py (.-y pv)) (- pz (.-z pv)))
+          (.multiply mat (.makeTranslation (THREE/Matrix4.) dx dy dz))
+          (viewport/nudge-preview! {:matrix mat}))))))
+
+(defn end-preview!
+  "Drop a preview-commands! that will NOT be committed: gizmo back on its pose, mesh
+   preview un-nudged. A committed one needs no call — the re-eval replaces both."
+  []
+  (when-let [{:keys [group pose]} @gstate]
+    (reposition-group! group pose)
+    (viewport/nudge-preview! nil)))
+
 ;; ============================================================
 ;; Origin-mode vertex / face-center snap (brief-gizmo-polish.md §2)
 ;; ============================================================
