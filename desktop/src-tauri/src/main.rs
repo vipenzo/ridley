@@ -37,11 +37,17 @@ fn spawn_child(name: &str, cmd: &str, args: &[&str], dir: &std::path::Path) -> O
         return None;
     }
     eprintln!("{}: starting in {:?}", name, dir);
-    match Command::new(cmd)
-        .args(args)
-        .current_dir(dir)
-        .spawn()
+    let mut command = Command::new(cmd);
+    command.args(args).current_dir(dir);
+    // A group of its own, so exit can stop the whole tree: `npm run dev` forks
+    // shadow-cljs (node, then java), and killing npm alone left the watcher
+    // orphaned on :9000 — the next `cargo tauri dev` died with "already started".
+    #[cfg(unix)]
     {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    match command.spawn() {
         Ok(child) => {
             eprintln!("{}: started (pid {})", name, child.id());
             Some(child)
@@ -50,6 +56,44 @@ fn spawn_child(name: &str, cmd: &str, args: &[&str], dir: &std::path::Path) -> O
             eprintln!("{}: failed to start: {}", name, e);
             None
         }
+    }
+}
+
+/// Stop a child started by spawn_child together with everything it forked.
+fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    let _ = Command::new("kill")
+        .args(["-TERM", &format!("-{}", child.id())])
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Stop shadow-cljs watchers of THIS project left orphaned (parent 1) by a
+/// previous run that did not get to exit cleanly (Ctrl+C in the terminal ends
+/// the app without RunEvent::Exit). Their children (java) go with them.
+#[cfg(all(unix, debug_assertions))]
+fn kill_orphan_watchers(root: &std::path::Path) {
+    let Ok(out) = Command::new("ps").args(["-axo", "pid=,ppid=,command="]).output() else {
+        return;
+    };
+    let root = root.to_string_lossy();
+    let mut stopped = false;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(pid), Some(ppid)) = (parts.next(), parts.next()) else { continue };
+        let command: Vec<&str> = parts.collect();
+        let command = command.join(" ");
+        if ppid == "1" && command.contains("shadow-cljs") && command.contains(&*root) {
+            eprintln!("frontend: stopping orphaned watcher (pid {})", pid);
+            let _ = Command::new("pkill").args(["-TERM", "-P", pid]).status();
+            let _ = Command::new("kill").args(["-TERM", pid]).status();
+            stopped = true;
+        }
+    }
+    if stopped {
+        // let the port and shadow-cljs's server lock go before the new watcher
+        std::thread::sleep(std::time::Duration::from_millis(1500));
     }
 }
 
@@ -148,6 +192,8 @@ fn main() {
     // In dev mode, spawn frontend dev server and wait for it
     #[cfg(debug_assertions)]
     let frontend_child: Mutex<Option<Child>> = {
+        #[cfg(unix)]
+        kill_orphan_watchers(&root);
         let spawned_at = std::time::SystemTime::now();
         let child = spawn_child("frontend", "npm", &["run", "dev"], &root);
         if child.is_some() {
@@ -209,8 +255,8 @@ fn main() {
                 #[cfg(debug_assertions)]
                 if let Ok(mut guard) = frontend_child.lock() {
                     if let Some(ref mut child) = *guard {
-                        eprintln!("frontend: killing pid {}", child.id());
-                        let _ = child.kill();
+                        eprintln!("frontend: killing pid {} and its children", child.id());
+                        kill_tree(child);
                     }
                 }
             }
