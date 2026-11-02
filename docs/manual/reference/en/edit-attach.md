@@ -53,6 +53,7 @@ touching anything is the identity on your source.
 | `Shift`+`↑` `↓` | `u` · `tr` · stretch along up |
 | `Alt`+arrows | **cp** — slide the geometry under the pose (`Alt`+`Shift`+`↑↓` for `cp-u`) |
 | `Backspace` | undo one command |
+| **Simplify** | rewrite the list in the fewest commands, same placement |
 | `Enter` | confirm · `Esc` cancel |
 
 ## SpaceMouse (desktop app)
@@ -82,8 +83,37 @@ A panel button chooses which axes count, and is remembered:
   mode turns (`th` `tv` `tr`), one axis per gesture, so a push never turns the
   object. `Tab`, or the SpaceMouse's right button, switches mode.
 
-While the session is open, and the Ridley window is in front, the SpaceMouse
-belongs to Ridley; otherwise macOS uses it as a mouse.
+The **left button** of the SpaceMouse (or the panel's **SpaceMouse: object /
+view** button) hands the cap to the view and back: while it says *view*, the same
+cap orbits the camera, as it does outside any session. Leaving the object writes
+a gesture still in progress; coming back waits for the cap to return to rest.
+
+While the Ridley window is in front the SpaceMouse belongs to Ridley; otherwise
+macOS uses it as a mouse.
+
+## Fewer commands
+
+On confirm, the list is merged **exactly**: moves in a row are summed axis by
+axis (`(f 10) (rt 5) (f 3) (rt -5)` → `(f 13)`), turns about the same axis in a
+row are summed, stretches in a row are multiplied, and whatever cancels out
+disappears. The values stay the ones you stepped. Plain moves and `cp-` moves
+are condensed apart: one moves the pose, the other the geometry under it, and
+the two don't interfere.
+
+**Simplify** goes further: it rewrites each stretch of gestures as its minimal
+form — at most `f rt u th tv tr`, and `cp-f cp-rt cp-u cp-th cp-tv cp-tr` for the
+origin — rounded to 0.01. So `(f 10) (th 90) (f 10) (th -90)` becomes
+`(f 10) (rt -10)`. The values are generally no longer round, so a stretch is
+rewritten only when that makes it shorter. Commands already in the source when
+the session opened are folded too when they are plain numbers (`(f 10)`);
+anything else (`(mark …)`, `(move-to …)`) stays as written and condensing
+stops at it. `Backspace` right after Simplify restores the list it replaced.
+
+When the **SpaceMouse** has written commands in the session, confirming takes
+the Simplify form by itself: a gesture's values are a gesture's anyway, while
+values typed or stepped from the keyboard are kept as they are. Commands that
+were already in the source are left alone on confirm; only the button folds
+them.
 
 ## Two things move, and it matters which
 

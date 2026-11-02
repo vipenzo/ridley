@@ -237,3 +237,14 @@
 (deftest all-axes-noise-starts-nothing
   (let [noise {:t [0 -46 23] :r [52 -52 0] :buttons 0}]
     (is (every? #(= :idle (:phase %)) (run (hold noise 1.0) all-opts)))))
+
+(deftest view-motion-reads-the-cap-as-the-scene
+  (is (nil? (sm/view-motion rest-in (/ 1 60))))
+  (is (nil? (sm/view-motion {:t [0 -350 0] :r [0 0 0] :buttons 1} (/ 1 60)))
+      "a held button moves nothing")
+  (let [away (sm/view-motion {:t [0 -350 0] :r [0 0 0] :buttons 0} 1.0)]
+    (is (pos? (:f away)) "push away: the scene goes away")
+    (is (zero? (:th away))))
+  (let [cw (sm/view-motion {:t [0 0 0] :r [0 0 350] :buttons 0} 0.05)]
+    (is (< (:th cw) 0) "twist clockwise: the scene turns clockwise (th−)")
+    (is (< (Math/abs (- (:th cw) -6)) 1e-9) "full deflection, 120°/s for 50 ms")))

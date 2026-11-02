@@ -1,8 +1,9 @@
 //! SpaceMouse reader (dev-docs/brief-spacemouse-edit-attach.md, commit 2).
 //!
-//! One thread owns the device. It is open — EXCLUSIVELY — only while a session
-//! wants it (`spacemouse_acquire` / `spacemouse_release`) AND the window has the
-//! focus; otherwise it is closed and macOS drives it as a mouse, as it does
+//! One thread owns the device. It is open — EXCLUSIVELY — only while the webview
+//! wants it (`spacemouse_acquire` / `spacemouse_release`; since the view orbit,
+//! ridley.input.spacemouse-view acquires it at startup and keeps it) AND the
+//! window has the focus; otherwise it is closed and macOS drives it as a mouse, as it does
 //! without 3DxWare (dev-docs/accertamento-spacemouse-risultati.md, point 3).
 //!
 //! The thread stays thin: raw values in the device frame go to the webview as the

@@ -13,15 +13,18 @@
             [ridley.editor.codemirror :as cm]
             [ridley.editor.modal-evaluator :as modal]
             [ridley.editor.gizmo :as gizmo]
+            [ridley.editor.attach-simplify :as simplify]
             [ridley.input.spacemouse :as sm]
             [ridley.input.spacemouse-device :as puck-device]
+            [ridley.input.spacemouse-view :as puck-view]
             [ridley.scene.registry :as registry]
             [ridley.turtle.attachment :as attachment]
             [ridley.viewport.core :as viewport]
             [clojure.string :as str]))
 
 ;; Forward declarations for mutual references
-(declare confirm! cancel! update-panel-display! build-code puck-stop!)
+(declare confirm! cancel! update-panel-display! build-code puck-stop! puck-active? puck-end!
+         puck-axes-label toggle-puck-axes! puck-owner-label toggle-puck-owner!)
 
 ;; ============================================================
 ;; State
@@ -52,6 +55,9 @@
 ;;  :panel-el      <DOM>
 ;;  :key-handler   <fn>
 ;;  :eval-pending? true            — a re-eval is scheduled and hasn't run yet
+;;  :puck-wrote?   true            — the SpaceMouse wrote a command: confirm simplifies
+;;  :simplified   {:before [...] :after [...]} — the list Simplify replaced, so
+;;                                   one Backspace restores it (while still :after)
 ;;  :puck          {:phase …}      — SpaceMouse gesture state (ridley.input.spacemouse)
 ;;  :puck-t :puck-buttons :puck-latched? :puck-shift? :puck-key-handler
 ;;                                 — its frame-loop bookkeeping, see SpaceMouse below}
@@ -88,41 +94,6 @@
   "Convert the command vector to display/code string."
   [commands]
   (str/join " " (remove str/blank? (map cmd->code-str commands))))
-
-(defn- compact-commands
-  "Collapse consecutive same-type GESTURAL commands and remove zero-sum pairs.
-   (f 5) (f 5) → (f 10). (f 5) (f -5) → removed. Scale vectors are multiplied
-   component-wise. Verbatim items (pre-existing body forms, opaque strings)
-   never merge and interrupt the merge chain on either side — a pre-existing
-   command is preserved exactly and is never folded into a neighboring
-   gesture."
-  [commands]
-  (reduce
-   (fn [acc c]
-     (cond
-       (empty? acc) [c]
-       (string? c) (conj acc c)
-       (string? (peek acc)) (conj acc c)
-       :else
-       (let [[cmd val] c
-             [prev-cmd prev-val] (peek acc)]
-         (if (= cmd prev-cmd)
-           (cond
-             (and (number? val) (number? prev-val))
-             (let [sum (+ prev-val val)]
-               (if (< (Math/abs sum) 0.001)
-                 (pop acc)
-                 (conj (pop acc) [cmd sum])))
-             (and (vector? val) (vector? prev-val))
-             (let [product (mapv * prev-val val)
-                   trivial? (every? #(< (Math/abs (- % 1.0)) 0.001) product)]
-               (if trivial?
-                 (pop acc)
-                 (conj (pop acc) [cmd product])))
-             :else (conj acc c))
-           (conj acc c)))))
-   []
-   commands))
 
 ;; ============================================================
 ;; Marker location — paren-balanced, tolerant of multi-line bodies
@@ -368,11 +339,28 @@
   "Remove the last item (verbatim or gestural) and trigger re-eval. Popping a
    pre-existing verbatim command is exactly as legitimate as popping a
    gesture just added — the panel always shows the full list, so the user
-   can see what they're about to lose."
+   can see what they're about to lose. Right after Simplify, the first undo
+   restores the whole list it replaced instead."
   []
-  (when (seq (:commands @session))
-    (swap! session update :commands pop)
-    (debounced-eval!)))
+  (let [{:keys [commands simplified]} @session]
+    (cond
+      (and simplified (= commands (:after simplified)))
+      (do (swap! session assoc :commands (:before simplified) :simplified nil)
+          (debounced-eval!))
+      (seq commands)
+      (do (swap! session update :commands pop)
+          (debounced-eval!)))))
+
+(defn- simplify-commands!
+  "Rewrite the list in its minimal form (attach-simplify/simplify). A gesture
+   still in progress is written first, so it is part of what gets condensed."
+  []
+  (when (puck-active?) (puck-end! true))
+  (let [before (:commands @session)
+        after (simplify/simplify before)]
+    (when (not= before after)
+      (swap! session assoc :commands after :simplified {:before before :after after})
+      (debounced-eval!))))
 
 ;; ============================================================
 ;; Confirm / Cancel / Cleanup
@@ -390,11 +378,16 @@
   (viewport/clear-preview!))
 
 (defn confirm!
-  "Confirm the session: compact gestures, keep verbatim items untouched,
-   replace in editor or print to REPL."
+  "Confirm the session: condense the gestures, keep verbatim items untouched,
+   replace in editor or print to REPL. Keyboard values are meant as typed, so
+   they are only merged exactly; once the SpaceMouse has written, whose values
+   are a gesture's anyway, the minimal form is taken (Vincenzo, 2026-11-02)."
   []
-  (when-let [{:keys [source-expr commands edit-attach-from edit-attach-to from-repl]} @session]
-    (let [cmds (compact-commands commands)
+  (when (puck-active?) (puck-end! true))
+  (when-let [{:keys [source-expr commands edit-attach-from edit-attach-to from-repl puck-wrote?]} @session]
+    (let [cmds (if puck-wrote?
+                 (simplify/simplify commands {:fold-verbatim? false})
+                 (simplify/merge-exact commands))
           code (build-code source-expr cmds)]
       (if from-repl
         ;; REPL mode: just print the expression
@@ -499,6 +492,7 @@
                "<div class='pilot-commands pilot-cmd-list'>(no commands yet)</div>"
                (when (puck-device/available?)
                  (str "<div class='pilot-commands pilot-puck'>"
+                      "<button class='pilot-btn pilot-btn-puck-owner'>" (puck-owner-label) "</button> "
                       "<button class='pilot-btn pilot-btn-puck-axes'>" (puck-axes-label) "</button> "
                       "<span class='pilot-puck-status'>…</span></div>"))
                ;; keyboard help (collapsed behind the header "?" toggle, wired
@@ -508,7 +502,9 @@
                "←→↑↓: move (step) / rotate (angle) / stretch (scale) · "
                "Shift+↑↓: u / tr / stretch-u · "
                "Alt+←→↑↓: cp slide geometry under the pose (Alt+Shift+↑↓: cp-u) · "
-               "Backspace: undo · Enter: OK · Esc: cancel · Mode: Object↔Origin "
+               "Backspace: undo · Simplify: fewest commands, same placement "
+               "(rounded to 0.01; Backspace right after restores) · "
+               "Enter: OK · Esc: cancel · Mode: Object↔Origin "
                "(who moves — mesh vs geometry-under-pose). "
                "Gizmo: drag arrows/rings/stretch cubes · Shift+drag: free (bypass snap) · "
                "readout shows the next command's value. "
@@ -518,16 +514,20 @@
                  (str " SpaceMouse: push/lift = f/rt/u, tilt/twist = tv/tr/th — "
                       "written on release, rounded to the step (Shift: free value). "
                       "'all axes' honors every signal; 'Tab axes' only the active "
-                      "mode's (step or angle). Right button = Tab."))
+                      "mode's (step or angle). Right button = Tab. Left button (or the "
+                      "'SpaceMouse: object/view' button): move the object or orbit the view."))
                "</div>"
                "<div class='pilot-buttons'>"
                "<button class='pilot-btn pilot-btn-undo'>Undo</button>"
+               "<button class='pilot-btn pilot-btn-simplify'>Simplify</button>"
                "<button class='pilot-btn pilot-btn-ok'>OK</button>"
                "<button class='pilot-btn pilot-btn-cancel'>Cancel</button>"
                "</div>"))
     ;; Wire up buttons
     (.addEventListener (.querySelector panel ".pilot-btn-undo") "click"
                        (fn [_] (undo-command!)))
+    (.addEventListener (.querySelector panel ".pilot-btn-simplify") "click"
+                       (fn [_] (simplify-commands!)))
     (.addEventListener (.querySelector panel ".pilot-btn-ok") "click"
                        (fn [_] (confirm!)))
     (.addEventListener (.querySelector panel ".pilot-btn-cancel") "click"
@@ -536,6 +536,8 @@
                        (fn [_] (toggle-gizmo-mode!)))
     (when-let [btn (.querySelector panel ".pilot-btn-puck-axes")]
       (.addEventListener btn "click" (fn [_] (toggle-puck-axes!))))
+    (when-let [btn (.querySelector panel ".pilot-btn-puck-owner")]
+      (.addEventListener btn "click" (fn [_] (toggle-puck-owner!))))
     ;; Insert into repl-terminal before repl-input-line
     (modal/mount-panel! panel)
     panel))
@@ -607,6 +609,24 @@
   (when-let [btn (some-> (:panel-el @session) (.querySelector ".pilot-btn-puck-axes"))]
     (set! (.-textContent btn) (puck-axes-label))))
 
+(defn- puck-owner-label []
+  (if (= :view @puck-view/owner) "SpaceMouse: view" "SpaceMouse: object"))
+
+(defn- show-puck-owner! []
+  (when-let [btn (some-> (:panel-el @session) (.querySelector ".pilot-btn-puck-owner"))]
+    (set! (.-textContent btn) (puck-owner-label))))
+
+(defn- toggle-puck-owner!
+  "Left button / panel button: the cap moves the object or the view. Leaving the
+   object writes a gesture in progress; coming back waits for the cap at rest."
+  []
+  (if (= :object @puck-view/owner)
+    (do (puck-end! true)
+        (puck-view/set-owner! :view))
+    (do (swap! session assoc :puck sm/idle :puck-latched? true)
+        (puck-view/set-owner! :object)))
+  (show-puck-owner!))
+
 (defn- puck-cmd
   "Origin mode moves the geometry under the pose, like the gizmo: cp-* twins."
   [axis]
@@ -630,7 +650,8 @@
    gathers them), or just drop the preview when nothing rounds to non-zero."
   [pairs]
   (if (seq pairs)
-    (doseq [[cmd v] (puck-cmds pairs)] (add-command! cmd v))
+    (do (swap! session assoc :puck-wrote? true)
+        (doseq [[cmd v] (puck-cmds pairs)] (add-command! cmd v)))
     (gizmo/end-preview!)))
 
 (defn- puck-end!
@@ -651,6 +672,7 @@
       (let [cmds (puck-cmds (sm/gesture-commands puck (puck-opts)))]
         (str (if (seq cmds) (commands->code-str cmds) "…") " …"))
       (not (:connected @puck-device/status)) "not connected"
+      (= :view @puck-view/owner) "orbiting the view"
       eval-pending? "…"
       :else "ready")))
 
@@ -660,58 +682,64 @@
 
 (defn- puck-frame!
   "Per-frame: advance the gesture from the latest device state, preview it, commit
-   it when it ends, and turn a right-button press into Tab."
+   it when it ends, and turn a right-button press into Tab. While the cap drives
+   the view (ridley.input.spacemouse-view) only the status line is kept."
   [_camera]
   (when (:entered? @session)
-    (let [now (js/performance.now)
-          {:keys [puck puck-t puck-buttons puck-latched? digit-buffer]} @session
-          dt (if puck-t (/ (- now puck-t) 1000) 0)
-          input @puck-device/state
-          buttons (:buttons input 0)
-          pressed (bit-and buttons (bit-not (or puck-buttons 0)))
-          _ (when (and puck-latched? (or (nil? input) (puck-at-rest? input)))
-              (swap! session assoc :puck-latched? false))
-          opts (puck-opts)
-          g (sm/step-gesture puck input dt opts)
-          ;; Pending digits become the step first, as an arrow press does — keeping
-          ;; the family the gesture started in (flushing also resets :digit-target).
-          g (if (and (= :active (:phase g)) (not= :active (:phase puck)) (seq digit-buffer))
-              (do (flush-digit-buffer!)
-                  (sm/step-gesture puck input dt (assoc (puck-opts) :family (:family opts))))
-              g)]
-      (swap! session assoc :puck (dissoc g :ended :commits) :puck-t now :puck-buttons buttons)
-      (cond
-        (= :active (:phase g))
-        (gizmo/preview-commands! (puck-cmds (sm/gesture-preview g)))
+    (when (= :object @puck-view/owner)
+      (let [now (js/performance.now)
+            {:keys [puck puck-t puck-buttons puck-latched? digit-buffer]} @session
+            dt (if puck-t (/ (- now puck-t) 1000) 0)
+            input @puck-device/state
+            buttons (:buttons input 0)
+            pressed (bit-and buttons (bit-not (or puck-buttons 0)))
+            _ (when (and puck-latched? (or (nil? input) (puck-at-rest? input)))
+                (swap! session assoc :puck-latched? false))
+            opts (puck-opts)
+            g (sm/step-gesture puck input dt opts)
+            ;; Pending digits become the step first, as an arrow press does — keeping
+            ;; the family the gesture started in (flushing also resets :digit-target).
+            g (if (and (= :active (:phase g)) (not= :active (:phase puck)) (seq digit-buffer))
+                (do (flush-digit-buffer!)
+                    (sm/step-gesture puck input dt (assoc (puck-opts) :family (:family opts))))
+                g)]
+        (swap! session assoc :puck (dissoc g :ended :commits) :puck-t now :puck-buttons buttons)
+        (cond
+          (= :active (:phase g))
+          (gizmo/preview-commands! (puck-cmds (sm/gesture-preview g)))
 
-        (:ended g)
-        (do (when (pos? buttons) (swap! session assoc :puck-latched? true))
-            (puck-commit! (:commits g))))
-      (when (pos? (bit-and pressed 2))
-        (cycle-digit-target!))
-      (when-let [el (some-> (:panel-el @session) (.querySelector ".pilot-puck-status"))]
-        (let [txt (puck-status-text)]
-          (when (not= txt (.-textContent el))
-            (set! (.-textContent el) txt)))))))
+          (:ended g)
+          (do (when (pos? buttons) (swap! session assoc :puck-latched? true))
+              (puck-commit! (:commits g))))
+        (when (pos? (bit-and pressed 2))
+          (cycle-digit-target!))))
+    (when-let [el (some-> (:panel-el @session) (.querySelector ".pilot-puck-status"))]
+      (let [txt (puck-status-text)]
+        (when (not= txt (.-textContent el))
+          (set! (.-textContent el) txt))))))
 
 (defn- puck-start!
-  "Take the device (exclusively, while the window is focused — the reader handles
-   focus) and start the frame loop. No-op outside the desktop app."
+  "Borrow the cap from the view (the device itself is held app-wide by
+   ridley.input.spacemouse-view) and start the frame loop. No-op outside the
+   desktop app."
   []
   (when (puck-device/available?)
     (let [on-key (fn [^js e] (swap! session assoc :puck-shift? (.-shiftKey e)))]
       (swap! session assoc :puck sm/idle :puck-key-handler on-key)
       (.addEventListener js/document "keydown" on-key true)
       (.addEventListener js/document "keyup" on-key true))
-    (puck-device/acquire!)
+    (puck-view/set-owner! :object)
+    (show-puck-owner!)
+    (reset! puck-view/on-left-button toggle-puck-owner!)
     (viewport/register-frame-callback! :spacemouse puck-frame!)))
 
 (defn- puck-stop!
-  "Give the device back to macOS and stop the loop. Safe when never started."
+  "Give the cap back to the view and stop the loop. Safe when never started."
   []
   (when (puck-device/available?)
     (viewport/unregister-frame-callback! :spacemouse)
-    (puck-device/release!)
+    (reset! puck-view/on-left-button nil)
+    (puck-view/set-owner! :view)
     (when-let [on-key (:puck-key-handler @session)]
       (.removeEventListener js/document "keydown" on-key true)
       (.removeEventListener js/document "keyup" on-key true))))

@@ -1431,6 +1431,38 @@
           t (.-target controls)]
       [(.-x t) (.-y t) (.-z t)])))
 
+(defn move-view!
+  "Move the camera so the SCENE makes `motion` (ridley.input.spacemouse/
+   view-motion) in the camera frame: :rt / :u pan in distances camera→target,
+   :f a log zoom factor (+ = farther), :th / :tv / :tr degrees about the view's
+   up / right / forward axis, right-handed like the turtle's. The camera does the
+   inverse, about the orbit target. No-op while the controls are disabled (a
+   camera animation, an editor drag) or in XR."
+  [{:keys [rt u f th tv tr]}]
+  (when-let [{:keys [^js camera ^js controls renderer]} @state]
+    (when (and (.-enabled controls) (not (xr/xr-presenting? renderer)))
+      (let [target (.-target controls)
+            rel (.subVectors (THREE/Vector3.) (.-position camera) target)
+            dist (.length rel)
+            fwd (.negate (.normalize (.clone rel)))
+            up (.normalize (.sub (.clone (.-up camera))
+                                 (.multiplyScalar (.clone fwd) (.dot fwd (.-up camera)))))
+            right (.crossVectors (THREE/Vector3.) fwd up)
+            pan (-> (.clone right) (.multiplyScalar (* rt dist))
+                    (.add (.multiplyScalar (.clone up) (* u dist)))
+                    (.negate))
+            rad (fn [deg] (- (* deg (/ Math/PI 180))))
+            cam-up (.clone (.-up camera))]
+        (.multiplyScalar rel (Math/exp f))
+        (doseq [[axis deg] [[up th] [right tv] [fwd tr]]
+                :when (not (zero? deg))]
+          (.applyAxisAngle rel axis (rad deg))
+          (.applyAxisAngle cam-up axis (rad deg)))
+        (.add target pan)
+        (.copy (.-position camera) (.add (.clone target) rel))
+        (.copy (.-up camera) (.normalize cam-up))
+        (.lookAt camera target)))))
+
 (defn handle-resize
   "Handle viewport resize - call when panel dimensions change."
   []

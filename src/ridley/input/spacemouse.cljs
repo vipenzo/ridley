@@ -12,7 +12,10 @@
      (dev-docs/accertamento-spacemouse-risultati.md, point 1), so the families
      must not compete;
    - :all — every signal honored, each axis joining when it crosses the start
-     threshold; the user corrects any coupling by hand (Vincenzo, 2026-11-02).")
+     threshold; the user corrects any coupling by hand (Vincenzo, 2026-11-02).
+
+   Outside edit-attach — or inside it, after the left button — the same cap
+   drives the VIEW (`view-motion`): continuous, nothing to commit.")
 
 (def config
   "Every tunable in one place — to be calibrated on screen. Raw units are the
@@ -23,7 +26,11 @@
    :release-hold-ms   120
    :curve             2.0    ; power on the normalized deflection
    :max-steps-per-s   10     ; full deflection = 10 steps (or angle-steps) per second
-   :max-dt            0.1})  ; a stalled frame integrates at most this long (s)
+   :max-dt            0.1    ; a stalled frame integrates at most this long (s)
+   ;; view (orbit) — full deflection, per second
+   :view-deg-per-s    120    ; turn
+   :view-pan-per-s    1.0    ; pan, in distances camera→target
+   :view-zoom-per-s   1.5})  ; zoom, as a log factor: e^1.5 ≈ 4.5× farther
 
 (def idle {:phase :idle})
 
@@ -170,3 +177,26 @@
            {:phase :active :axes axes :quiet-ms 0
             :acc (integrate {} axes comps dt opts cfg)}
            idle))))))
+
+;; ============================================================
+;; View (orbit)
+;; ============================================================
+
+(defn view-motion
+  "One frame of view motion from the raw device state, read with the same
+   convention as edit-attach: the cap IS the scene, seen from the camera. Returns
+   the scene's motion in the camera frame — :rt / :u pan (in distances
+   camera→target), :f (log zoom factor, + = the scene goes away), :th / :tv / :tr
+   turns in degrees about the view's up / right / forward axis, signs as the
+   turtle's — or nil when there is nothing to do (at rest, a button held)."
+  ([input dt] (view-motion input dt config))
+  ([input dt {:keys [max-dt view-deg-per-s view-pan-per-s view-zoom-per-s] :as cfg}]
+   (when (and input (zero? (:buttons input 0)))
+     (let [dt (min dt max-dt)
+           comps (device->turtle input)
+           v (fn [axis rate] (* rate dt (response (get comps axis) cfg)))
+           m {:rt (v :rt view-pan-per-s) :u (v :u view-pan-per-s)
+              :f (v :f view-zoom-per-s)
+              :th (v :th view-deg-per-s) :tv (v :tv view-deg-per-s)
+              :tr (v :tr view-deg-per-s)}]
+       (when (some #(not (zero? %)) (vals m)) m)))))

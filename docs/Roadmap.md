@@ -45,8 +45,17 @@ arrotondamento al passo solo al rilascio (Shift = libero), bottone «all axes»
 (predefinito, ogni asse del cappuccio onorato, comandi in ordine `f rt u th tv
 tr`) / «Tab axes» (una famiglia, un asse per gesto), modo Origin → `cp-*`. Corretto
 anche un difetto vecchio: all'ingresso mancava l'anteprima in fil di ferro e il
-primo gesto muoveva solo il gizmo. Aperti: condensare i comandi della sessione,
-orbita della camera col SpaceMouse.
+primo gesto muoveva solo il gizmo. Poi (2026-11-02): condensazione — fusione
+esatta sempre alla conferma (`ridley.editor.attach-simplify/merge-exact`, i
+comandi della posa e i `cp-`/stretch commutano e si condensano a parte) e bottone
+**Simplify** per la forma minima (≤6 comandi per tratto, arrotondata a 0.01,
+tenuta solo se più corta; Backspace subito dopo la annulla; applicata da sola
+alla conferma quando nella sessione ha scritto lo SpaceMouse — scelta di
+Vincenzo: da tastiera i numeri si vogliono come battuti); orbita della vista
+col SpaceMouse (`ridley.input.spacemouse-view`: device preso all'avvio, la scena
+segue il cappuccio; in edit-attach tasto sinistro o bottone «SpaceMouse:
+object/view»). Corretti anche quattro `undeclared-var` in edit-attach (due già
+nel commit 3).
 
 **Nuovo (2026-10-22): `tapered :curve` — taper non lineare.** `:linear`
 (default, identico a prima), `:ease-in`, `:ease-out`, `:ease-in-out`, `:bump`

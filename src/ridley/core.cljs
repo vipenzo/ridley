@@ -5,6 +5,7 @@
             [ridley.editor.state :as editor-state]
             [ridley.editor.codemirror :as cm]
             [ridley.viewport.core :as viewport]
+            [ridley.input.spacemouse-view :as spacemouse-view]
             [ridley.viewport.xr :as xr]
             [ridley.manifold.core :as manifold]
             [ridley.turtle.text :as text]
@@ -3004,6 +3005,8 @@
     ;; its rejection (2026-08-24: three 3MFs written into nowhere, silently)
     (stl/set-async-notify! show-error)
     (viewport/init canvas)
+    ;; desktop: the SpaceMouse orbits the view (edit-attach borrows it)
+    (spacemouse-view/start!)
     ;; Wire animation callbacks (registry <-> playback, avoids circular dep)
     (anim-playback/set-mesh-callbacks! registry/get-mesh registry/register-mesh!)
     (anim-playback/set-update-geometry-callback! viewport/update-mesh-geometry!)

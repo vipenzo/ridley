@@ -101,7 +101,7 @@ Le costanti (soglie, curva, velocità) si tarano a schermo dopo il commit 3, in 
 
 ## Fuori scope
 
-- **Navigazione della camera col puck**, anche fuori dalle sessioni, e il bottone sinistro per passare da camera a oggetto: brief successivo. Richiederà di rivedere la politica di esclusiva (probabilmente "finché la finestra ha il focus").
+- **Navigazione della camera col puck**, anche fuori dalle sessioni, e il bottone sinistro per passare da camera a oggetto: FATTO 2026-11-02 (`ridley.input.spacemouse-view`). Esclusiva: dall'avvio, finché la finestra ha il focus.
 - Il puck in SCALE (`stretch-*`), in `tweak`, `edit-bezier`, `edit-path`.
 - WebHID e build browser (decisione di Vincenzo).
 - NavLib e comportamento con 3DxWare installato: non verificati, nessun supporto esplicito.
