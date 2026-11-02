@@ -3,6 +3,7 @@
 
 mod geo_server;
 mod sdf_ops;
+mod spacemouse;
 
 use std::process::{Child, Command};
 use std::sync::Mutex;
@@ -188,8 +189,18 @@ fn main() {
             // can be left behind the app — with the app then ignoring every
             // click, because what is waiting for the user is out of sight.
             geo_server::set_main_window(window);
+            spacemouse::start(app.handle().clone());
             Ok(())
         })
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::Focused(focused) = event {
+                spacemouse::set_focused(*focused);
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            spacemouse::spacemouse_acquire,
+            spacemouse::spacemouse_release
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |_app, event| {

@@ -37,8 +37,10 @@ Accertamento chiuso (`dev-docs/accertamento-spacemouse-risultati.md`), brief in
 `dev-docs/brief-spacemouse-edit-attach.md`, tre commit. Commit 1 FATTO: logica
 pura in `ridley.input.spacemouse` (frame del device → comandi della
 tartaruga, macchina a stati del gesto, un gesto = un comando), testata sulle
-misure reali. Restano il lettore Rust con esclusiva (commit 2) e il collegamento
-a edit-attach (commit 3).
+misure reali. Commit 2 FATTO e collaudato da Vincenzo: lettore Rust
+(`desktop/src-tauri/src/spacemouse.rs`, solo macOS) in esclusiva solo con
+sessione attiva e finestra a fuoco, riaggancio al cavo, eventi a ≤60/s. Resta il
+collegamento a edit-attach (commit 3).
 
 **Nuovo (2026-10-22): `tapered :curve` — taper non lineare.** `:linear`
 (default, identico a prima), `:ease-in`, `:ease-out`, `:ease-in-out`, `:bump`
