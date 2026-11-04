@@ -14,9 +14,11 @@
 //! `spacemouse-status {connected}` goes out on every change while wanted, and
 //! once right after each acquire.
 //!
-//! macOS only: on Linux hidapi needs libudev headers to build and a udev rule to
-//! read the device, neither of which the Linux build has — there the commands
-//! exist and the status is always `connected: false`.
+//! macOS and Linux: on Linux the device is opened via hidraw (no exclusive
+//! open — nothing else on Linux grabs the hidraw node) and needs the udev rule
+//! `desktop/src-tauri/linux/70-ridley-spacemouse.rules` for a normal user to
+//! read it. Windows has no reader yet — there the commands exist and the
+//! status is always `connected: false`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
@@ -47,15 +49,15 @@ pub fn set_focused(focused: bool) {
     FOCUSED.store(focused, Ordering::SeqCst);
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn start(app: AppHandle) {
     std::thread::spawn(move || stub_loop(app));
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use imp::start;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod imp {
     use super::*;
     use hidapi::{HidApi, HidDevice};
@@ -80,20 +82,35 @@ mod imp {
 
     enum OpenError {
         Absent,
-        /// Present but the exclusive open failed — typically another Ridley has it.
+        /// On macOS: present but the exclusive open failed — typically another
+        /// Ridley has it. On Linux: usually a missing udev rule.
         Busy(String),
+        /// Linux only: hidraw node exists but this user can't read it — the
+        /// udev rule (`desktop/src-tauri/linux/70-ridley-spacemouse.rules`) is
+        /// missing or not reloaded.
+        NoPermission(String),
     }
 
-    /// The multi-axis interface (usage page 1 / usage 8), opened exclusively.
+    /// The multi-axis interface (usage page 1 / usage 8). Exclusive on macOS
+    /// only — on Linux nothing else opens the hidraw node, so there is nothing
+    /// to be exclusive against.
     fn open(api: &mut HidApi) -> Result<HidDevice, OpenError> {
         let _ = api.refresh_devices();
+        #[cfg(target_os = "macos")]
         api.set_open_exclusive(true);
         let info = api
             .device_list()
             .filter(|d| d.vendor_id() == VID)
             .min_by_key(|d| !(d.usage_page() == 1 && d.usage() == 8))
             .ok_or(OpenError::Absent)?;
-        info.open_device(api).map_err(|e| OpenError::Busy(e.to_string()))
+        info.open_device(api).map_err(|e| {
+            let msg = e.to_string();
+            if cfg!(target_os = "linux") && msg.to_lowercase().contains("permission") {
+                OpenError::NoPermission(msg)
+            } else {
+                OpenError::Busy(msg)
+            }
+        })
     }
 
     fn int3(b: &[u8]) -> [i16; 3] {
@@ -155,7 +172,11 @@ mod imp {
                     last_try = Some(Instant::now());
                     match open(&mut api) {
                         Ok(d) => {
-                            eprintln!("spacemouse: acquired (exclusive)");
+                            if cfg!(target_os = "macos") {
+                                eprintln!("spacemouse: acquired (exclusive)");
+                            } else {
+                                eprintln!("spacemouse: acquired");
+                            }
                             dev = Some(d);
                             last_err.clear();
                             connected = true;
@@ -165,6 +186,9 @@ mod imp {
                             let msg = match e {
                                 OpenError::Absent => "not connected".to_string(),
                                 OpenError::Busy(m) => format!("busy ({m})"),
+                                OpenError::NoPermission(m) => {
+                                    format!("no permission ({m}) — udev rule missing?")
+                                }
                             };
                             if msg != last_err {
                                 eprintln!("spacemouse: {msg}, retrying every 500 ms");

@@ -1,0 +1,2 @@
+# 3Dconnexion devices: readable by the user at the seat (Ridley's SpaceMouse reader).
+KERNEL=="hidraw*", ATTRS{idVendor}=="256f", TAG+="uaccess"

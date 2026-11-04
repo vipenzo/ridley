@@ -99,6 +99,13 @@ Commit 3, a schermo da Vincenzo, su una scena semplice (`(edit-attach (box 20))`
 
 Le costanti (soglie, curva, velocità) si tarano a schermo dopo il commit 3, in commit separati.
 
+## Seguito
+
+Porting del lettore a Linux (hidraw, regola udev): `dev-docs/HANDOVER-spacemouse-
+linux.md`, tracciato nel Roadmap Current Sprint, non in questo brief — qui
+sopra tutte le verifiche ("il puntatore di sistema non si muove", "macOS ha
+chiesto permessi") restano riferite a macOS, dove sono state fatte.
+
 ## Fuori scope
 
 - **Navigazione della camera col puck**, anche fuori dalle sessioni, e il bottone sinistro per passare da camera a oggetto: FATTO 2026-11-02 (`ridley.input.spacemouse-view`). Esclusiva: dall'avvio, finché la finestra ha il focus.

@@ -57,6 +57,21 @@ segue il cappuccio; in edit-attach tasto sinistro o bottone «SpaceMouse:
 object/view»). Corretti anche quattro `undeclared-var` in edit-attach (due già
 nel commit 3).
 
+**In corso (2026-11-04): SpaceMouse su Linux.** Handover in
+`dev-docs/HANDOVER-spacemouse-linux.md`. Accertamento sull'XPS: device
+`256f:c635` presente, nodo `hidraw1` `root:root 0600` (confermata l'ipotesi —
+serve la regola udev), nessun flag `ID_INPUT_MOUSE`/`JOYSTICK` sul nodo evdev
+quindi probabilmente non muove il puntatore (da confermare a mano col
+cappuccio), niente spacenavd installato. Fatto: `spacemouse.rs` estende il
+lettore hidapi a Linux (via hidraw, nessuna esclusiva — niente altro contende
+il nodo — a differenza di macOS), `Cargo.toml` con `hidapi`/`linux-native-
+basic-udev` (niente `libudev-dev` in CI), regola udev
+`desktop/src-tauri/linux/70-ridley-spacemouse.rules` impacchettata nel `.deb`
+con `postInstallScript` che ricarica udev, manuale e guide aggiornati per
+Linux. Da fare: collaudo sull'XPS (`cargo tauri dev`, poi install del `.deb`),
+verifica CI `desktop-build-linux.yml`, poi spacenavd come eventuale seguito
+(non prioritario).
+
 **Nuovo (2026-10-22): `tapered :curve` — taper non lineare.** `:linear`
 (default, identico a prima), `:ease-in`, `:ease-out`, `:ease-in-out`, `:bump`
 (andata e ritorno), oppure una `(fn [t] …)`. Nasce dalle shape-fn che Vincenzo
@@ -1030,6 +1045,8 @@ Cancellazione cooperativa dell'eval (due-tre giorni): oggi una valutazione SCI l
 Guard sul ricampionamento per i mark morph-aware (mezza giornata): i mark di un profilo `path-to-shape` sono memorizzati come riferimento all'indice del punto (`:mark-refs`, [shape.cljs](../src/ridley/turtle/shape.cljs) `compute-mark-refs`), così cavalcano gratis le shape-fn che **preservano numero e ordine dei punti** (`tapered`, `twisted`, displacement) — è ciò che rende `(slice-mesh m :on t)` morph-aware. Ma una shape-fn che **ricampiona** il profilo (es. `fluted`, che aggiunge punti) sposterebbe gli indici → mark sul vertice sbagliato, oggi senza protezione. Da fare: in `mark-refs->section-anchors` ([extrusion.cljs](../src/ridley/turtle/extrusion.cljs)) rilevare il cambio di conteggio punti rispetto a quando il ref è stato creato e ricadere in modo trasparente sulla risoluzione base via `:source-path`; in prospettiva, rendere mark-aware anche le shape-fn di ricampionamento (propagare i ref attraverso la nuova indicizzazione).
 
 **Coercizione automatica SDF→mesh nelle operazioni mesh-only — FATTO.** Censimento completo in `dev-docs/brief-sdf-mesh-coercion.md`: `warp`, `solidify`, `mesh-hull` e `concat-meshes` restituivano un risultato silenziosamente sbagliato quando ricevevano un nodo SDF (operando scartato o mesh originale invariata, senza errore); `transform`, `export` diretto di un nodo SDF ed `sdf->mesh` a un argomento fallivano in modo criptico o rischiavano di uccidere il server Rust con un budget di voxel non applicato. Tutti e sette ora coercizzano via `sdf/ensure-mesh` (stesso budget di `ensure-mesh`, mai il default a 15 vpu di `materialize`). Test puri per il routing di solidify/hull/concat-meshes in `sdf_coercion_test.cljs` (non possono verificare un materializzato corretto senza server, ma verificano che l'operando SDF non sparisca più silenziosamente). Verifica del round-trip reale: manuale, desktop, vedi il brief.
+
+SpaceMouse in modalità SCALE (mezza giornata): oggi in `edit-attach` il cappuccio non fa nulla in modalità SCALE (`dev-docs/brief-spacemouse-edit-attach.md`, "Fuori scope" — scelta di perimetro originaria, non un difetto del porting Linux di novembre 2026), e lo stretch (`stretch-f`/`stretch-rt`/`stretch-u`) resta pilotabile solo da tastiera o dai cubetti del gizmo. Da valutare: quale asse del cappuccio mappare su quale stretch (probabilmente push/pull → `stretch-f`, analogamente agli altri due), e se farlo coesistere col bottone destro/Tab che già cicla STEP→ANGLE→SCALE.
 
 ### 1.5 Completamenti DSL minori
 

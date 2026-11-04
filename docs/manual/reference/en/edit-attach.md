@@ -58,8 +58,8 @@ touching anything is the identity on your source.
 
 ## SpaceMouse (desktop app)
 
-In the desktop app on macOS, a 3Dconnexion SpaceMouse drives the session too. The
-cap *is* the object, seen from behind the turtle:
+In the desktop app on macOS and Linux, a 3Dconnexion SpaceMouse drives the
+session too. The cap *is* the object, seen from behind the turtle:
 
 | translation | | rotation | |
 |---|---|---|---|
@@ -88,8 +88,24 @@ view** button) hands the cap to the view and back: while it says *view*, the sam
 cap orbits the camera, as it does outside any session. Leaving the object writes
 a gesture still in progress; coming back waits for the cap to return to rest.
 
-While the Ridley window is in front the SpaceMouse belongs to Ridley; otherwise
-macOS uses it as a mouse.
+While the Ridley window is in front the SpaceMouse belongs to Ridley; otherwise,
+on macOS it falls back to driving the pointer as a mouse (Linux does not treat
+it as one, so nothing happens there).
+
+**Linux only**: the `.deb` package installs the udev rule the device needs and
+reloads it automatically, so a fresh install picks it up on the next
+plug/unplug of the SpaceMouse. The AppImage installs nothing system-wide —
+create the rule by hand once:
+
+```
+sudo tee /etc/udev/rules.d/70-ridley-spacemouse.rules >/dev/null <<'EOF'
+KERNEL=="hidraw*", ATTRS{idVendor}=="256f", TAG+="uaccess"
+EOF
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+then unplug and replug the SpaceMouse. Without the rule the device stays
+unreadable and the app reports it as not connected.
 
 ## Fewer commands
 

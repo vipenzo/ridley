@@ -28,6 +28,10 @@ hidapi = { version = "2.6", features = ["macos-shared-device"] }
 # (enable_camera), both in main.rs.
 webkit2gtk-sys = "2.0.2"
 webkit2gtk = { version = "2.0.2", features = ["v2_40"] }
+# SpaceMouse reader (src/spacemouse.rs). linux-native-basic-udev is a pure-Rust
+# hidraw backend (basic-udev + nix) — no libudev-dev needed, which the Linux CI
+# image (desktop-build-linux.yml) does not have.
+hidapi = { version = "2.6", default-features = false, features = ["linux-native-basic-udev"] }
 
 [features]
 default = ["custom-protocol"]

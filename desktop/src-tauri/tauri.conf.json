@@ -29,15 +29,19 @@
         "depends": ["libpng16-16t64 | libpng16-16"],
         "files": {
           "/usr/lib/ridley/libfive.so": "target/release/libfive/libfive.so",
-          "/usr/lib/ridley/libfive-stdlib.so": "target/release/libfive/libfive-stdlib.so"
-        }
+          "/usr/lib/ridley/libfive-stdlib.so": "target/release/libfive/libfive-stdlib.so",
+          "/usr/lib/udev/rules.d/70-ridley-spacemouse.rules": "linux/70-ridley-spacemouse.rules"
+        },
+        "postInstallScript": "linux/postinstall.sh"
       },
       "rpm": {
         "depends": ["libpng"],
         "files": {
           "/usr/lib/ridley/libfive.so": "target/release/libfive/libfive.so",
-          "/usr/lib/ridley/libfive-stdlib.so": "target/release/libfive/libfive-stdlib.so"
-        }
+          "/usr/lib/ridley/libfive-stdlib.so": "target/release/libfive/libfive-stdlib.so",
+          "/usr/lib/udev/rules.d/70-ridley-spacemouse.rules": "linux/70-ridley-spacemouse.rules"
+        },
+        "postInstallScript": "linux/postinstall.sh"
       }
     }
   }
